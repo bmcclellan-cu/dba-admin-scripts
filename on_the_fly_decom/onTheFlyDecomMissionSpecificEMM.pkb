@@ -13,7 +13,7 @@ Usage:
      @<full_path>/onTheFlyDecomMissionSpecificEMM.pkb  -- compile the package body
   
 Notes:
-  1. Contents (In order of appearance)
+  1. Contents (In order of appearance)          
      FUNCTION  getVersion
      PROCEDURE setOption
      PROCEDURE clearOption
@@ -177,7 +177,7 @@ FUNCTION getTableName( type_in IN NUMBER,
 IS
     databaseName VARCHAR2(64) := '';
     tableName VARCHAR2(64) := '';
-    tableNameExtension VARCHAR2(10);
+    tableNameExtension VARCHAR2(10) := '';
     invalidType EXCEPTION;
 BEGIN
     -- Start by determining the extension of the table name
@@ -236,10 +236,10 @@ Purpose:    Adds any mission-specific SQL to the 'where' clause of the L0 data q
             This proc must exist, even if it does nothing.
 	    Called by queryL0.
 
-Input:      query       - VARCHAR2(500)
+Input:      exeString   - VARCHAR2(500)
             systemId_in - NUMBER SID or schemaId, depending on mission.
 
-Output:     query       - May or may not have been updated.
+Output:     exeString   - May or may not have been updated.
 *************************************************************************************************/
 PROCEDURE addToL0Query( exeString IN OUT VARCHAR2,
                         systemId_in IN NUMBER)
@@ -279,6 +279,7 @@ END addToL1Query;
 FUNCTION: getDefinitionStartStopTimes
 
 Purpose:  Gets start/stop times for use in queries to the TelemetryStorageLocation and TMDecom tables.
+          Uses gblTestId.
 
 Inputs:
     systemId_in  - PL/SQL table based record containing one row from the TMDecom table.
