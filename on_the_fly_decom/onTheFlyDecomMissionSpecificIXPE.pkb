@@ -14,9 +14,9 @@ Usage:
 
 Notes:
   1. Contents (In order of appearance)          
+     FUNCTION  getVersion
      PROCEDURE setOption
      PROCEDURE clearOption
-     FUNCTION  getOptionHelp
      FUNCTION  getTableName
      FUNCTION  getL0PacketsSCTColName
      PROCEDURE addToL0Query
@@ -30,6 +30,7 @@ Notes:
        IXPE only; the IXPE code will support this, but not testId.
 
   3. Compiler Errors:
+     - A login.sql file can cause compiler errors.
      - If the ampersand character is present in a comment, in sqlplus will get this prompt
        upon compiling, and some error messages:
        Enter value for t:  (where t is the letter after the ampersand)
@@ -156,7 +157,6 @@ IS
     databaseName VARCHAR2(64) := '';
     tableName VARCHAR2(64) := '';
     tableNameExtension VARCHAR2(10) := '';
-    unsupportedMission EXCEPTION;
     invalidType EXCEPTION;
 BEGIN
     IF    (type_in = 0) THEN
@@ -255,8 +255,8 @@ END addToL1Query;
 FUNCTION: getDefinitionStartStopTimes
 
 Purpose:  Gets start/stop times for use in queries to the TelemetryStorageLocation and TMDecom tables.
-          This IXPE version is the multi-mission version.  Only EMM has a different version,
-          because it has testId.
+          The IXPE version of this function can be used for most missions.  Only EMM has a different
+	  version of this function, because it has testId.
 
 Inputs:
     systemId_in  - PL/SQL table based record containing one row from the TMDecom table.
