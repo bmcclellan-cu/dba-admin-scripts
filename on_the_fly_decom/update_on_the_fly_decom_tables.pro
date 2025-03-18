@@ -3,10 +3,10 @@
 ;
 ; Purpose:  Creates a sql script which does the initial population of the TelemetryStorageLocation
 ;           and TMdecom tables, or inserts new rows as needed to update these tables, based on the
-;           given the input system and a decom saveset.
-;           Both tables are used by the on-the-fly decom stored procedures.
-;           The TelemetryStorageLocation table is used by TDP at run-time to determine
-;           whether or not to ingest given tlmIds into L1 tables.
+;           given the input system and a decom saveset.  Run the script in sqlplus or other DB app.
+;           The two tables populated are the ones used by the on-the-fly decom stored procedures.
+;           The TelemetryStorageLocation table is also used by TDP at run-time to determine
+;           whether or not to ingest a given tlmId into an L1 table.
 ;
 ; Inputs:   systemIdStr - String version of a systemId from the SystemsDefinition table.
 ;                         The latest decom saveset file for this system name is found and used.
@@ -19,7 +19,8 @@
 ; Usage:    source mission setup file
 ;           IDL> .r query_database2
 ;           IDL> .r update_on_the_fly_decom_tables
-;           IDL> updateOnTheFlyDecomTables, 'FLATSAT_A', dbserver='emm-db-dev'  ; EMM
+;           IDL> updateOnTheFlyDecomTables, 'FLATSAT_A', dbserver='emm-db-dev'  ; EMM dev
+;           IDL> updateOnTheFlyDecomTables, 'FLIGHT', definition_start_time='2023/210-00:00:00'  ; EMM prod
 ;           IDL> updateOnTheFlyDecomTables, 'FLIGHT', dbserver='ixpe-db', definition_start_time='2021/001-00:00:00'  ; IXPE
 ;
 ;           % sqlplus user/password@mission-db[-dev]
@@ -138,10 +139,10 @@ pro db_init, username, password, server
   
     'emm': begin
       dbDriver = 'oracle.jdbc.driver.OracleDriver'
-      if server eq 'emm-db-dev' then begin
+      if strlowcase(server) eq 'emm-db-dev' then begin
         dbUrl = 'jdbc:oracle:thin:@//emm-db-dev:1521/emmdev'
-      endif else if server eq 'emm-db' then begin
-        dbUrl = 'jdbc:oracle:thin:@//emm-db:1521/emmproc'
+      endif else if strlowcase(server) eq 'emm-db' then begin
+        dbUrl = 'jdbc:oracle:thin:@//emm-db:1521/emmprod'
       endif
       break
     end
@@ -265,15 +266,6 @@ pro updateOnTheFlyDecomTables, systemIdStr_in, dbserver=dbserver, definition_sta
       message, "Couldn't restore CT DB and decom maps!"  ; IDL halts here
     endelse
     
-    ; Note: dataType='C' (strings) are always ingested into L1 and are not handled by the
-    ; on-the-fly decom stored procedure.  Apps should query the TMstrings table directly.
-    ; Remove these records from the decom map.
-    
-    w = where( decom_maps.dataType ne 'C', count)
-    if count lt n_elements( decom_maps) then begin
-      decom_maps = decom_maps[w]
-    endif
-    
     ; The following narrowing is here for test purposes: we only test with OTIS data because
     ; it has uniform density.  This should be removed later...FIXME!
     ; Maybe replaced by filtering out of the RFTC and CFG_FSA buildTypes, which can't be OTFD.
@@ -284,10 +276,36 @@ pro updateOnTheFlyDecomTables, systemIdStr_in, dbserver=dbserver, definition_sta
         message, "Couldn't find buildType OTIS_FSA in decom_maps!"
       endif
       decom_map = *(decom_maps[w[0]].decom_map)
+    endif else if systemIdStr eq 'FLIGHT' then begin
+      ; EMM will be used for performance tuning AWS infrastructure and the DB for OTFD.
+      ; So only a subset of telemetry is needed for OTFD testing.  I vetted the SC_FLT buildType.
+      w = where( decom_maps.buildType eq 'SC_FLT', count)
+      if count eq 0 then begin
+        message, "Couldn't find buildType SC_FLT in decom_maps!"
+      endif
+      decom_map = *(decom_maps[w[0]].decom_map)
+      ; I got all the apids from this decom_map and put them in a query to find packet names.
+      ; I found one apid that needs to be excluded: apid=1569, packetName=PSEUDO_GENERAL.
+      ; ny packet with name containing "pseudo" is not telemetered.  It was probably used
+      ; to add derived items to the CT DB through the usual CT import process.
+      w = where( decom_map.apid ne 1569)
+      decom_map = decom_map[w]
+      ; When I ran update_on_the_fly_decom_tables for EMM 03/2025, the most recent CT DB saveset
+      ; was 2023/210, so I specified keyword definition_start_time to be: '2023/210-00:00:00'
     endif else begin
-      message, "Only FLATSAT_A is currently supported as systemIdStr input!"
+      message, "Only FLIGHT and FLATSAT_A are currently supported as systemIdStr input!"
     endelse
     
+    ; Note: dataType='C' (strings) are always ingested into L1 and are not handled by the
+    ; on-the-fly decom stored procedure.  Apps should query the TMstrings table directly.
+    ; Remove these records from the decom map.
+    
+    w = where( decom_map.dataType ne 'C', count)
+    if count lt n_elements( decom_map) then begin
+      decom_map = decom_map[w]
+    endif
+    
+
   endif else if mission eq 'ixpe' then begin
     
     ; I verified that the decom saveset does not contain any pseudo-packets for derived items,
