@@ -259,7 +259,7 @@ Purpose:  Gets start/stop times for use in queries to the TelemetryStorageLocati
 	  version of this function, because it has testId.
 
 Inputs:
-    systemId_in  - PL/SQL table based record containing one row from the TMDecom table.
+    systemId_in  - E.g. 1 = FLIGHT, 2 = TEST
     startERT_in  - Starting Earth Received Time in GPS microseconds. -1 if not used.
     stopERT_in   - Ending Earth Received Time in GPS microseconds. -1 if not used.
     startSCT_in  - Starting spacecraft time in GPS microseconds. -1 if not used.
