@@ -759,11 +759,19 @@ BEGIN
     -- Query for the desired ERT, SCT, and raw data from the correct L0 table.
 
     -- Formulate invariant parts of the query string.
-   
-    exeStringPart1 := 'select /*+ parallel */ ERT, ' || L0PacketsSCTColName || ', ' ||
+
+    -- A call like this to retrieve_eng will produce a query like this:
+    -- setenv,'IXPE_OTFD=1'
+    -- retrieve_eng, 'EP PWMCLASIDST', [2024,100], [2024,110], forceIsInL0=1, forceIsInL1=0   (TMID=1706)
+    -- The query is:  select /*+ parallel */ ERT, SCT_VTCW, rawtohex(dbms_lob.substr(packet,8,77))
+    --                from L0_Packets_SID1 where apid=120 and SCT_VTCW >= 1396656018000000 and
+    --                SCT_VTCW <= 1397520018000000 length >= 85 order by ERT, SCT_VTCW
+    -- Replaced /*+ parallel */ by /*+ monitor */ per Brian M. 01/15/25...FIXME!
+
+    exeStringPart1 := 'select /*+ monitor */ ERT, ' || L0PacketsSCTColName || ', ' ||
                       'rawtohex(dbms_lob.substr(packet, :nBytes, :byteOffset)) ' ||
                       'from ' || tableName || ' where apid=:apid and ';
-    exeStringPart2 := 'length >= (:byteOffset-1 + :nBytes) ' || 'order by ERT, ' || L0PacketsSCTColName;
+    exeStringPart2 := 'length >= (:byteOffset-1 + :nBytes) order by ERT, ' || L0PacketsSCTColName;
 
     -- Add anything mission-specific to the query.
 
