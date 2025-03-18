@@ -282,7 +282,7 @@ Purpose:  Gets start/stop times for use in queries to the TelemetryStorageLocati
           Uses gblTestId.
 
 Inputs:
-    systemId_in  - PL/SQL table based record containing one row from the TMDecom table.
+    systemId_in  - E.g. 1 = FLIGHT, 2 = AIT, 3 = FSA, etc.
     startERT_in  - Starting Earth Received Time in GPS microseconds. -1 if not used.
     stopERT_in   - Ending Earth Received Time in GPS microseconds. -1 if not used.
     startSCT_in  - Starting spacecraft time in GPS microseconds. -1 if not used.
@@ -310,23 +310,24 @@ BEGIN
     definitionStopTime := -1;
     
     -- If a ERT range was specified, use it as the definition range.
-    -- Else if a testId was specified, use that test's ERT range.
-    -- Else (no ERT range, no testId), there must be a SCT range, so use it, otherwise error.
-    -- When using a SCT range, assume it can be used for the time range when querying the TSL and TMD tables,
-    -- which means SCT and ERT times are assumed to be commensurate, i.e. the same, or close enough.
+    -- Else if a non-zero testId was specified, use that test's ERT range, as reflected by min/max ERT in TelemetrySourceFiles.
+    -- Else (testId=0 was specified, or no testId was specified), use the input SCT range.
+    -- When using a SCT range, have to assume it can be used for the time range when querying the TSL and TMD tables,
+    -- which means SCT and ERT times are assumed to be commensurate, i.e. the same, or close enough.  I.e. the time wasn't jammed.
 
-    IF ((gblTestId >= 0) AND (startERT_in < 0)) THEN
-        -- testId is valid (not -1), and no ERTs exist, so use the test data start/stop times.
-        SELECT min(MIN_ERT), max(MAX_ERT) INTO definitionStartTime,definitionStopTime FROM TelemetrySourceFiles WHERE 
-               testId = gblTestId AND schemaId = systemId_in;
-    ELSIF (startERT_in >= 0) THEN
+    IF (startERT_in >= 0) THEN
         -- Input ERT times are valid, so use them.
         definitionStartTime := startERT_in;
         definitionStopTime  := stopERT_in;
+    ELSIF (gblTestId >= 1) THEN
+        -- No ERT range was specified, but a non-zero testId was specified.  Use the ERT range of files associated with that testId.
+        SELECT min(MIN_ERT), max(MAX_ERT) INTO definitionStartTime,definitionStopTime FROM TelemetrySourceFiles WHERE 
+               testId = gblTestId AND schemaId = systemId_in;
     ELSIF (startSCT_in >= 0) THEN
-        -- No ERT times were input, so set the TSL and TMD times to SCT times,
-        -- and hope they're comparable to TSF and TMD times (and ERT).  In flight,
-        -- SCT is the same as ERT, i.e. not jammed in the future like during IandT.
+        -- No ERT times were input.  Set the TSL and TMD times to SCT times.
+	-- Either testId=0 was specified, meaning return all tlm data *not* associated with a specific test, or
+	-- no testId was specified, meaning return all tlm data, regardless of testId value.
+        -- This is the case for flight, where SCT is the same as ERT, i.e. not jammed in the future like during IandT.
         definitionStartTime := startSCT_in;
         definitionStopTime  := stopSCT_in;
     ELSE
