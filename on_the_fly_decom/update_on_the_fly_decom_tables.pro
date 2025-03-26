@@ -19,6 +19,7 @@
 ; Usage:    source mission setup file
 ;           IDL> .r query_database2
 ;           IDL> .r update_on_the_fly_decom_tables
+;           IDL> updateOnTheFlyDecomTables, 'FLIGHT', dbserver='neos-db-dev'    ; NEOS dev
 ;           IDL> updateOnTheFlyDecomTables, 'FLATSAT_A', dbserver='emm-db-dev'  ; EMM dev
 ;           IDL> updateOnTheFlyDecomTables, 'FLIGHT', definition_start_time='2023/210-00:00:00'  ; EMM prod
 ;           IDL> updateOnTheFlyDecomTables, 'FLIGHT', dbserver='ixpe-db', definition_start_time='2021/001-00:00:00'  ; IXPE
@@ -113,7 +114,7 @@ pro db_init, username, password, server
   
   mission = getenv('MISSIONID')
   
-  missions = ['emm', 'ixpe']
+  missions = ['emm', 'ixpe', 'neos']
   w = where( missions eq mission, count)
   if count eq 0 then begin
     message, 'Error: invalid mission: ' + mission + $
@@ -149,6 +150,7 @@ pro db_init, username, password, server
 
     'imap':
     'ixpe':
+    'neos':
     'suda': begin
       dbDriver = 'oracle.jdbc.driver.OracleDriver'
       dbUrl = 'jdbc:oracle:thin:@//' + server + ':1521/' + server
@@ -235,9 +237,11 @@ pro updateOnTheFlyDecomTables, systemIdStr_in, dbserver=dbserver, definition_sta
   
   ; Get the defined systems from the SystemsDefinition table.
   
-  DB_CONNECT, username, password, server=server
-  DB_GET_SYSTEMS, systems, systemIds
-  DB_DISCONNECT
+  print, 'Querying SystemsDefinition...'
+  query = "select * from SystemsDefinition"
+  db, query, result, n_rows
+  systems   = result.systemName
+  systemIds = result.systemId
   
   ; Verify the input system is defined.
   
@@ -306,7 +310,7 @@ pro updateOnTheFlyDecomTables, systemIdStr_in, dbserver=dbserver, definition_sta
     endif
     
 
-  endif else if mission eq 'ixpe' then begin
+  endif else if mission eq 'ixpe' or mission eq 'neos' then begin
     
     ; I verified that the decom saveset does not contain any pseudo-packets for derived items,
     ; nor any string items.
