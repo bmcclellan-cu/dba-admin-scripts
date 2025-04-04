@@ -5,6 +5,7 @@ import sys
 import numpy
 import logging
 import oracledb
+import math
 
 connection = None
 cursor = None
@@ -26,6 +27,7 @@ def fetchAllTMIDs(cursor):
 
 
 def fetchTMIDValuesByTimeRange(cursor, TMID, selectDateStartGPS, selectDateEndGPS):
+    # TODO: Need to find the SIDs that are available in the database, then iterate through all of the SIDs
     sql = f"""SELECT SCT_VTCW, VALUE FROM TMANALOG_SID1 WHERE TMID={TMID} AND SCT_VTCW BETWEEN 
         {selectDateStartGPS} AND {selectDateEndGPS}"""
 
@@ -84,6 +86,14 @@ def calibrate(arraySlice, c):
     return [arraySlice[0], newValue]
 
 
+# This function uses the startTimeGPS value and the assumption that each bin will be 300000000 (5 min)
+# wide to categorize each value into a bin.
+def calculateBinID(arraySlice, startTimeGPS):
+    time = arraySlice[0]
+    timeDelta = time - startTimeGPS
+    return int(math.trunc(timeDelta/300000000))
+
+
 def main():
     """ 
         This script loads the provided csv file into a numpy array and returns the 
@@ -134,6 +144,7 @@ def main():
 
     TMID = 841
 
+    # TODO: Need to find the SIDs that are available in the database, then iterate through all of the SIDs
     dataArray = fetchTMIDValuesByTimeRange(cursor, TMID, startTimeGPS, endTimeGPS)
 
     calibrationData = fetchAnalogConversionbyTMID(cursor, TMID)
@@ -155,20 +166,25 @@ def main():
 
     numOfBuckets = int((endTimeGPS - startTimeGPS)/300000000)
 
+    # Makes a list of bin indexes to put the data into. 
+    binIndexes = numpy.apply_along_axis(calculateBinID, -1, dataArray, startTimeGPS)
+
     # The resultant output from the script, formatted:
     # SCT_VTCW, AVERAGE_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, VALUE_COUNT
-    outputArray = []
 
     print(numOfBuckets)
+
+    TMAverageInsertData = []
 
     for i in range(numOfBuckets):
         print(i)
         bucketStartGPS = i * 300000000 + startTimeGPS
         bucketEndGPS = (i + 1) * 300000000 + startTimeGPS
-        currentBucketBool = numpy.apply_along_axis(filter, -1, dataArray, bucketStartGPS, bucketEndGPS)
+        # TODO: The fact that is runs EVERY SINGLE BUCKET probably does not help performance much. Need to improve
+        currentBucketData = numpy.delete(dataArray[numpy.where(binIndexes == i)], 0, axis=1)
         # Use the filter to keep only the relevant bucket data, and delete the leftmost column (timestamp) from the copied array.
         # Less overhead for the compute, and makes numpy.size accurate to the 1-dimensional array length.
-        currentBucketData = numpy.delete(dataArray[currentBucketBool], 0, axis=1)
+        # TODO: Check that array is not zero
         
         # The outputs are always tuples, so index out the value.
         currentBucketAverage = float(numpy.average(currentBucketData, axis=0)[0])
@@ -177,15 +193,16 @@ def main():
         currentBucketCount = numpy.size(currentBucketData)
 
         # Midpoint of bucket time range is used for SCT_VTCW
-        outputArray.append(((bucketStartGPS + bucketEndGPS)/2, currentBucketAverage, currentBucketMin, currentBucketMax, currentBucketCount))
+        # TODO: Need to iterate through SIDS, just using SID=1 for now.
+        TMAverageInsertData.append((1, TMID, (bucketStartGPS + bucketEndGPS)/2, currentBucketAverage, currentBucketMin, currentBucketMax, currentBucketCount))
 
-    print(outputArray)
+    cursor.executemany("INSERT INTO SYS.TMAverage (SID, TMID, SCT_VTCW, AVERAGE_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, VALUE_COUNT) VALUES (:1, :2, :3, :4, :5, :6, :7)", TMAverageInsertData)
+    connection.commit()
+    if cursor.rowcount != 0:
+        print(f"Successfully inserted {cursor.rowcount} rows into TMAverage")
+    else:
+        print("Unable to insert rows.")
 
-
-    # print("Averaging for whole day")
-    # # Average value over entire numpy array.
-    # averageValue = numpy.average(dataArray, axis=0)[1]
-    # print(averageValue)
 
 
 
