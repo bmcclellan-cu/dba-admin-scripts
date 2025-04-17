@@ -1,32 +1,52 @@
 #!/usr/bin/env python3
 
+
+# System imports
 import sys
-import numpy
 import logging
-import oracledb
 import math
 import time
+# Third-party imports
+import oracledb
+import numpy as np
 
-# TODO: Add error checking for improper permissions
 
 connection = None
 cursor = None
 violatedReferentialIntegrity = False
 
 # Dictionary of databases this script is designed for and the appropriate table to access.
-TMAnalogDBs = {
+TMANALOG_DBS = {
     "goldprod": "TMANALOG_SID1",
     "evep12c": "TMANALOG",
-    # "aimprod": , 
+    "aimprod": "TMANALOG_TABLE", 
     "tsisprod": "TMANALOG_SID1",
     "ixpeprod": "TMANALOG_SID1"
 }
 
-TMAverageDBs = {
-    "goldprod": "SYS.TMAverage", # Currently this way for testing. I created the table in the sys schema, but will end up in the L1 schema.
-    "evep12c": "EVE_L1.TMAverage",
-    "tsisprod": "TSIS_L1.TMAverage", # Added testing table, but will probably also be what it will be in prod.
-    "ixpeprod": "IXPE_L1.TMAverage" # Currently does not have TMAverage table
+TMAVERAGE_DBS = {
+    "goldprod": "ROBERT_TEST.TMAverage", 
+    # Currently this way for testing. I created the table in the sys schema, but will end up in the L1 schema.
+    "evep12c": "ROBERT_TEST.TMAverage",
+    "tsisprod": "ROBERT_TEST.TMAverage", # Added testing table, but will probably also be what it will be in prod.
+    "ixpeprod": "ROBERT_TEST.TMAverage", # Currently does not have TMAverage table
+    "aimprod" : "ROBERT_TEST.TMAVERAGE" # Currently this way for testing, need to compare.
+}
+
+TELEMETRYITEMDEFINITION_DBS = {
+    "goldprod": "TelemetryItemDefinition",
+    "evep12c": "TelemetryItemDefinition",
+    "tsisprod": "TelemetryItemDefinition",
+    "ixpeprod": "TelemetryItemDefinition",
+    "aimprod": "AIM_CT_SC.TelemetryItemDefinition"
+}
+
+TELEMETRYANALOGCONVERSIONS_DBS = {
+    "goldprod": "TelemetryAnalogConversions",
+    "evep12c": "TelemetryAnalogConversions",
+    "tsisprod": "TelemetryAnalogConversions",
+    "ixpeprod": "TelemetryAnalogConversions",
+    "aimprod": "AIM_CT_SC.TelemetryAnalogConversions"
 }
 
 def get_password_from_file(file_path):
@@ -40,12 +60,15 @@ def get_password_from_file(file_path):
         return None
 
 
-# Returns a list of all of the TMIDs in the server
-def fetchAllTMIDs(cursor):
-    global violatedReferentialIntegrity
-    TMIDArray = []
-    sql = """SELECT UNIQUE TLMID from TelemetryItemDefinition WHERE dataType='U' OR dataType='I' OR dataType='F'"""
-    try:
+# Fetches all values for a specific day, then allocates numpy arrays for the values, calculated bucket 
+# ids, and the list of tmids, then populates them. 
+# OUTPUT: Tuple (results_len, results_values, results_bucket_ids, results_tmids)
+def fetch_all_values_by_time_range(connection, database, select_date_start_gps, select_date_end_gps):
+    sql = f"""SELECT /*+ PARALLEL(AUTO) */ TMID, SCT_VTCW, VALUE FROM {TMANALOG_DBS[database]} WHERE 
+    (SCT_VTCW >= {select_date_start_gps}) AND (SCT_VTCW < {select_date_end_gps}) AND VALUE IS NOT NULL"""
+    # print(sql) # DEBUG
+    cursor = connection.cursor()
+    try: 
         results = cursor.execute(sql).fetchall()
     except oracledb.DatabaseError as error:
         if str(error).find("ORA-00942") != -1:
@@ -56,51 +79,36 @@ def fetchAllTMIDs(cursor):
             exit(1)
         else:
             raise error
+            
+    results_len = len(results)
+    results_values = np.zeros((results_len))
+    results_bucket_ids = np.zeros((results_len))
+    results_tmids = np.zeros((results_len))
 
-    for row in results:
-        # Row is in the form of a tuple, extract value from tuple and append to list.
-        TMIDArray.append(row[0])
+    print(f"Retrieved {results_len} records. Ingesting...")
 
-    return TMIDArray
-
-
-def fetchTMIDValuesByTimeRange(cursor, TMID, database, selectDateStartGPS, selectDateEndGPS):
-    # Uses the pre-defined table name for the given database to pull the data.
-    sql = f"""SELECT SCT_VTCW, VALUE FROM {TMAnalogDBs[database]} WHERE TMID={TMID} AND SCT_VTCW BETWEEN 
-        {selectDateStartGPS} AND {selectDateEndGPS} AND VALUE IS NOT NULL"""
-
-    # First fetch the data, then determine the number of rows, resize numpy array, and insert into 
-    # allocated array.
-
-    try:
-        results = cursor.execute(sql).fetchall()
-    except oracledb.DatabaseError as error:
-        if str(error).find("ORA-00942") != -1:
-            print("ORA-00942: table or view does not exist")
-            print("This error is likely due to missing permissions.")
-            print("Ensure that the script has the following permissions: ")
-            print("(TMAnalog(SELECT), TelemetryItemDefinition(SELECT), TelemetryAnalogConversions(SELECT), TMAverage(ALL)")
-            exit(1)
-        else:
-            raise error
-    # The fetchall method loads everything into a python array of tuples at once, which may cause issues. It can be improved by a bit
-    # By increasing the arraysize attribute of the cursor, so that it loads them in bigger batches.
-
-    resultsLen = len(results)
-    TMIDValues = numpy.zeros((resultsLen, 2))
     rowCounter = 0
 
     for row in results:
-        TMIDValues[rowCounter] = [row[0], row[1]]
+        results_tmids[rowCounter] = row[0]
+
+        # Calculate the bin ID for the specific row. Prevents needing to iterate over array later.
+        time = row[1]
+        timeDelta = time - select_date_start_gps
+        results_bucket_ids[rowCounter] = int(math.trunc(timeDelta/300000000))
+
+        results_values[rowCounter] = row[2]
         rowCounter += 1
 
-    return TMIDValues
+    cursor.close()
 
+    return (results_len, results_values, results_bucket_ids, results_tmids)
 
-def fetchAnalogConversionbyTMID(cursor, TMID):
-    sql = f"""select  N.euUnits,  C.conversionType,  C.lowValue, C.c0,  C.c1,  C.c2,  C.c3,  C.c4,  C.c5,  C.c6,  C.c7 
-            from TelemetryItemDefinition N, TelemetryAnalogConversions C 
-            where C.tlmId = {TMID} and N.tlmId = C.tlmId order by C.segmentNumber"""
+def fetch_analog_conversions_by_tmid(cursor, tmid, database):
+    sql = f"""select C.conversionType,  C.lowValue, C.c0,  C.c1,  C.c2,  C.c3,  C.c4,  C.c5,  C.c6,  C.c7 
+            FROM {TELEMETRYANALOGCONVERSIONS_DBS[database]} C 
+            where C.tlmId = {tmid} order by C.segmentNumber"""
+    # print(sql) # DEBUG
     try:
         results = cursor.execute(sql).fetchone()
     except oracledb.DatabaseError as error:
@@ -115,14 +123,16 @@ def fetchAnalogConversionbyTMID(cursor, TMID):
 
     return results
 
-def insertTMAverageRows(cursor, TMID, database, TMAverageValues):
+def insert_tmaverage_rows(cursor, TMID, database, TMAverageValues):
     global connection
     global violatedReferentialIntegrity
+
+
     # TODO: Determine if the default should be that there is no SID recorded.
-    if database != "goldprod":
-        sql = f"INSERT INTO {TMAverageDBs[database]} (TMID, SCT_VTCW, AVERAGE_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, VALUE_COUNT) VALUES (:1, :2, :3, :4, :5, :6)"
-    else:
-        sql = f"INSERT INTO {TMAverageDBs[database]} (SID, TMID, SCT_VTCW, AVERAGE_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, VALUE_COUNT) VALUES (:1, :2, :3, :4, :5, :6, :7)"
+    sql = f"""INSERT INTO {TMAVERAGE_DBS[database]} 
+        (TMID, SCT_VTCW, AVERAGE_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, VALUE_COUNT) 
+        VALUES (:1, :2, :3, :4, :5, :6)"""
+    # print(sql) # DEBUG
     try:
         cursor.executemany(sql, TMAverageValues)
         connection.commit()
@@ -149,96 +159,124 @@ def insertTMAverageRows(cursor, TMID, database, TMAverageValues):
         violatedReferentialIntegrity = True
 
 
-def processValues(TMID, database, startTimeGPS, endTimeGPS):
-    global connection
+def processValues(connection, database, start_time_gps, end_time_gps):
     cursor = connection.cursor()
     
     # Fetch all data for the given date range.
-    dataArray = fetchTMIDValuesByTimeRange(cursor, TMID, database, startTimeGPS, endTimeGPS)
+    print("Pulling data")
+    data = fetch_all_values_by_time_range(connection, database, start_time_gps, end_time_gps)
 
-    # If there is no data for the TMID, do not average.
-    if len(dataArray) == 0:
-        print(f"No data found for TMID {TMID}, continuing...")
+    results_len = data[0]
+    results_values = data[1]
+    results_bucket_ids = data[2]
+    results_tmids = data[3]
+
+    # np.savetxt("/ssd_internal/Robert/TMAverage_testing_data/results_values_aim.csv", results_values, delimiter=",")
+    # print("Saved values")
+    # np.savetxt("/ssd_internal/Robert/TMAverage_testing_data/results_bucket_ids_aim.csv", results_bucket_ids, delimiter=",")
+    # print("Saved bucket ids")
+    # np.savetxt("/ssd_internal/Robert/TMAverage_testing_data/results_tmids_aim.csv", results_tmids, delimiter=",")
+    # print("Saved tmids")
+
+    # exit(0)
+
+
+    # Currently loads from csv while I am testing the new averaging code.
+    # results_values = np.loadtxt("/ssd_internal/Robert/TMAverage_testing_data/results_values_aim.csv")
+    # print("Read from results_values.csv")
+    # results_bucket_ids = np.loadtxt("/ssd_internal/Robert/TMAverage_testing_data/results_bucket_ids_aim.csv")
+    # print("Read from results_bucket_ids.csv")
+    # results_tmids = np.loadtxt("/ssd_internal/Robert/TMAverage_testing_data/results_tmids_aim.csv")
+    # print("Read from results_tmids.csv")
+
+    # results_len = int(np.size(results_tmids))
+    # print("Calculated the length")
+
+
+
+    # If there is no data for the time range, then exit.
+    if results_len == 0:
+        print(f"No data found for the time range {start_time_gps} - {end_time_gps}")
         return True
 
-    calibrationData = fetchAnalogConversionbyTMID(cursor, TMID)
+    unique_tmids = np.unique(results_tmids)
+    unique_bucket_ids = range(int(((end_time_gps-start_time_gps)/300000000)))
 
-    # If there is no calibration data or if it's already in "DN", then calibrate.
-    if calibrationData != None and calibrationData[0] != "DN":
-        polynomialCalibration = calibrationData[3:] # Indexes of the polynomial coefficients, removes extra.
-        dataArray = numpy.apply_along_axis(calibrate, -1, dataArray, polynomialCalibration)
 
-    # Generates bucket list, width 300000000 GPS.
+    print("Unique_bucket_ids: " + str(unique_bucket_ids))
+    print("Unique_tmids: " + str(unique_tmids))
 
-    # TODO:  Check if there would be a remainder from the bucket creation.
+    insertion_data = []
 
-    if ((endTimeGPS - startTimeGPS) % 300000000 != 0):
-        print("Error, time difference must be a multiple of 300000000 (5 minutes).")
+    for tmid in unique_tmids:
+        print(f"Processing TMID: {tmid}")
+        tmid_mask = np.where(results_tmids == tmid, True, False)
+        tmid_bucket_ids = results_bucket_ids[tmid_mask]
 
-    numOfBuckets = int((endTimeGPS - startTimeGPS)/300000000)
+        # Fetch calibration data, then apply to all values for the specific TMID.
 
-    # Makes a list of bin indexes to put the data into. 
-    binIndexes = numpy.apply_along_axis(calculateBinID, -1, dataArray, startTimeGPS)
+        tmid_values = results_values[tmid_mask]
+                                          
+        calibration_data = fetch_analog_conversions_by_tmid(cursor, tmid, database)
 
-    # The resultant output from the script, formatted:
-    # SCT_VTCW, AVERAGE_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, VALUE_COUNT
-
-    TMAverageInsertData = []
-
-    for i in range(numOfBuckets):
-        bucketStartGPS = i * 300000000 + startTimeGPS
-        bucketEndGPS = (i + 1) * 300000000 + startTimeGPS
-
-        # Uses the binIndexes filter to determine what indexes to fetch data from, and simply filter. Then removes the time column, 
-        # as it is no longer necessary and might add averaging overhead.
-        currentBucketData = numpy.delete(dataArray[numpy.where(binIndexes == i)], 0, axis=1)
-
-        # No data in bucket, continue.
-        if numpy.size(currentBucketData) == 0:
+        if np.size(tmid_values) == 0:
+            print(f"No data for tmid {tmid}")
             continue
 
-        # The outputs are always tuples, so index out the value.
-        currentBucketAverage = float(numpy.average(currentBucketData, axis=0)[0]) # Defaults to np.float64
-        currentBucketMin = float(numpy.min(currentBucketData, axis=0)[0])
-        currentBucketMax = float(numpy.max(currentBucketData, axis=0)[0])
-        currentBucketCount = numpy.size(currentBucketData)
+        # Apply the polynomial calibration every time, as long as it exists.
+        if calibration_data != None:
+            polynomial_calibration = calibration_data[2:] # Indexes of the polynomial coefficients, removes extra.
+            tmid_values = np.apply_along_axis(calibrate, -1, tmid_values, (polynomial_calibration))
 
-        # TODO: Determine if default should be no SID, have if statement for now.
-        if database != "goldprod":
-            TMAverageInsertData.append((TMID, (bucketStartGPS + bucketEndGPS)/2, currentBucketAverage, currentBucketMin, currentBucketMax, currentBucketCount))
-        else:
-            TMAverageInsertData.append((1, TMID, (bucketStartGPS + bucketEndGPS)/2, currentBucketAverage, currentBucketMin, currentBucketMax, currentBucketCount))
+        for bucket_id in unique_bucket_ids:
+            bucket_mask = np.where(tmid_bucket_ids == bucket_id, True, False)
+            bucket_values = tmid_values[bucket_mask]
 
-    insertTMAverageRows(cursor, TMID, database, TMAverageInsertData)
+            current_bucket_count = np.size(bucket_values)
 
+            if current_bucket_count == 0:
+                insertion_data.append((int(tmid), int(bucket_id * 300_000_000 + start_time_gps + 150_000_000 + 18_000_000), 0, 0, 0, 0)) # DEBUG: Here to test 18 second offset
+                continue
+
+            current_bucket_average = float(np.average(bucket_values))
+            current_bucket_min = float(np.min(bucket_values))
+            current_bucket_max = float(np.max(bucket_values))
+            insertion_data.append((int(tmid), int(bucket_id * 300000000 + start_time_gps + 150_000_000 + 18_000_000), current_bucket_average, current_bucket_min, current_bucket_max, current_bucket_count))
+
+
+    # There will always be data to insert, even if no actual values are present because the output just gets zeroed for all bins.
+    insert_tmaverage_rows(cursor, "Done", database, insertion_data)
     return True
 
-def convertDTtoGPS(cursor, DTValue):
+def convertDTtoGPS(cursor, DTValue, isAim):
     # The DT2GPS function takes a string in the format "{date} {time}"
+
+    if isAim:
+        cursor.execute("ALTER SESSION SET NLS_TIMESTAMP_FORMAT='DD-MON-RR HH.MI.SSXFF AM'")
+    
     sql = f"""SELECT DT2GPS('{DTValue}') FROM dual"""
-    for row in cursor.execute(sql):
-        result = row[0]
-    return result
 
+    # print(sql) # DEBUG
 
-def filter(arraySlice, startTime, endTime):
-    if arraySlice[0] < startTime or arraySlice[0] > endTime:
-        return False
-    else:
-        return True
-
+    try:
+        result = cursor.execute(sql).fetchone()[0]
+    except oracledb.DatabaseError:
+        print("Failed to convert date to GPS. Please ensure that you entered in the format 'DD-MMM-YY'")
+        print("Example: 28-MAR-25")
+        exit(1)
+    return result - 18000000 # DEBUG: Here in order to test 18 second offset.
 
 def calibrate(arraySlice, c):
-    value = arraySlice[1]
+    value = arraySlice
     newValue = c[0] + c[1]*value + c[2]*value**2 + c[3]*value**3 + c[4]*value**4 + c[5]*value**5 + c[6]*value**6 + c[7]*value**7
-    return [arraySlice[0], newValue]
+    return newValue
 
 
-# This function uses the startTimeGPS value and the assumption that each bin will be 300000000 (5 min)
+# This function uses the start_time_gps value and the assumption that each bin will be 300000000 (5 min)
 # wide to categorize each value into a bin.
-def calculateBinID(arraySlice, startTimeGPS):
+def calculateBinID(arraySlice, start_time_gps):
     time = arraySlice[0]
-    timeDelta = time - startTimeGPS
+    timeDelta = time - start_time_gps
     return int(math.trunc(timeDelta/300000000))
 
 
@@ -247,17 +285,13 @@ def main():
         This script fetches the values for each TMID in the provided database for the day provided from
         all TMAnalog_SIDX tables, and computes the min, max, average, and count of measurements
         over 5 minute increments, then inserts them into the TMAverage table.
-        Inputs: [database] [Date]
+        Inputs: [database] [date]
     """
     # Usage and example
-    usage = "Usage: ./ProcessTMIDData.py [input.csv] [output.csv] [start time | gps] [end time | gps]"
-    example = "Example: ./ProcessTMIDData.py TMIDData.csv ProcessedTMIDData.csv 1420675218000000 1420761618000000"
-
+    usage = "Usage: ./ProcessTMIDData.py [database] [date]"
+    example = "Example: ./ProcessTMIDData.py goldprod 12-JAN-25"
     global connection
     global violatedReferentialIntegrity
-
-    username = "PROCESSTMIDTEST"
-    password = get_password_from_file("./.passwd")
 
     for argument in sys.argv:
         if argument == "-h":
@@ -276,9 +310,17 @@ def main():
     database = sys.argv[1].lower()
     selectDate = sys.argv[2]
 
+    username = "PROCESSTMIDTEST"
+    password = get_password_from_file("./.passwd")
+
+    if password == None:
+        # Error message is already printed by get_password_from_file
+        exit(1)
+
+
     # Validate database input
-    if database not in TMAverageDBs.keys() or database not in TMAnalogDBs.keys():
-        print("Selected database is not supported by script. Supported databases are: " + str(tuple(TMAverageDBs.keys())))
+    if database not in TMAVERAGE_DBS.keys() or database not in TMANALOG_DBS.keys():
+        print("Selected database is not supported by script. Supported databases are: " + str(tuple(TMAVERAGE_DBS.keys())))
         exit(1)
     
 
@@ -291,31 +333,15 @@ def main():
     except:
         print(f"Error connecting to database {database}. Check if database exists and the script has connect priviliges.")
         exit(1)
-    
 
-    TMIDArray = fetchAllTMIDs(cursor)
-    
-    print(f"TMID Length: {len(TMIDArray)}")
+    start_time_gps = convertDTtoGPS(cursor, f"{selectDate} 12.00.00.000000000 AM", database == "aimprod")
+    end_time_gps = convertDTtoGPS(cursor, f"{selectDate} 11.59.59.999999999 PM", database == "aimprod")
 
-    startTimeGPS = convertDTtoGPS(cursor, f"{selectDate} 12.00.00.000000000 AM")
-    endTimeGPS = convertDTtoGPS(cursor, f"{selectDate} 11.59.59.999999999 PM")
+    print(start_time_gps, end_time_gps)
 
-    print(startTimeGPS, endTimeGPS)
-
-    
     cursor.close()
 
-    for TMID in TMIDArray:
-        
-        # Re-open fresh cursor to prevent clutter from many large queries (performance degreades otherwise.)
-        print(f"Fetching data for {TMID}.")
-
-        TMIDT0 = time.time()
-        
-        processValues(TMID, database, startTimeGPS, endTimeGPS)
-        
-        print(f"Finished TMID {TMID} in {time.time() - TMIDT0}")
-
+    processValues(connection, database, start_time_gps, end_time_gps)
 
     if(violatedReferentialIntegrity):
         print("The script ran successfully, but during insertion of data there was at least one Unique Constraint Violation.")
