@@ -8,6 +8,7 @@ import math
 import traceback
 import multiprocessing
 import datetime
+import os
 # Third-party imports
 import oracledb
 import numpy as np
@@ -63,6 +64,8 @@ def get_password_from_file(file_path):
 # ids, and the list of tmids, then populates them. 
 # OUTPUT: Tuple (results_len, results_values, results_bucket_ids, results_tmids)
 def fetch_all_values_by_time_range(connection, database, TMID, select_date_start_gps, select_date_end_gps):
+    THREAD_LOGGER = multiprocessing.get_logger()
+
 
     if TMID == "ALL":
         sql = f"""SELECT /*+ parallel */ TMID, SCT_VTCW, VALUE FROM {TMANALOG_DBS[database]} WHERE 
@@ -72,30 +75,35 @@ def fetch_all_values_by_time_range(connection, database, TMID, select_date_start
         (TMID = {TMID}) AND
         (SCT_VTCW >= {select_date_start_gps}) AND (SCT_VTCW < {select_date_end_gps}) AND VALUE IS NOT NULL"""
 
+    THREAD_LOGGER.debug(sql)
+
     cursor = connection.cursor()
     try: 
         results = cursor.execute(sql).fetchall()
     except oracledb.DatabaseError as error:
         if str(error).find("ORA-00942") != -1:
-            print("ORA-00942: table or view does not exist")
-            print("Either the following tables do not exist or the script does not have access to them.")
-            print("Ensure that the script has the following permissions: ")
-            print("(TMAnalog(SELECT), TelemetryItemDefinition(SELECT), "
-                  "TelemetryAnalogConversions(SELECT), TMAverage(ALL)")
+            THREAD_LOGGER.fatal("ORA-00942: table or view does not exist. \n"
+                         "Either the following tables do not exist or the script does not have access to them. \n"
+                         "Ensure that the script has the following permissions:  \n"
+                         "(TMAnalog(SELECT), TelemetryItemDefinition(SELECT), \n"
+                         "TelemetryAnalogConversions(SELECT), TMAverage(ALL) \n"
+                         )
             connection.close()
             exit(1)
         else:
             raise error
-            
+        
+    
+    # WARNING: The current version of the script uses a float 128 for the numpy array. 
+    # Oracle number can have up 176 bits of precision, so there could be overflow errors.
     results_len = len(results)
-    results_values = np.zeros((results_len))
-    results_bucket_ids = np.zeros((results_len))
-    results_tmids = np.zeros((results_len))
+    results_values = np.zeros((results_len), dtype=np.float128) 
+    results_bucket_ids = np.zeros((results_len), dtype=np.uintc)
+    results_tmids = np.zeros((results_len), dtype=np.uintc)
 
-    print(f"Retrieved {results_len} records. Ingesting...")
+    THREAD_LOGGER.info(f"Retrieved {results_len} records. Ingesting...")
 
     row_number = 0
-
     for row in results:
         results_tmids[row_number] = row[0]
 
@@ -112,22 +120,28 @@ def fetch_all_values_by_time_range(connection, database, TMID, select_date_start
     return (results_len, results_values, results_bucket_ids, results_tmids)
 
 def fetch_analog_conversions_by_tmid(cursor, tmid, database):
+    THREAD_LOGGER = multiprocessing.get_logger()
+
     sql = f"""select C.c0,  C.c1,  C.c2,  C.c3,  C.c4,  C.c5,  C.c6,  C.c7 
             FROM {TELEMETRYANALOGCONVERSIONS_DBS[database]} C 
             where C.tlmId = {tmid} order by C.segmentNumber"""
+
+    THREAD_LOGGER.debug(sql)
     try:
         results = cursor.execute(sql).fetchone()
     except oracledb.DatabaseError as error:
         if str(error).find("ORA-00942") != -1:
-            print("ORA-00942: table or view does not exist")
-            print("Either the following tables do not exist or the script does not have access to them.")
-            print("Ensure that the script has the following permissions: ")
-            print("(TMAnalog(SELECT), TelemetryItemDefinition(SELECT), "
-                  "TelemetryAnalogConversions(SELECT), TMAverage(ALL)")
+            THREAD_LOGGER.fatal("ORA-00942: table or view does not exist"
+                        "Either the following tables do not exist or the script does not have access to them."
+                        "Ensure that the script has the following permissions: "
+                        "(TMAnalog(SELECT), TelemetryItemDefinition(SELECT), "
+                        "TelemetryAnalogConversions(SELECT), TMAverage(ALL)"
+                        )
             cursor.connection.close()
             exit(1)
         else:
-            raise error
+            THREAD_LOGGER.fatal(traceback.format_exc())
+            THREAD_LOGGER.fatal("An error occurred while retrieving Analog Conversion Polynomial. See above output:")
 
     return results
 
@@ -136,10 +150,12 @@ def fetch_analog_conversions_by_tmid(cursor, tmid, database):
 # Attempts to insert the passed array of values into tmaverage. If the number of inserted rows 
 # Returns True if no errors occurred during insertion, and returns False if errors occurred.
 def insert_tmaverage_rows(connection, database, tmaverage_values):
+    THREAD_LOGGER = multiprocessing.get_logger()
+
 
     # If no data is being inserted, automatically succeed.
     if len(tmaverage_values) == 0: 
-        print("No values to insert. Continuing...")
+        THREAD_LOGGER.info("No values to insert. Continuing...")
         return True
     
     cursor = connection.cursor()
@@ -149,46 +165,76 @@ def insert_tmaverage_rows(connection, database, tmaverage_values):
     sql = f"""INSERT INTO {TMAVERAGE_DBS[database]} 
         (TMID, SCT_VTCW, AVERAGE_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, VALUE_COUNT) 
         VALUES (:1, :2, :3, :4, :5, :6)"""
+
+    THREAD_LOGGER.debug(sql)
+
     try:
-        cursor.executemany(sql, tmaverage_values, batcherrors=True)
-        # Default behavior is to output the failed rows and to commit the rest of the changes.
-        for error in cursor.getbatcherrors():
-            print(f"Error {error.message} at row offset {error.offset}")
-            print(f"Row: {tmaverage_values[error.offset]}")
-        
+        cursor.executemany(sql, tmaverage_values)
         connection.commit()
     except oracledb.IntegrityError as error:
         if str(error).find("ORA-00001") != -1:
-            print(f"Error: Unique Constraint Violated during insert. Insert has been rolled back.")
-            print("This is likely due to the script parameters overlapping with pre-existing data. Please double-check")
-            print("the data in TMAverage.")
+            THREAD_LOGGER.error(f"ORA-00001: Unique Constraint Violated during insert. Insert has been rolled back."
+                          "This is likely due to the script parameters overlapping with pre-existing data. Please double-check"
+                          "the data in TMAverage. Continuing..."
+                          )
             return False
         else:
             raise error
     except oracledb.DatabaseError as error:
         if str(error).find("ORA-00942") != -1:
-            print("ORA-00942: table or view does not exist")
-            print("This error is likely due to missing permissions.")
-            print("Ensure that the script has the following permissions: ")
-            print("(TMAnalog(SELECT), TelemetryItemDefinition(SELECT), TelemetryAnalogConversions(SELECT), TMAverage(ALL)")
+            THREAD_LOGGER.fatal("ORA-00942: table or view does not exist"
+                        "This error is likely due to missing permissions."
+                        "Ensure that the script has the following permissions: "
+                        "(TMAnalog(SELECT), TelemetryItemDefinition(SELECT), TelemetryAnalogConversions(SELECT), TMAverage(ALL)"
+                        )
             connection.close()
             exit(1)
         else:
             raise error
     if cursor.rowcount != 0:
-        print(f"Successfully inserted {cursor.rowcount} rows into TMAverage.")
+        THREAD_LOGGER.info(f"Successfully inserted {cursor.rowcount} rows into TMAverage.")
         return True
     else:
-        print("Error: Unable to insert rows... Continuing")
+        THREAD_LOGGER.info("Error: Unable to insert rows... Continuing")
         return False
 
 # Processes all the data for a single day in a single thread. Returns True if successful, False if not.
-def process_values_by_time_period(username, password, connection_string, database, TMID, start_time_gps, end_time_gps):
+def process_values_by_date(username, password, connection_string, database, TMID, single_date):
+    if not os.path.exists("./logs"):
+        os.mkdir("./logs", )
+
+    # Logger is setup in process_values_by_date, and future calls to multiprocessing.get_logger() will return the same logger
+    formatter = logging.Formatter('%(asctime)s %(levelname)s - %(message)s')
+
+
+    # Setup log file for thread:
+    THREAD_LOGGER = multiprocessing.get_logger()
+    log_file_name = f"./logs/TMAverage-{database}-{single_date}-{TMID}.log"
+    handler = logging.FileHandler(log_file_name)        
+    handler.setFormatter(formatter)
+    THREAD_LOGGER.handlers.clear()
+    THREAD_LOGGER.addHandler(handler)
+    THREAD_LOGGER.setLevel(logging.INFO)
+    
+    THREAD_LOGGER.info(f"Connecting to DB {connection_string} as {username}")
+    
     connection = oracledb.connect(user=username, password=password, dsn=connection_string)
     cursor = connection.cursor()
+
+    # The 18_000_000 offset exists to resolve the discrepencies with the AIMPROD DB. 
+    # Does not appear to be intended behavior, but needed to be reproduced.
+    start_time_gps = convert_dt2gps(
+        cursor, f"{single_date.strftime('%d-%b-%y')} 12.00.00.000000000 AM", 
+        database == "aimprod") - 18_000_000
+    
+    end_time_gps = convert_dt2gps(
+        cursor, f"{single_date.strftime('%d-%b-%y')} 11.59.59.999999999 PM", 
+        database == "aimprod") - 18_000_000
     
     # Fetch all data for the given date range.
-    print(f"Pulling data for time range {start_time_gps} - {end_time_gps}")
+
+    THREAD_LOGGER.info(f"Pulling data for time range {start_time_gps} - {end_time_gps}")
+
     data = fetch_all_values_by_time_range(connection, database, TMID, start_time_gps, end_time_gps)
 
     results_len = data[0]
@@ -198,20 +244,20 @@ def process_values_by_time_period(username, password, connection_string, databas
 
     # If there is no data for the time range, then exit.
     if results_len == 0:
-        print(f"No data found for the time range {start_time_gps} - {end_time_gps}")
+        THREAD_LOGGER.info(f"No data found for the time range {start_time_gps} - {end_time_gps}")
         return True
 
     unique_tmids = np.unique(results_tmids)
     unique_bucket_ids = range(int(((end_time_gps-start_time_gps)/300000000)))
 
 
-    print("Unique_bucket_ids: " + str(unique_bucket_ids))
-    print("Unique_tmids: " + str(unique_tmids))
+    THREAD_LOGGER.info(f"Unique_bucket_ids: {str(unique_bucket_ids)}")
+    THREAD_LOGGER.info(f"Unique_tmids: {str(unique_tmids)}")
 
     insertion_data = []
 
     for tmid in unique_tmids:
-        print(f"Processing TMID: {tmid}")
+        THREAD_LOGGER.info(f"Processing TMID: {tmid}")
         tmid_mask = np.where(results_tmids == tmid, True, False)
         tmid_bucket_ids = results_bucket_ids[tmid_mask]
 
@@ -222,7 +268,7 @@ def process_values_by_time_period(username, password, connection_string, databas
         calibration_data = fetch_analog_conversions_by_tmid(cursor, tmid, database)
 
         if np.size(tmid_values) == 0:
-            print(f"No data for tmid {tmid}")
+            THREAD_LOGGER.info(f"No data for tmid {tmid}")
             continue
 
         # Apply the polynomial calibration every time, as long as it exists.
@@ -233,12 +279,13 @@ def process_values_by_time_period(username, password, connection_string, databas
         for bucket_id in unique_bucket_ids:
             bucket_mask = np.where(tmid_bucket_ids == bucket_id, True, False)
             bucket_values = tmid_values[bucket_mask]
+            sct_vtcw = int(bucket_id * 300_000_000 + start_time_gps + 150_000_000 + 18_000_000) 
 
-            current_bucket_count = np.size(bucket_values)
+            current_bucket_count = int(np.size(bucket_values))
+
 
             if current_bucket_count == 0:
                 # 18_000_000 re-adds the 18 second offset so that the column is consistent with AIMPROD.
-                sct_vtcw = int(bucket_id * 300_000_000 + start_time_gps + 150_000_000 + 18_000_000) 
                 insertion_data.append((int(tmid), sct_vtcw , 0, 0, 0, 0)) 
                 continue
 
@@ -246,7 +293,7 @@ def process_values_by_time_period(username, password, connection_string, databas
             current_bucket_min = float(np.min(bucket_values))
             current_bucket_max = float(np.max(bucket_values))
             insertion_data.append(
-                (int(tmid), int(bucket_id * 300000000 + start_time_gps + 150_000_000 + 18_000_000), 
+                (int(tmid), sct_vtcw, 
                  current_bucket_average, current_bucket_min, current_bucket_max, current_bucket_count)
                 )
 
@@ -254,33 +301,33 @@ def process_values_by_time_period(username, password, connection_string, databas
     # There will always be data to insert, even if no actual values are present 
     # because the output just gets zeroed for all bins.
 
-
     return insert_tmaverage_rows(connection, database, insertion_data)
 
 def convert_dt2gps(cursor, DTValue, isAim):
     # The DT2GPS function takes a string in the format "{date} {time}"
+    THREAD_LOGGER = multiprocessing.get_logger()
+
 
     if isAim:
         cursor.execute("ALTER SESSION SET NLS_TIMESTAMP_FORMAT='DD-MON-RR HH.MI.SSXFF AM'")
     
     sql = f"""SELECT DT2GPS('{DTValue}') FROM dual"""
 
+    THREAD_LOGGER.debug(sql)
 
     try:
         result = cursor.execute(sql).fetchone()[0]
-    except oracledb.DatabaseError:
-        print("Failed to convert date to GPS. Please ensure that you entered in the format 'DD-MMM-YY'")
-        print("Example: 28-MAR-25")
+    except:
+        THREAD_LOGGER.fatal(traceback.format_exc())
+        THREAD_LOGGER.fatal("An error occurred while calling DT2GPS. See above output:")
         cursor.connection.close()
         exit(1)
     return result
 
-def calibrate(arraySlice, c):
-    value = arraySlice
+def calibrate(value, c):
     newValue = (c[0] + c[1]*value + c[2]*value**2 + c[3]*value**3 
         + c[4]*value**4 + c[5]*value**5 + c[6]*value**6 + c[7]*value**7)
     return newValue
-
 
 
 def main():
@@ -372,11 +419,12 @@ def main():
         exit(1)
     
 
-    # Connect to database
+    # Connect to the database as a test to ensure credentials are valid. 
+    # Each thread will connect to the DB individually.
     try: 
         connection_string = f"localhost/{database}"
         connection = oracledb.connect(user=username, password=password, dsn=connection_string)
-        cursor = connection.cursor()
+        connection.close()
         print(f"Successfully connected to database {database}.")
     except:
         print(f"Error connecting to database {database}. Check if database exists and "
@@ -386,27 +434,18 @@ def main():
 
     # Allocate worker pool of specified parallel degree
     worker_pool = multiprocessing.Pool(parallel_degree)
-
     worker_async_results = [] 
     # An array that stores both the results, as well as the date that is being 
     # processed for that worker (AsyncResult, date)
     
     # Iterate through all of the days specified:
     for single_date in (start_date + datetime.timedelta(n) for n in range(num_of_days)):
-        # The 18_000_000 offset exists to resolve the discrepencies with the AIMPROD DB. 
-        # Does not appear to be intended behavior, but needed to be reproduced.
-        start_time_gps = convert_dt2gps(
-            cursor, f"{single_date.strftime('%d-%b-%y')} 12.00.00.000000000 AM", 
-            database == "aimprod") - 18_000_000
         
-        end_time_gps = convert_dt2gps(
-            cursor, f"{single_date.strftime('%d-%b-%y')} 11.59.59.999999999 PM", 
-            database == "aimprod") - 18_000_000
 
         async_results = worker_pool.apply_async(
-            process_values_by_time_period, args=(
+            process_values_by_date, args=(
                 username, password, connection_string, 
-                database, TMID, start_time_gps, end_time_gps, )
+                database, TMID, single_date, )
             )
 
         worker_async_results.append((async_results, single_date))
@@ -433,7 +472,7 @@ def main():
     
     if error_status:
         print("One or more errors occurred during execution. "
-              " Please check above output for more details.")
+              " Please check the above ouput and the log files for more details.")
     else:
         print("Script has successfully completed!")
 
