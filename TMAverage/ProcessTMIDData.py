@@ -19,9 +19,9 @@ import numpy as np
 TMANALOG_DBS = {
     "goldprod": "TMANALOG_SID1",
     "evep12c": "TMANALOG",
-    "aimprod": "TMANALOG_TABLE", 
+    "aimprod": "AIM_L1A.TMANALOG_TABLE", 
     "tsisprod": "TMANALOG_SID1",
-    # "ixpeprod": "TMANALOG_SID1"
+    "ixpeprod": "TMANALOG_SID1"
 }
 
 # DEBUG: Mappings are currently configured for testing on my own schema. Will end up on the DB_L1 Schema.
@@ -30,7 +30,7 @@ TMAVERAGE_DBS = {
     "goldprod": "ROBERT_TEST.TMAverage", 
     "evep12c": "ROBERT_TEST.TMAverage",
     "tsisprod": "ROBERT_TEST.TMAverage",
-    # "ixpeprod": "ROBERT_TEST.TMAverage", # Currently does not have TMAverage table
+    "ixpeprod": "ROBERT_TEST.TMAverage", # Currently does not have TMAverage table
 }
 
 TELEMETRYITEMDEFINITION_DBS = {
@@ -38,7 +38,7 @@ TELEMETRYITEMDEFINITION_DBS = {
     "goldprod": "TelemetryItemDefinition",
     "evep12c": "TelemetryItemDefinition",
     "tsisprod": "TelemetryItemDefinition",
-    # "ixpeprod": "TelemetryItemDefinition",
+    "ixpeprod": "TelemetryItemDefinition",
 }
 
 TELEMETRYANALOGCONVERSIONS_DBS = {
@@ -46,7 +46,7 @@ TELEMETRYANALOGCONVERSIONS_DBS = {
     "goldprod": "TelemetryAnalogConversions",
     "evep12c": "TelemetryAnalogConversions",
     "tsisprod": "TelemetryAnalogConversions",
-    # "ixpeprod": "TelemetryAnalogConversions",
+    "ixpeprod": "TelemetryAnalogConversions",
 }
 
 def get_password_from_file(file_path):
@@ -65,7 +65,6 @@ def get_password_from_file(file_path):
 # OUTPUT: Tuple (results_len, results_values, results_bucket_ids, results_tmids)
 def fetch_all_values_by_time_range(connection, database, TMID, select_date_start_gps, select_date_end_gps):
     THREAD_LOGGER = multiprocessing.get_logger()
-
 
     if TMID == "ALL":
         sql = f"""SELECT /*+ parallel */ TMID, SCT_VTCW, VALUE FROM {TMANALOG_DBS[database]} WHERE 
@@ -92,7 +91,9 @@ def fetch_all_values_by_time_range(connection, database, TMID, select_date_start
             exit(1)
         else:
             raise error
-        
+    except Exception as error:
+        THREAD_LOGGER.fatal(traceback.format_exc())
+        raise error
     
     # WARNING: The current version of the script uses a float 128 for the numpy array. 
     # Oracle number can have up 176 bits of precision, so there could be overflow errors.
@@ -214,14 +215,16 @@ def process_values_by_date(username, password, connection_string, database, TMID
     handler.setFormatter(formatter)
     THREAD_LOGGER.handlers.clear()
     THREAD_LOGGER.addHandler(handler)
-    THREAD_LOGGER.setLevel(logging.INFO)
+    THREAD_LOGGER.setLevel(logging.DEBUG)
     
     THREAD_LOGGER.info(f"Connecting to DB {connection_string} as {username}")
-    
-    connection = oracledb.connect(user=username, password=password, dsn=connection_string)
-    cursor = connection.cursor()
+    try:
+        connection = oracledb.connect(user=username, password=password, dsn=connection_string)
+        cursor = connection.cursor()
+    except:
+        THREAD_LOGGER.exception("Failed to connect to DB.")
 
-    # The 18_000_000 offset exists to resolve the discrepencies with the AIMPROD DB. 
+    # The 18_000_000 offset exists to resolve the discrepancies with the AIMPROD DB. 
     # Does not appear to be intended behavior, but needed to be reproduced.
     start_time_gps = convert_dt2gps(
         cursor, f"{single_date.strftime('%d-%b-%y')} 12.00.00.000000000 AM", 
@@ -428,8 +431,12 @@ def main():
         print(f"Successfully connected to database {database}.")
     except:
         print(f"Error connecting to database {database}. Check if database exists and "
-              "the script has connect priviliges.")
+              "the script has connect privileges.")
         exit(1)
+
+    start_time = datetime.datetime.now()
+
+    print(f"Script has started at {start_time}")
     
 
     # Allocate worker pool of specified parallel degree
@@ -456,7 +463,9 @@ def main():
     worker_pool.close()
     worker_pool.join()
 
-    print("Processed data for full date range.")
+    end_time = datetime.datetime.now()
+
+    print(f"Script completed at time {end_time}. Duration: {end_time - start_time}")
 
     error_status = False
 
@@ -472,7 +481,7 @@ def main():
     
     if error_status:
         print("One or more errors occurred during execution. "
-              " Please check the above ouput and the log files for more details.")
+              " Please check the above output and the log files for more details.")
     else:
         print("Script has successfully completed!")
 
