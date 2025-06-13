@@ -5,12 +5,14 @@
 #          table.
 # 
 # Notes: The L1A schema must exist in order for this script to work. 
+#        The script defaults to assuming that the analog table is TMANALOG_SID1, but can be
+#        overwritten for cases where the table is different.
 # 
 # Author: Robert Schmidt
 # Created on Jun 6, 2025
 # Last modified on Jun 6, 2025 - RS
 ##########################################################################
-usage="Usage: ./CreateTMAverageTableUser.sh [ -u (optional, create TMAverage user. Requires username & password fields) ] [ absolute path to datafile ] [ username (optional) ] [ password (optional) ]"
+usage="Usage: ./CreateTMAverageTableUser.sh [ -u (optional, create TMAverage user. Requires username & password fields) ] [ absolute path to datafile ] [ username (optional) ] [ password (optional) ] [ overwrite TMAnalog table name (optional, defaults to TMANALOG_SID1) ]"
 example="Example: ./CreateTMAverageTable.sh "
 
 
@@ -33,27 +35,34 @@ while getopts ":hu" option; do
     esac
 done
 
-# Check arguments
-if [ $uopt -eq 0 ] && [ $# -ne 1 ]; then
-    echo "Incorrect parameters."
-    echo "$usage"
-    echo "$example"
-    exit 1
-elif [ $uopt -ne 0 ] && [ $# -ne 3 ]; then
-    echo "Incorrect parameters. The -u option requires username and password."
-    echo "$usage"
-    echo "$example"
-    exit 1
-fi
-
-# Set input parameters
-datafile_path="$1"
-username="$2"
-password="$3"
+datafile_path=""
+username=""
+password=""
 
 # Set static values
 tablespace_name="TMAVERAGE"
 table_name="TMAVERAGE"
+tmanalog_table_name="TMANALOG_SID1" # Can be overwritten
+
+# Check and set parameters
+if [[ $uopt -eq 0 && ( $# -eq 1 || $# -eq 2 ) ]]; then
+    datafile_path="$1"
+    tmanalog_table_name="$2"
+elif [[ $uopt -ne 0 && $# -eq 3 ]]; then
+    datafile_path="$1"
+    username="$2"
+    password="$3"
+elif [[ $uopt -ne 0 && $# -eq 4 ]]; then
+    datafile_path="$1"
+    username="$2"
+    password="$3"
+    tmanalog_table_name="$4"
+else    
+    echo "Invalid parameters."
+    echo "$usage"
+    echo "$example"
+    exit 1
+fi
 
 # Check that username and password are oracle standard, if they need to be provided
 if [ "$uopt" -ne 0 ] && [[ ! "$username" =~ ^[A-Za-z][A-Za-z0-9_$#]{0,29}$ ]]; then
@@ -101,6 +110,7 @@ if [[ "$l1a_schema_check" != "Yes" ]]; then
 fi
 
 # Create tablespace for TMAverage
+echo "Creating tablespace $tablespace_name..."
 create_tablespace=$("$HOME/common/oracle/CreateNewTablespace.sh" "$tablespace_name" "$datafile_path")
 status_code=$?
 if [ $status_code -ne 0 ] && [[ "$create_tablespace" == *"already exists in the current database"* ]]; then
@@ -112,14 +122,15 @@ elif [ $status_code -ne 0 ]; then
 fi
 
 # Check if TMAverage table already exists
-check_table_exists=#("$HOME/common/oracle/CheckIfTableExists" "$schema_name" "$table_name")
+check_table_exists=$("$HOME/common/oracle/CheckIfTableExists.sh" "$schema_name" "$table_name")
 if [ $? -ne 0 ]; then
     echo "$check_table_exists"
-    echo "An error occurred while running CheckIfTableExists. Existing..."
+    echo "An error occurred while running CheckIfTableExists.sh Existing..."
     exit 1
 fi
 
 # Create TMAverage table
+echo "Creating table $schema_name.$table_name in tablespace $tablespace_name..."
 create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
     set heading off
     set feedback off
@@ -134,11 +145,14 @@ create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
     "MAXIMUM_VALUE" FLOAT(126) NOT NULL ENABLE,
     "VALUE_COUNT" NUMBER(7,0) NOT NULL ENABLE,
     PRIMARY KEY(TMID, SCT_VTCW)
-    ) TABLESPACE "$tablespace_name"
+    ) TABLESPACE "$tablespace_name";
     exit;
 EOD
 )
-if [ $? -ne 0 ]; then
+status_code=$?
+if [ $status_code -ne 0 ] && [[ "$create_table" == *"ORA-00955"* ]]; then
+    echo "Table already exists, continuing..."
+elif [ $status_code -ne 0 ]; then
     echo "$create_table"
     echo "An error occurred while creating table $table_name. Exiting..."
     exit 1
@@ -150,8 +164,37 @@ if [ $uopt -eq 0 ]; then
     exit 0
 fi
 
+# Create the requested user for TMAverage
+echo "Creating user $username with password $password..."
+create_user=$("$HOME/common/oracle/CreateNewSchema.sh" "$username" "$password" "USERS")
+status_code=$?
+if [ $status_code -ne 0 ] && [[ $create_user == *"already exists"* ]]; then
+    echo "User with username $username already exists on database $ORACLE_SID. Continuing..."
+elif [ $status_code -ne 0 ]; then
+    echo "$create_user"
+    echo "An error occurred while creating user $username with password $password. Exiting..."
+    exit 1
+fi
 
-# GrantNewPermissions.sh ROBERT_TEST.TMAverage table ALL PROCESSTMIDTEST Y
-# GrantNewPermissions.sh GOLD_L1A.TMAnalog_SID1,GOLD_CT.TelemetryItemDefinition,GOLD_CT.TelemetryAnalogConversions table SELECT PROCESSTMIDTEST Y
-# GrantNewPermissions.sh TSIS_L1A.TMAnalog_SID1,TSIS_CT.TelemetryItemDefinition,TSIS_CT.TelemetryAnalogConversions table SELECT PROCESSTMIDTEST Y
-# GrantNewPermissions.sh IXPE_L1A.TMAnalog_SID1,IXPE_CT.TelemetryItemDefinition,IXPE_CT.TelemetryAnalogConversions table SELECT PROCESSTMIDTEST Y
+
+echo "Granting required permissions to user $username:"
+read_write_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$schema_name.$table_name" table ALL "$username" Y)
+if [ $? -ne 0 ]; then
+    echo "$read_write_permissions"
+    echo "An error occurred while granting read-write permissions to table $schema_name.$table_name on $username. Exiting..."
+    exit 1
+fi
+
+table1="${project_name}_L1A.$tmanalog_table_name"
+table2="${project_name}_CT.TelemetryItemDefinition"
+table3="${project_name}_CT.TelemetryAnalogConversions"
+
+read_only_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$table1,$table2,$table3" table SELECT "$username" Y)
+if [ $? -ne 0 ]; then
+    echo "$read_only_permissions"
+    echo "An error occurred while granting read-only permission to the below tables. Exiting..."
+    exit 1
+fi
+
+echo "Script completed successfully"
+exit 0
