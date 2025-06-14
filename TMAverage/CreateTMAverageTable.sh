@@ -12,12 +12,13 @@
 # Created on Jun 6, 2025
 # Last modified on Jun 6, 2025 - RS
 ##########################################################################
-usage="Usage: ./CreateTMAverageTableUser.sh [ -u (optional, create TMAverage user. Requires username & password fields) ] [ absolute path to datafile ] [ username (optional) ] [ password (optional) ] [ overwrite TMAnalog table name (optional, defaults to TMANALOG_SID1) ]"
+usage="Usage: ./CreateTMAverageTableUser.sh [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ absolute path to datafile ] [ username (optional) ] [ password (optional) ]"
 example="Example: ./CreateTMAverageTable.sh "
 
 
-uopt=0
-while getopts ":hu" option; do
+user_opt=0
+otfd_opt=0
+while getopts ":huo" option; do
     case $option in
     h)
         echo "$usage"
@@ -25,8 +26,10 @@ while getopts ":hu" option; do
         exit 0
         ;;
     u)
-        uopt=1
-        shift 1
+        user_opt=1
+        ;;
+    o)
+        otfd_opt=1
         ;;
     \?)
         echo "Error: Invalid option"
@@ -35,28 +38,26 @@ while getopts ":hu" option; do
     esac
 done
 
+shift $(($OPTIND -1))
+
 datafile_path=""
 username=""
 password=""
 
-# Set static values
+# Set static values. These are used so that exceptions can be easily managed (aim).
 tablespace_name="TMAVERAGE"
 table_name="TMAVERAGE"
-tmanalog_table_name="TMANALOG_SID1" # Can be overwritten
+tmanalog_table_name="TMANALOG_SID1"
+ct_schema_name=""
+
 
 # Check and set parameters
-if [[ $uopt -eq 0 && ( $# -eq 1 || $# -eq 2 ) ]]; then
+if [[ $user_opt -eq 0 && $# -eq 1 ]]; then
     datafile_path="$1"
-    tmanalog_table_name="$2"
-elif [[ $uopt -ne 0 && $# -eq 3 ]]; then
-    datafile_path="$1"
-    username="$2"
-    password="$3"
-elif [[ $uopt -ne 0 && $# -eq 4 ]]; then
+elif [[ $user_opt -ne 0 && $# -eq 3 ]]; then
     datafile_path="$1"
     username="$2"
     password="$3"
-    tmanalog_table_name="$4"
 else    
     echo "Invalid parameters."
     echo "$usage"
@@ -65,13 +66,17 @@ else
 fi
 
 # Check that username and password are oracle standard, if they need to be provided
-if [ "$uopt" -ne 0 ] && [[ ! "$username" =~ ^[A-Za-z][A-Za-z0-9_$#]{0,29}$ ]]; then
+if [ "$user_opt" -ne 0 ] && [[ ! "$username" =~ ^[A-Za-z][A-Za-z0-9_$#]{0,29}$ ]]; then
     echo "Invalid username. Username must fit the regex '^[A-Za-z][A-Za-z0-9_$#]{0,29}$' Exiting..."
     exit 1
 fi
-if [ "$uopt" -ne 0 ] && [[ ! "$password" =~ ^[A-Za-z][A-Za-z0-9_$#]{0,29}$ ]]; then
+if [ "$user_opt" -ne 0 ] && [[ ! "$password" =~ ^[A-Za-z][A-Za-z0-9_$#]{0,29}$ ]]; then
     echo "Invalid password. Password must fit the regex '^[A-Za-z][A-Za-z0-9_$#]{0,29}$'. Exiting..."
     exit 1
+fi
+
+if [[ "$otfd_opt" -ne 0 && "$user_opt" -eq 0 ]]; then
+    echo "Invalid, the -o option requires the -u option. Exiting..."
 fi
 
 # Checking $ORACLE_SID
@@ -93,6 +98,13 @@ elif [[ $ORACLE_SID == *"prod" ]]; then
 else
     echo "Failed to parse project name from database name. Database name must end in 'dev' or 'prod'. Exiting..."
     exit 1
+fi
+project_name="${project_name^^}"
+
+# Check project name and set static variables accordingly
+if [[ "$project_name" == "AIM" ]]; then
+    ct_schema_name="AIM_CT_SC"
+    tmanalog_table_name="TMANALOG_TABLE"
 fi
 
 schema_name="${project_name^^}_L1A"
@@ -159,7 +171,7 @@ elif [ $status_code -ne 0 ]; then
 fi
 
 
-if [ $uopt -eq 0 ]; then
+if [ $user_opt -eq 0 ]; then
     echo "Not creating user for TMAverage. All done!"
     exit 0
 fi
@@ -186,8 +198,8 @@ if [ $? -ne 0 ]; then
 fi
 
 table1="${project_name}_L1A.$tmanalog_table_name"
-table2="${project_name}_CT.TelemetryItemDefinition"
-table3="${project_name}_CT.TelemetryAnalogConversions"
+table2="${ct_schema_name}.TelemetryItemDefinition"
+table3="${ct_schema_name}.TelemetryAnalogConversions"
 
 read_only_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$table1,$table2,$table3" table SELECT "$username" Y)
 if [ $? -ne 0 ]; then
@@ -195,6 +207,37 @@ if [ $? -ne 0 ]; then
     echo "An error occurred while granting read-only permission to the below tables. Exiting..."
     exit 1
 fi
+
+if [ $otfd_opt -ne 0 ]; then
+    echo "Granting user access to OTFD package & tables..."
+    otfd_execute=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+        set heading off
+        set feedback off
+        whenever oserror exit 1
+        whenever sqlerror exit 1
+
+        GRANT EXECUTE ON ${project_name}_MISC.ONTHEFLYDECOM TO $username;
+        GRANT EXECUTE ON ${project_name}_MISC.ONTHEFLYDECOMMISSIONSPECIFIC TO $username;
+EOD
+    )
+    if [ $? -ne 0 ]; then
+        echo "$otfd_execute"
+        echo "An error occurred while granting access to the OTFD package to $username. Exiting..."
+        exit 1
+    fi
+
+    results="${project_name}_MISC.ONTHEFLYDECOM_RESULTS"
+    errors="${project_name}_MISC.ONTHEFLYDECOM_ERRORS"
+
+    otfd_tables=$("$HOME/common/oracle/GrantNewPermissions.sh" "$results,$errors" table ALL "$username" Y)
+    if [ $? -ne 0 ]; then
+        echo "$otfd_tables"
+        echo "An error occurred while granting read-only permissions. Exiting..."
+        exit 1
+    fi
+
+fi
+
 
 echo "Script completed successfully"
 exit 0
