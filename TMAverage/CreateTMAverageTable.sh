@@ -48,7 +48,6 @@ password=""
 tablespace_name="TMAVERAGE"
 table_name="TMAVERAGE"
 tmanalog_table_name="TMANALOG_SID1"
-ct_schema_name=""
 
 
 # Check and set parameters
@@ -96,7 +95,7 @@ if [[ $ORACLE_SID == *"dev" ]]; then
 elif [[ $ORACLE_SID == *"prod" ]]; then
     project_name="${ORACLE_SID::-4}"
 else
-    echo "Failed to parse project name from database name. Database name must end in 'dev' or 'prod'. Exiting..."
+    echo "Failed to parse project name from database name $ORACLE_SID. Database name must end in 'dev' or 'prod'. Exiting..."
     exit 1
 fi
 project_name="${project_name^^}"
@@ -105,6 +104,8 @@ project_name="${project_name^^}"
 if [[ "$project_name" == "AIM" ]]; then
     ct_schema_name="AIM_CT_SC"
     tmanalog_table_name="TMANALOG_TABLE"
+else
+    ct_schema_name="${project_name}_CT"
 fi
 
 schema_name="${project_name^^}_L1A"
