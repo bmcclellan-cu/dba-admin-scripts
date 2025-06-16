@@ -543,10 +543,9 @@ def main():
     This script fetches the values for each TMID in the provided database for the day provided from
     all TMAnalog_SIDX tables, and computes the min, max, average, and count of measurements
     over 5 minute increments, then inserts them into the TMAverage table.
-    Inputs: [database] [TMID | ALL] [start_date] [end_date] [parallel_degree (optional)]
     """
     # Usage and example
-    usage = "Usage: ./ProcessTMAverage.py [ -o (optional, use OTFD) ] [database] [TMID | ALL] [start_date] [end_date] [parallel_degree (optional)]"
+    usage = "Usage: ./ProcessTMAverage.py [ -o (optional, use OTFD) ] [ database ] [ TMID | ALL ] [ start date (inclusive) ] [ end date (inclusive) ] [ parallel_degree (optional) ]"
     example = "Example: ./ProcessTMAverage.py goldprod ALL 12-JAN-25 13-FEB-25"
 
     is_otfd = False
@@ -560,7 +559,7 @@ def main():
 
     num_args = len(sys.argv)
 
-    # Check that there were either 4 or 5 arguments passed.
+    # Check that there were either 5 or 6 arguments passed.
     if num_args < 5 or num_args > 6:
         print(usage)
         print(example)

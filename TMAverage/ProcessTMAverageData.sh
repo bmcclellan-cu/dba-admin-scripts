@@ -3,12 +3,16 @@
 # Purpose: A wrapper for the ProcessTMAverageData.py helper script, which averages the data from 
 #          TMAnalog over 5 minute periods per TMID and inserts it into L1A.TMAVERAGE. This script
 #          runs a few extra checks beforehand to ensure the script is ready to run.
+#          This wrapper allows you to run the script at an offset from the current date and a range, 
+#          allowing for consistent use via a crontab (i.e, today is 16-JUL-25, offset is set to 5 days, and
+#          range is set to 3 days, so the script will process data from 11-JUL-25 to 13-JUL-25 (3 days of data)).
+#          If you want to specify a specific date range, you need to invoke the .py script directly.
 # 
 # Author: Robert Schmidt
 # Created on: June 16th, 2025
 ###############################################################
-usage="Usage: ./ProcessTMAverageData.sh [ -o (optional, use OTFD) ] [database] [TMID | ALL] [start_date] [end_date] [parallel_degree (optional)]"
-example="Example: ./ProcessTMAverageData.sh goldprod ALL 12-JAN-25 13-FEB-25 8"
+usage="Usage: ./ProcessTMAverageData.sh [ -o (optional, use OTFD) ] [database] [TMID | ALL] [ offset (days) ] [ range (days) ] [parallel_degree (optional)]"
+example="Example: ./ProcessTMAverageData.sh goldprod ALL 14 7 8"
 
 otfd_opt=""
 # Process input options
@@ -42,13 +46,20 @@ fi
 
 database=${1^^}
 tmid=${2^^}
-start_date=${3^^}
-end_date=${4^^}
+offset=${3^^}
+range=${4^^}
 parallel_degree=${5^^}
+
+timestamp=$(date "+%Y%m%d-%H%M%S")
+LOGDIR="/tmp/TMAverageLogs/"
+LOGFILE="$LOGDIR/ProcessTMAverage-$database-$timestamp-Bash.log"
+# Sets all script output to be put into a logfile as well, including stderr
+exec > >(tee -a "$LOGFILE") 2>&1
 
 # Check that the .passwd and .username files exist.
 if [ ! -f "$SCRIPT_DIR/.username" ] || [ ! -f "$SCRIPT_DIR/.passwd" ]; then
     echo "Missing .username and .passwd files at $SCRIPT_DIR. Exiting..."
+    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
 
@@ -56,6 +67,7 @@ fi
 VENV_ACTIVATE="${SCRIPT_DIR}/venv/bin/activate"
 if [ ! -f "$VENV_ACTIVATE" ]; then
     echo "ERROR: File venv/bin/activate not found in $SCRIPT_DIR! You must create a Python virtual environment to execute this script."
+    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
 
@@ -65,8 +77,22 @@ source "$VENV_ACTIVATE"
 # Virtual environment check
 if [ -z "$VIRTUAL_ENV" ]; then
     echo "Error: A valid python virtual environment must exist in $SCRIPT_DIR. Exiting..."
+    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
+
+# Ensure that both range and offset are integers.
+if [[ ! "$offset" =~ ^-?[0-9]+$ ]] || [[ ! "$range" =~ ^-?[0-9]+$ ]]; then
+    echo "Error: Offset and range must both be integers. Exiting..."
+    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
+    exit 1
+fi
+
+# Parse the offset and range and get a start and end date.
+start_date=$(date -d "-$offset days" "+%d-%b-%y")
+# Subtract 1 from range, so that script processes $range days of data, as the script is inclusive
+end_date=$(date -d "$start_date +$((range-1)) days" "+%d-%b-%y")
+echo "Using start_date $start_date and end_date $end_date"
 
 # Get the project name from $ORACLE_SID
 if [[ $database == *"DEV" ]]; then
@@ -75,6 +101,7 @@ elif [[ $database == *"PROD" ]]; then
     project_name="${ORACLE_SID::-4}"
 else
     echo "Failed to parse project name from database name $database. Database name must end in 'dev' or 'prod'. Exiting..."
+    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
 project_name="${project_name^^}"
@@ -119,6 +146,7 @@ EOD
 if [ $? -ne 0 ]; then
     echo "$select_check"
     echo "Error checking if user $username has select access to tables: $select_tables"
+    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
 
@@ -126,6 +154,7 @@ fi
 select_check=$(echo "$select_check" | tr -d '[:space:]')
 if [[ $select_check != "$select_tab_count" ]]; then
     echo "Error: User $username does not have SELECT permission for tables $select_tables. Please run CreateTMAverageTable.sh to configure user. Exiting..."
+    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
 
@@ -148,13 +177,16 @@ EOD
 if [ $? -ne 0 ]; then
     echo "$insert_check"
     echo "Error checking if user $username has insert access to tables: $select_tables"
+    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
+    
 fi
 
 # Trim ALL whitespace, then check that all privileges are present.
 insert_check=$(echo "$insert_check" | tr -d '[:space:]')
 if [[ "$insert_check" != "1" ]]; then
     echo "Error: User $username does not have INSERT permission for tables $insert_tables. Please run CreateTMAverageTable.sh to configure user. Exiting..."
+    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
 
@@ -163,8 +195,9 @@ fi
 echo "Running ProcessTMAverageData.py. See log output at /tmp/TMAverageLogs/"
 python "$HOME/Robert/scripts/TMAverage/ProcessTMAverageData.py" $otfd_opt "$database" "$tmid" "$start_date" "$end_date" $parallel_degree
 if [ $? -ne 0 ]; then
-    echo "ProcessTMAverageData.py failed. See log outputs at /tmp/TMAverageLogs/ for more information."
+    echo "ProcessTMAverageData.py failed See log outputs at /tmp/TMAverageLogs/ for more information."
+    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
 
-echo "Script ran successfully!"
+mailx -s "ProcessTMAverageData.sh Ran Successfully" "$DB_EMAIL_LIST" < "$LOGFILE"
