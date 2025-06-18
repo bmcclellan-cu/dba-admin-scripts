@@ -4,21 +4,20 @@ import logging
 import math
 import traceback
 import multiprocessing
+import getopt
 import datetime
-import os
 from functools import partial
 
 # Third-party imports
 import oracledb
 import numpy as np
 
-# TODO: Add check for table permissions before starting with multithreading.
-
-# Global variable for the database connection (is instantiated once per process)
+# Global variable for the database connection (variable exists independently for each process.)
 db_connection = None
-# Global variable to track if a process successfully initialized. If not, processing
-# tasks fail immediately.
-process_initialized = False
+
+# Global variable to track if the thread is ready to function. For example, if it did not successfully initialize,
+# the thread will be in a failed state, and not even attempt to do any processing.
+failed = True
 
 
 # Dictionary of databases this script is designed for and the appropriate table to access.
@@ -62,10 +61,10 @@ def get_value_from_file(file_path):
             password = (
                 file.readline().strip()
             )  # Read the first line and strip whitespace
-        print(f"Password read in from path: {file_path}")
+        print(f"Reading from file in path: {file_path}")
         return password
     except Exception as e:
-        print(f"An error occurred while reading the password: {e}")
+        print(f"An error occurred while reading from file: {e}")
         exit(1)
 
 
@@ -73,7 +72,7 @@ def setup_logger(log_file: str):
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
 
-    # Clear existing handlers (important in multiprocessing)
+    # Clear existing handlers
     logger.handlers.clear()
 
     # File handler
@@ -101,7 +100,7 @@ def init_worker(
     connection_string: str,
 ):
     global db_connection
-    global process_initialized
+    global failed
     logger = multiprocessing.get_logger()
     logger.setLevel(logging.INFO)
 
@@ -126,7 +125,7 @@ def init_worker(
     db_connection = oracledb.connect(
         user=username, password=password, dsn=connection_string
     )
-    process_initialized = True
+    failed = False  # Only set global variable if successfully initialized.
 
 
 # Fetches all values for a specific day, then allocates numpy arrays for the values, calculated bucket
@@ -139,10 +138,11 @@ def fetch_values_by_time_range(
     end_time_gps: int,
 ):
     global db_connection
+    global failed
     logger = multiprocessing.get_logger()
 
     # This exists because AIMPROD's primary key index has a 1st column of SID,
-    # and excluding it causes the optimizer not to use the index.
+    # and excluding it causes the optimizer not to use the index at all.
     sid_clause = ""
     if database[:3] == "aim":
         sid_clause = " SID=1 AND "
@@ -162,24 +162,26 @@ def fetch_values_by_time_range(
         cursor.close()
     except oracledb.DatabaseError as error:
         if str(error).find("ORA-00942") != -1:
-            logger.fatal(
+            logger.exception(
                 "ORA-00942: table or view does not exist. \n"
                 "Either the following tables do not exist or the script does not have access to them. \n"
                 "Ensure that the script has the following permissions:  \n"
                 "(TMAnalog(SELECT), TelemetryItemDefinition(SELECT), \n"
                 "TelemetryAnalogConversions(SELECT), TMAverage(ALL) \n"
             )
+            failed = True
             raise error
         else:
+            logger.exception("An unknown exception occurred.")
             raise error
     except Exception as error:
-        logger.fatal(traceback.format_exc())
+        logger.exception("An unknown exception occurred.")
         raise error
 
     # WARNING: The current version of the script uses a float 128 for the numpy array.
     # Oracle numbers can store up to 22 bytes of data, so this could result in a loss of
     # precision.
-    results_len = len(results)
+    results_len = len(results)  # Pre-allocates numpy array to prevent appends.
     results_values = np.zeros((results_len), dtype=np.float128)
     results_bucket_ids = np.zeros((results_len), dtype=np.uintc)
 
@@ -203,9 +205,8 @@ def fetch_values_by_time_range(
     )
 
 
-# This function assumes that the on-the-fly-decom package has been loaded on the database. This is checked earlier in the
-# code. Due to restrictions in how OTFD retrieves data, this process is not able to fetch ALL tmids at once, and needs to
-# iterate through the ones listed in TelemetryItemDefinitions.
+# This function assumes that the on-the-fly-decom package has been loaded on the database. This is checked by the wrapper
+# script.
 # Returns a tuple of (results_len, results_values, and results_bucket_ids)
 def fetch_otfd_values_by_time_range(
     tmid: int,
@@ -213,6 +214,7 @@ def fetch_otfd_values_by_time_range(
     end_time_gps: int,
 ):
     global db_connection
+    global failed
     logger = multiprocessing.get_logger()
 
     cursor = db_connection.cursor()
@@ -230,19 +232,20 @@ def fetch_otfd_values_by_time_range(
         otfd_error = cursor.execute("SELECT * FROM ONTHEFLYDECOM_ERRORS").fetchall()
     except oracledb.DatabaseError as error:
         if str(error).find("ORA-00942") != -1:
-            logger.fatal(  # TODO: Update to include OTFD permissions.
+            logger.fatal(
                 "ORA-00942: table or view does not exist. \n"
                 "Either the following tables do not exist or the script does not have access to them. \n"
                 "Ensure that the script has the following permissions:  \n"
-                "(TMAnalog(SELECT), TelemetryItemDefinition(SELECT), \n"
-                "TelemetryAnalogConversions(SELECT), TMAverage(ALL) \n"
+                "(ONTHEFLYDECOM_RESULTS(ALL), ONTHEFLYDECOM_ERRORS(ALL), TelemetryItemDefinition(SELECT), \n"
+                "TelemetryAnalogConversions(SELECT), TMAVERAGE(ALL) \n"
             )
+            failed = True
             raise error
         else:
-            logger.fatal(traceback.format_exc())
+            logger.exception("An unknown exception occurred.")
             raise error
     except Exception as error:
-        logger.fatal(traceback.format_exc())
+        logger.exception("An unknown exception occurred.")
         raise error
 
     if len(otfd_error) != 0:
@@ -251,10 +254,10 @@ def fetch_otfd_values_by_time_range(
         )
         for row in otfd_error:
             logger.error(row)
-        raise Exception(otfd_error)
+        raise Exception(
+            "ONTHEFYDECOM_RESULTS Contains errors. See logs for more details."
+        )
 
-    # This exists because AIMPROD's primary key index has a 1st column of SID,
-    # and excluding it causes the optimizer not to use the index.
     results_len = len(
         otfd_results
     )  # Gets length of results to pre-allocate numpy array
@@ -281,6 +284,9 @@ def fetch_otfd_values_by_time_range(
         results_values,
         results_bucket_ids,
     )
+
+
+# TODO: Fully review script. Got to HERE.
 
 
 # Fetches the calibration polynomial coefficients.
@@ -320,6 +326,7 @@ def fetch_analog_conversions_by_tmid(tmid, database):
 # Returns the number of rows inserted if no errors occurred during insertion, and returns -1 if errors occurred.
 def insert_tmaverage_rows(database: str, tmaverage_values: list):
     global db_connection
+    global failed
     logger = multiprocessing.get_logger()
 
     # If no data is being inserted, automatically succeed.
@@ -342,24 +349,35 @@ def insert_tmaverage_rows(database: str, tmaverage_values: list):
         db_connection.commit()
     except oracledb.IntegrityError as error:
         if str(error).find("ORA-00001") != -1:
-            logger.error(
+            logger.exception(
                 f"ORA-00001: Unique Constraint Violated during insert. Insert has been rolled back."
                 "This is likely due to the script parameters overlapping with pre-existing data. Please double-check"
                 "the data in TMAverage. Continuing..."
             )
-            return -1
+            raise error
         else:
+            logger.exception("An unknown exception occurred.")
             raise error
     except oracledb.DatabaseError as error:
         if str(error).find("ORA-00942") != -1:
-            logger.fatal(
-                "ORA-00942: table or view does not exist"
-                "This error is likely due to missing permissions."
+            logger.exception(
+                "ORA-00942: table or view does not exist. "
+                "This error is likely due to missing permissions. "
                 "Ensure that the script has the following permissions: "
-                "(TMAnalog(SELECT), TelemetryItemDefinition(SELECT), TelemetryAnalogConversions(SELECT), TMAverage(ALL)"
+                "(TMAnalog(SELECT), TelemetryItemDefinition(SELECT), TelemetryAnalogConversions(SELECT), TMAverage(ALL) "
             )
             raise error
+        elif str(error).find("ORA-01654") != -1:
+            logger.exception(
+                "ORA-01654: unable to extend index. "
+                "This error is likely due to the script running out of storage space. "
+                "Ensure that the TMAVERAGE tablespace has enough extra storage space for "
+                "the script to run."
+            )
+            failed = True  # Sets state to failed due to persistent error.
+            raise error
         else:
+            logger.exception("An unknown exception occurred.")
             raise error
     if cursor.rowcount == expected_rows_inserted:
         logger.info(f"Successfully inserted {cursor.rowcount} rows into TMAverage.")
@@ -449,11 +467,14 @@ def process_values_by_tmid(
     is_otfd: bool,
 ):
     global db_connection
-    global process_initialized
+    global failed
     logger = multiprocessing.get_logger()
 
-    if not process_initialized:
-        logger.critical("Error: Process is not initialized, exiting...")
+    if failed:
+        logger.critical(
+            "Error: Process failed. This could either be because the process failed to initialize, or the "
+            "tablespace ran out of space. Check logs for more details. Exiting..."
+        )
         return (-1, -1)
 
     logger.info(f"Calculating start and end for date {start_date}.")
@@ -548,7 +569,6 @@ def main():
     usage = "Usage: ./ProcessTMAverage.py [ -o (optional, use OTFD) ] [ database ] [ TMID | ALL ] [ start date (inclusive) ] [ end date (inclusive) ] [ parallel_degree (optional) ]"
     example = "Example: ./ProcessTMAverage.py goldprod ALL 12-JAN-25 13-FEB-25"
 
-    is_otfd = False
     for argument in sys.argv:
         if argument == "-h":
             print(usage)
@@ -556,9 +576,9 @@ def main():
             exit(0)
         if argument == "-o":
             is_otfd = True
+            sys.argv.remove(argument)
 
     num_args = len(sys.argv)
-
     # Check that there were either 5 or 6 arguments passed.
     if num_args < 5 or num_args > 6:
         print(usage)
@@ -721,6 +741,10 @@ def main():
             logger.info(f"Processing for date {single_date} complete.")
             logger.info(f"Ingested {day_ingested_rows} rows.")
             logger.info(f"Inserted {day_inserted_rows} rows.")
+        except KeyboardInterrupt:
+            logger.exception("Script has been cancelling. Terminating...")
+            worker_pool.terminate()
+            exit(1)
         except:
             error_status = True
             logger.exception(

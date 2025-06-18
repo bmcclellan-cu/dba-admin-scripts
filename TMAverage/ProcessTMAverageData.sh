@@ -24,8 +24,8 @@ while getopts ":ho" option; do
         exit 0
         ;;
     o)
-        otfd_opt=" -o "
-        exit 1
+        otfd_opt="-o"
+        shift 1
         ;;
     \?)
         echo "Error: Invalid option"
@@ -44,15 +44,30 @@ if [ $# -lt 4 ] || [ $# -gt 5 ]; then
     exit 1
 fi
 
-database=${1^^}
+database=${1,,}
 tmid=${2^^}
 offset=${3^^}
 range=${4^^}
 parallel_degree=${5^^}
 
+export ORACLE_SID=${database}
+
+
+sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I "$ORACLE_SID")
+if [ -n "$sid_check" ]; then
+    if [ "$sid_check" == "-1" ]; then
+        echo "ERROR"
+        echo "\$ORACLE_SID not set..."
+        exit 1
+    fi
+    echo "ERROR"
+    echo "provided \$database is not open. Exiting..."
+    exit 1
+fi
+
 timestamp=$(date "+%Y%m%d-%H%M%S")
 LOGDIR="/tmp/TMAverageLogs/"
-LOGFILE="$LOGDIR/ProcessTMAverage-$database-$timestamp-Bash.log"
+LOGFILE="$LOGDIR/TMAverage-$database-$timestamp-Bash.log"
 # Sets all script output to be put into a logfile as well, including stderr
 exec > >(tee -a "$LOGFILE") 2>&1
 
@@ -95,9 +110,9 @@ end_date=$(date -d "$start_date +$((range-1)) days" "+%d-%b-%y")
 echo "Using start_date $start_date and end_date $end_date"
 
 # Get the project name from $ORACLE_SID
-if [[ $database == *"DEV" ]]; then
+if [[ $database == *"dev" ]]; then
     project_name="${ORACLE_SID::-3}"
-elif [[ $database == *"PROD" ]]; then
+elif [[ $database == *"prod" ]]; then
     project_name="${ORACLE_SID::-4}"
 else
     echo "Failed to parse project name from database name $database. Database name must end in 'dev' or 'prod'. Exiting..."
@@ -189,6 +204,8 @@ if [[ "$insert_check" != "1" ]]; then
     mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
+
+echo "$HOME/Robert/scripts/TMAverage/ProcessTMAverageData.py $otfd_opt $database $tmid $start_date $end_date $parallel_degree"
 
 
 # Any additional checks are run by the script itself, running script
