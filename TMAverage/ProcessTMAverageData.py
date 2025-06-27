@@ -250,12 +250,12 @@ def fetch_otfd_values_by_time_range(
 
     if len(otfd_error) != 0:
         logger.error(
-            "OnTheFlyDecom_errors contains errors. See below output for more details. Skipping..."
+            "ONTHEFYDECOM_ERRORS contains errors. See below output for more details. Skipping..."
         )
         for row in otfd_error:
             logger.error(row)
         raise Exception(
-            "ONTHEFYDECOM_RESULTS Contains errors. See logs for more details."
+            f"ONTHEFYDECOM_ERRORS Contains errors. See below for more details: {otfd_error}."
         )
 
     results_len = len(
@@ -569,6 +569,8 @@ def main():
     usage = "Usage: ./ProcessTMAverage.py [ -o (optional, use OTFD) ] [ database ] [ TMID | ALL ] [ start date (inclusive) ] [ end date (inclusive) ] [ parallel_degree (optional) ]"
     example = "Example: ./ProcessTMAverage.py goldprod ALL 12-JAN-25 13-FEB-25"
 
+    is_otfd = False
+
     for argument in sys.argv:
         if argument == "-h":
             print(usage)
@@ -723,34 +725,41 @@ def main():
         day_inserted_rows = 0
         day_error_status = False
 
-        try:
-            # Can set chunksize if performance needs to be tuned. The default is # of workers * 4. (PD 8 -> chunksize 32)
-            for result in worker_pool.imap_unordered(process_partial, tmids):
+        num_results = len(tmids)
+
+        # Can set chunksize if performance needs to be tuned. The default is # of workers * 4. (PD 8 -> chunksize 32)
+        results = worker_pool.imap_unordered(process_partial, tmids)
+
+        # This iterates through ALL of the results, catching any errors that occur and logging them.
+        for i in range(num_results):
+            try:
+                result = next(results)
                 if result[0] == -1 or result[1] == -1:
                     day_error_status = True
                 else:
                     day_ingested_rows += result[0]
                     day_inserted_rows += result[1]
 
-            if day_error_status:
+            except KeyboardInterrupt:
+                logger.exception("Script has been cancelling. Terminating...")
+                worker_pool.terminate()
+                exit(1)
+            except:
                 error_status = True
-                logger.error(
-                    f"One or more error(s) occurred during processing TMID {tmid_input} for date {single_date}. Please check log outputs for more details."
+                logger.exception(
+                    f"An exception occurred while processing data for TMID {tmid_input} for date {single_date}. Please see below output.",
+                    stack_info=True,
                 )
 
-            logger.info(f"Processing for date {single_date} complete.")
-            logger.info(f"Ingested {day_ingested_rows} rows.")
-            logger.info(f"Inserted {day_inserted_rows} rows.")
-        except KeyboardInterrupt:
-            logger.exception("Script has been cancelling. Terminating...")
-            worker_pool.terminate()
-            exit(1)
-        except:
+        if day_error_status:
             error_status = True
-            logger.exception(
-                f"An exception occurred while processing data for TMID {tmid_input} for date {single_date}. Please see below output.",
-                stack_info=True,
+            logger.error(
+                f"One or more error(s) occurred during processing TMID {tmid_input} for date {single_date}. Please check log outputs for more details."
             )
+
+        logger.info(f"Processing for date {single_date} complete.")
+        logger.info(f"Ingested {day_ingested_rows} rows.")
+        logger.info(f"Inserted {day_inserted_rows} rows.")
 
         total_inserted_rows += day_inserted_rows
         total_ingested_rows += day_ingested_rows
@@ -771,13 +780,13 @@ def main():
         )
         logger.info(f"Rows ingested: {total_ingested_rows}")
         logger.info(f"Rows inserted: {total_inserted_rows}")
+        exit(1)
 
     else:
         logger.info("Script has successfully completed!")
         logger.info(f"Rows ingested: {total_ingested_rows}")
         logger.info(f"Rows inserted: {total_inserted_rows}")
-
-    exit(0)
+        exit(0)
 
 
 if __name__ == "__main__":

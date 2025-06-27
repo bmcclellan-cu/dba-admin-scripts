@@ -34,6 +34,8 @@ while getopts ":ho" option; do
     esac
 done
 
+DB_EMAIL_LIST="Robert.Schmidt@lasp.colorado.edu" # DEBUG
+
 # Resolve the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -109,15 +111,18 @@ start_date=$(date -d "-$offset days" "+%d-%b-%y")
 end_date=$(date -d "$start_date +$((range-1)) days" "+%d-%b-%y")
 echo "Using start_date $start_date and end_date $end_date"
 
-# Get the project name from $ORACLE_SID
-if [[ $database == *"dev" ]]; then
-    project_name="${ORACLE_SID::-3}"
-elif [[ $database == *"prod" ]]; then
-    project_name="${ORACLE_SID::-4}"
-else
-    echo "Failed to parse project name from database name $database. Database name must end in 'dev' or 'prod'. Exiting..."
-    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
+# Gets the MISC schema, then truncate the _MISC from it.
+project_name=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
+if [ $? -ne 0 ]; then
+    echo "$project_name"
+    echo "An error occurred while running GetSchemaName.sh. Exiting..."
     exit 1
+fi
+if [[ "$project_name" != *"_MISC" ]]; then
+    echo "Attempted to retrieve MISC schema, got $project_name instead. Schema name must match glob *'_MISC'. Exiting..."
+    exit 1
+else
+    project_name="${project_name::-5}"
 fi
 project_name="${project_name^^}"
 
@@ -126,10 +131,12 @@ select_tab_count=0
 if [[ $project_name == "AIM" ]]; then
     select_tables="'TELEMETRYITEMDEFINITION', 'TELEMETRYANALOGCONVERSIONS', 'TMANALOG_TABLE'"
     select_tab_count=$((select_tab_count+3))
+elif [[ $project_name == "EVE" ]]; then
+    select_tables="'TELEMETRYITEMDEFINITION', 'TELEMETRYANALOGCONVERSIONS', 'TMANALOG'"
+    select_tab_count=$((select_tab_count+3))
 else
     select_tables="'TELEMETRYITEMDEFINITION', 'TELEMETRYANALOGCONVERSIONS', 'TMANALOG_SID1'"
     select_tab_count=$((select_tab_count+3))
-
 fi
 insert_tables="'TMAVERAGE'"
 
@@ -213,7 +220,7 @@ echo "Running ProcessTMAverageData.py. See log output at /tmp/TMAverageLogs/"
 python "$HOME/Robert/scripts/TMAverage/ProcessTMAverageData.py" $otfd_opt "$database" "$tmid" "$start_date" "$end_date" $parallel_degree
 if [ $? -ne 0 ]; then
     echo "ProcessTMAverageData.py failed See log outputs at /tmp/TMAverageLogs/ for more information."
-    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
+    mailx -s "ProcessTMAverageData.sh failed/Ran with errors" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
 

@@ -89,21 +89,29 @@ if [ -n "$sid_check" ]; then
     exit 1
 fi
 
-# Get the project name from $ORACLE_SID
-if [[ $ORACLE_SID == *"dev" ]]; then
-    project_name="${ORACLE_SID::-3}"
-elif [[ $ORACLE_SID == *"prod" ]]; then
-    project_name="${ORACLE_SID::-4}"
-else
-    echo "Failed to parse project name from database name $ORACLE_SID. Database name must end in 'dev' or 'prod'. Exiting..."
+# Gets the MISC schema, then truncate the _MISC from it.
+project_name=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
+if [ $? -ne 0 ]; then
+    echo "$project_name"
+    echo "An error occurred while running GetSchemaName.sh. Exiting..."
     exit 1
 fi
+if [[ "$project_name" != *"_MISC" ]]; then
+    echo "Attempted to retrieve MISC schema, got $project_name instead. Schema name must match glob *'_MISC'. Exiting..."
+    exit 1
+else
+    project_name="${project_name::-5}"
+fi
 project_name="${project_name^^}"
+
 
 # Check project name and set static variables accordingly
 if [[ "$project_name" == "AIM" ]]; then
     ct_schema_name="AIM_CT_SC"
     tmanalog_table_name="TMANALOG_TABLE"
+elif [[ "$project_name" == "EVE" ]]; then
+    ct_schema_name="EVE_CT"
+    tmanalog_table_name="TMANALOG"
 else
     ct_schema_name="${project_name}_CT"
 fi
