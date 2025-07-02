@@ -11,12 +11,13 @@
 # Author: Robert Schmidt
 # Created on: June 16th, 2025
 ###############################################################
-usage="Usage: ./ProcessTMAverageData.sh [ -o (optional, use OTFD) ] [database] [TMID | ALL] [ offset (days) ] [ range (days) ] [parallel_degree (optional)]"
+usage="Usage: ./ProcessTMAverageData.sh [ -o (optional, use OTFD) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
 example="Example: ./ProcessTMAverageData.sh goldprod ALL 14 7 8"
 
 otfd_opt=""
+date_opt=0
 # Process input options
-while getopts ":ho" option; do
+while getopts ":hod" option; do
     case $option in
     h)
         echo "$usage"
@@ -25,7 +26,9 @@ while getopts ":ho" option; do
         ;;
     o)
         otfd_opt="-o"
-        shift 1
+        ;;
+    d)
+        date_opt=1
         ;;
     \?)
         echo "Error: Invalid option"
@@ -34,7 +37,7 @@ while getopts ":ho" option; do
     esac
 done
 
-DB_EMAIL_LIST="Robert.Schmidt@lasp.colorado.edu" # DEBUG
+shift $(($OPTIND -1))
 
 # Resolve the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,8 +51,6 @@ fi
 
 database=${1,,}
 tmid=${2^^}
-offset=${3^^}
-range=${4^^}
 parallel_degree=${5^^}
 
 export ORACLE_SID=${database}
@@ -68,8 +69,9 @@ if [ -n "$sid_check" ]; then
 fi
 
 timestamp=$(date "+%Y%m%d-%H%M%S")
-LOGDIR="/tmp/TMAverageLogs/"
-LOGFILE="$LOGDIR/TMAverage-$database-$timestamp-Bash.log"
+LOGDIR="/tmp/TMAverageLogs/$database"
+mkdir -p "$LOGDIR"
+LOGFILE="$LOGDIR/TMAverage-$timestamp-Bash.log"
 # Sets all script output to be put into a logfile as well, including stderr
 exec > >(tee -a "$LOGFILE") 2>&1
 
@@ -98,18 +100,24 @@ if [ -z "$VIRTUAL_ENV" ]; then
     exit 1
 fi
 
-# Ensure that both range and offset are integers.
-if [[ ! "$offset" =~ ^-?[0-9]+$ ]] || [[ ! "$range" =~ ^-?[0-9]+$ ]]; then
-    echo "Error: Offset and range must both be integers. Exiting..."
-    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
-    exit 1
-fi
+# If date option is not given, then process to date from offset and range.
+if [ $date_opt -eq 0 ]; then
+    # Ensure that both range and offset are integers.
+    if [[ ! "$3" =~ ^-?[0-9]+$ ]] || [[ ! "$4" =~ ^-?[0-9]+$ ]]; then
+        echo "Error: Offset and range must both be integers. Exiting..."
+        mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
+        exit 1
+    fi
 
-# Parse the offset and range and get a start and end date.
-start_date=$(date -d "-$offset days" "+%d-%b-%y")
-# Subtract 1 from range, so that script processes $range days of data, as the script is inclusive
-end_date=$(date -d "$start_date +$((range-1)) days" "+%d-%b-%y")
-echo "Using start_date $start_date and end_date $end_date"
+    # Parse the offset and range and get a start and end date.
+    start_date=$(date -d "-$3 days" "+%d-%b-%y")
+    # Subtract 1 from range, so that script processes $range days of data, as the script is inclusive
+    end_date=$(date -d "$start_date +$(($4-1)) days" "+%d-%b-%y")
+    echo "Using start_date $start_date and end_date $end_date"
+else
+    start_date=${3^^}
+    end_date=${4^^}
+fi
 
 # Gets the MISC schema, then truncate the _MISC from it.
 project_name=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
@@ -212,12 +220,12 @@ if [[ "$insert_check" != "1" ]]; then
     exit 1
 fi
 
-echo "$HOME/Robert/scripts/TMAverage/ProcessTMAverageData.py $otfd_opt $database $tmid $start_date $end_date $parallel_degree"
+echo "Running... $SCRIPT_DIR/ProcessTMAverageData.py $otfd_opt $database $tmid $start_date $end_date $parallel_degree"
 
 
 # Any additional checks are run by the script itself, running script
 echo "Running ProcessTMAverageData.py. See log output at /tmp/TMAverageLogs/"
-python "$HOME/Robert/scripts/TMAverage/ProcessTMAverageData.py" $otfd_opt "$database" "$tmid" "$start_date" "$end_date" $parallel_degree
+python "$SCRIPT_DIR/ProcessTMAverageData.py" $otfd_opt "$database" "$tmid" "$start_date" "$end_date" "$parallel_degree"
 if [ $? -ne 0 ]; then
     echo "ProcessTMAverageData.py failed See log outputs at /tmp/TMAverageLogs/ for more information."
     mailx -s "ProcessTMAverageData.sh failed/Ran with errors" "$DB_EMAIL_LIST" < "$LOGFILE"

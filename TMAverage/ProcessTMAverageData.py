@@ -136,7 +136,7 @@ def init_worker(
     # Create a per-process log file
     proc = multiprocessing.current_process()
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    log_file = f"/tmp/TMAverageLogs/TMAverage-{database}-{timestamp}-{proc.name}.log"
+    log_file = f"/tmp/TMAverageLogs/{database}/TMAverage-{timestamp}-{proc.name}.log"
 
     # Clear and add handler
     logger.handlers.clear()
@@ -315,9 +315,6 @@ def fetch_otfd_values_by_time_range(
     )
 
 
-# TODO: Fully review script. Got to HERE.
-
-
 # Fetches the calibration polynomial coefficients.
 def fetch_analog_conversions_by_tmid(tmid, database):
     global db_connection
@@ -366,7 +363,6 @@ def insert_tmaverage_rows(database: str, tmaverage_values: list):
 
     cursor = db_connection.cursor()
 
-    # TODO: Might need alternative SQL for AIMPROD DB.
     sql = f"""INSERT INTO {TMAVERAGE_DBS[database]} 
         (tmid, SCT_VTCW, AVERAGE_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, VALUE_COUNT) 
         VALUES (:1, :2, :3, :4, :5, :6)"""
@@ -621,7 +617,7 @@ def main():
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     logger = setup_logger(
-        f"/tmp/TMAverageLogs/TMAverage-{database}-{timestamp}-Main.log"
+        f"/tmp/TMAverageLogs/{database}/TMAverage-{timestamp}-Main.log"
     )
 
     if sys.argv[2].upper() != "ALL":
@@ -707,11 +703,13 @@ def main():
     try:
         # Get list of all tmids
         if tmid_input == "ALL":
-            exclusion_clause = ""
-            if len(EXCLUDED_TMIDS[database]) > 0:
-                exclusion_list = "', '".join(EXCLUDED_TMIDS[database])
-                exclusion_clause = f" AND TLMID NOT IN ('{exclusion_list}')"
-
+            try:
+                exclusion_clause = ""
+                if len(EXCLUDED_TMIDS[database]) > 0:
+                    exclusion_list = "', '".join(EXCLUDED_TMIDS[database])
+                    exclusion_clause = f" AND TLMID NOT IN ('{exclusion_list}')"
+            except:
+                exclusion_clause = ""
             tmids = cursor.execute(
                 f"SELECT UNIQUE TLMID from {TELEMETRYITEMDEFINITION_DBS[database]} WHERE dataType='U' OR dataType='I' OR dataType='F'{exclusion_clause}"
             ).fetchall()

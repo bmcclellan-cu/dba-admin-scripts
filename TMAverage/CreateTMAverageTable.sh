@@ -7,18 +7,22 @@
 # Notes: The L1A schema must exist in order for this script to work. 
 #        The script defaults to assuming that the analog table is TMANALOG_SID1, but can be
 #        overwritten for cases where the table is different.
+#       
+#        The -v option creates a venv in the same directory as the script is located with the 
+#        required dependencies for the python script to run.
 # 
 # Author: Robert Schmidt
 # Created on Jun 6, 2025
 # Last modified on Jun 6, 2025 - RS
 ##########################################################################
-usage="Usage: ./CreateTMAverageTableUser.sh [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ absolute path to datafile ] [ username (optional) ] [ password (optional) ]"
+usage="Usage: ./CreateTMAverageTableUser.sh [ -v (optional, create venv in tmaverage script directory ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ absolute path to datafile ] [ username (optional) ] [ password (optional) ]"
 example="Example: ./CreateTMAverageTable.sh "
 
 
 user_opt=0
 otfd_opt=0
-while getopts ":huo" option; do
+venv_opt=0
+while getopts ":huov" option; do
     case $option in
     h)
         echo "$usage"
@@ -30,6 +34,9 @@ while getopts ":huo" option; do
         ;;
     o)
         otfd_opt=1
+        ;;
+    v)
+        venv_opt=1
         ;;
     \?)
         echo "Error: Invalid option"
@@ -49,6 +56,8 @@ tablespace_name="TMAVERAGE"
 table_name="TMAVERAGE"
 tmanalog_table_name="TMANALOG_SID1"
 
+# Resolve the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Check and set parameters
 if [[ $user_opt -eq 0 && $# -eq 1 ]]; then
@@ -179,72 +188,100 @@ elif [ $status_code -ne 0 ]; then
     exit 1
 fi
 
-
-if [ $user_opt -eq 0 ]; then
-    echo "Not creating user for TMAverage. All done!"
-    exit 0
-fi
-
 # Create the requested user for TMAverage
-echo "Creating user $username with password $password..."
-create_user=$("$HOME/common/oracle/CreateNewSchema.sh" "$username" "$password" "USERS")
-status_code=$?
-if [ $status_code -ne 0 ] && [[ $create_user == *"already exists"* ]]; then
-    echo "User with username $username already exists on database $ORACLE_SID. Continuing..."
-elif [ $status_code -ne 0 ]; then
-    echo "$create_user"
-    echo "An error occurred while creating user $username with password $password. Exiting..."
-    exit 1
-fi
+if [ $user_opt -ne 0 ]; then
+    echo "Creating user $username with password $password..."
+    create_user=$("$HOME/common/oracle/CreateNewSchema.sh" "$username" "$password" "USERS")
+    status_code=$?
+    if [ $status_code -ne 0 ] && [[ $create_user == *"already exists"* ]]; then
+        echo "User with username $username already exists on database $ORACLE_SID. Continuing..."
+    elif [ $status_code -ne 0 ]; then
+        echo "$create_user"
+        echo "An error occurred while creating user $username with password $password. Exiting..."
+        exit 1
+    fi
 
+    echo "Creating .username and .passwd files..."
+    file_create_failed=0
+    echo "$username" > "$SCRIPT_DIR/.username" || file_create_failed=1
+    echo "$password" > "$SCRIPT_DIR/.passwd" || file_create_failed=1
 
-echo "Granting required permissions to user $username:"
-read_write_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$schema_name.$table_name" table ALL "$username" Y)
-if [ $? -ne 0 ]; then
-    echo "$read_write_permissions"
-    echo "An error occurred while granting read-write permissions to table $schema_name.$table_name on $username. Exiting..."
-    exit 1
-fi
+    if [ $file_create_failed -ne 0 ]; then
+        echo "An error occurred while creating .username and .passwd files. Exiting..."
+        exit 1
+    fi
 
-table1="${project_name}_L1A.$tmanalog_table_name"
-table2="${ct_schema_name}.TelemetryItemDefinition"
-table3="${ct_schema_name}.TelemetryAnalogConversions"
+    echo "Granting required permissions to user $username:"
+    read_write_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$schema_name.$table_name" table ALL "$username" Y)
+    if [ $? -ne 0 ]; then
+        echo "$read_write_permissions"
+        echo "An error occurred while granting read-write permissions to table $schema_name.$table_name on $username. Exiting..."
+        exit 1
+    fi
 
-read_only_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$table1,$table2,$table3" table SELECT "$username" Y)
-if [ $? -ne 0 ]; then
-    echo "$read_only_permissions"
-    echo "An error occurred while granting read-only permission to the below tables. Exiting..."
-    exit 1
-fi
+    table1="${project_name}_L1A.$tmanalog_table_name"
+    table2="${ct_schema_name}.TelemetryItemDefinition"
+    table3="${ct_schema_name}.TelemetryAnalogConversions"
 
-if [ $otfd_opt -ne 0 ]; then
-    echo "Granting user access to OTFD package & tables..."
-    otfd_execute=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
-        set heading off
-        set feedback off
-        whenever oserror exit 1
-        whenever sqlerror exit 1
+    read_only_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$table1,$table2,$table3" table SELECT "$username" Y)
+    if [ $? -ne 0 ]; then
+        echo "$read_only_permissions"
+        echo "An error occurred while granting read-only permission to the below tables. Exiting..."
+        exit 1
+    fi
 
-        GRANT EXECUTE ON ${project_name}_MISC.ONTHEFLYDECOM TO $username;
-        GRANT EXECUTE ON ${project_name}_MISC.ONTHEFLYDECOMMISSIONSPECIFIC TO $username;
+    if [ $otfd_opt -ne 0 ]; then
+        echo "Granting user access to OTFD package & tables..."
+        otfd_execute=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+            set heading off
+            set feedback off
+            whenever oserror exit 1
+            whenever sqlerror exit 1
+
+            GRANT EXECUTE ON ${project_name}_MISC.ONTHEFLYDECOM TO $username;
+            GRANT EXECUTE ON ${project_name}_MISC.ONTHEFLYDECOMMISSIONSPECIFIC TO $username;
 EOD
-    )
+        )
+        if [ $? -ne 0 ]; then
+            echo "$otfd_execute"
+            echo "An error occurred while granting access to the OTFD package to $username. Exiting..."
+            exit 1
+        fi
+
+        results="${project_name}_MISC.ONTHEFLYDECOM_RESULTS"
+        errors="${project_name}_MISC.ONTHEFLYDECOM_ERRORS"
+
+        otfd_tables=$("$HOME/common/oracle/GrantNewPermissions.sh" "$results,$errors" table ALL "$username" Y)
+        if [ $? -ne 0 ]; then
+            echo "$otfd_tables"
+            echo "An error occurred while granting read-only permissions. Exiting..."
+            exit 1
+        fi
+    fi
+    echo "Successfully created user $username and granted appropriate permissions."
+fi
+
+
+# Create a virtual environment in the current directory and install needed dependencies.
+if [ $venv_opt -ne 0 ]; then
+    create_venv=$(python -m venv "$SCRIPT_DIR/venv")
     if [ $? -ne 0 ]; then
-        echo "$otfd_execute"
-        echo "An error occurred while granting access to the OTFD package to $username. Exiting..."
+        echo "$create_venv"
+        echo "Error occurred while creating python venv in $SCRIPT_DIR/venv. Exiting..."
+        exit 1
+    fi
+    # Activate venv
+    source "$SCRIPT_DIR/venv/bin/activate"
+
+    # Install needed dependencies.
+    install_requirements=$(pip install -r "$SCRIPT_DIR/requirements.txt")
+    if [ $? -ne 0 ]; then
+        echo "$install_requirements"
+        echo "Error occurred while installing requirements at $SCRIPT_DIR/requirements.txt. Exiting..."
         exit 1
     fi
 
-    results="${project_name}_MISC.ONTHEFLYDECOM_RESULTS"
-    errors="${project_name}_MISC.ONTHEFLYDECOM_ERRORS"
-
-    otfd_tables=$("$HOME/common/oracle/GrantNewPermissions.sh" "$results,$errors" table ALL "$username" Y)
-    if [ $? -ne 0 ]; then
-        echo "$otfd_tables"
-        echo "An error occurred while granting read-only permissions. Exiting..."
-        exit 1
-    fi
-
+    echo "Successfully created venv at $SCRIPT_DIR/venv."
 fi
 
 
