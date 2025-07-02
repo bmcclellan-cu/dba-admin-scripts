@@ -20,6 +20,14 @@ db_connection = None
 failed = True
 
 
+# Dictionary of TMIDs to exclude on a DB-by-DB basis. Currently a stopgap until we figure out a better way to determine this.
+EXCLUDED_TMIDS = {
+    "ixpeprod": (
+        "2222",
+        "2227",
+    ),
+}
+
 # Dictionary of databases this script is designed for and the appropriate table to access.
 TMANALOG_DBS = {
     "goldprod": "TMANALOG_SID1",
@@ -678,8 +686,13 @@ def main():
     try:
         # Get list of all tmids
         if tmid_input == "ALL":
+            exclusion_clause = ""
+            if len(EXCLUDED_TMIDS[database]) > 0:
+                exclusion_list = "', '".join(EXCLUDED_TMIDS[database])
+                exclusion_clause = f" AND TLMID NOT IN ('{exclusion_list}')"
+
             tmids = cursor.execute(
-                f"SELECT UNIQUE TLMID from {TELEMETRYITEMDEFINITION_DBS[database]} WHERE dataType='U' OR dataType='I' OR dataType='F'"
+                f"SELECT UNIQUE TLMID from {TELEMETRYITEMDEFINITION_DBS[database]} WHERE dataType='U' OR dataType='I' OR dataType='F'{exclusion_clause}"
             ).fetchall()
             tmids = [tmid[0] for tmid in tmids]
             tmids.sort()
