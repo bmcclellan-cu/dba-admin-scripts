@@ -4,7 +4,7 @@ import logging
 import math
 import traceback
 import multiprocessing
-import getopt
+import os
 import datetime
 from functools import partial
 
@@ -64,16 +64,37 @@ TELEMETRYANALOGCONVERSIONS_DBS = {
 
 
 def get_value_from_file(file_path):
+    # Get the directory where the script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Combine the script's directory with the relative file path
+    full_file_path = os.path.join(script_dir, file_path)
+
     try:
-        with open(file_path, "r") as file:
+        # Open the file to read the password
+        with open(full_file_path, "r") as file:
             password = (
                 file.readline().strip()
             )  # Read the first line and strip whitespace
-        print(f"Reading from file in path: {file_path}")
+
+        if not password:
+            print(
+                f"Warning: The file {full_file_path} is empty or contains only whitespace."
+            )
+            return None
+
+        # print(f"Password successfully read from: {full_file_path}")
         return password
+
+    except FileNotFoundError:
+        print(f"Error: The file {full_file_path} was not found.")
+        return None
+    except PermissionError:
+        print(f"Error: Permission denied when accessing the file {full_file_path}.")
+        return None
     except Exception as e:
-        print(f"An error occurred while reading from file: {e}")
-        exit(1)
+        print(f"An error occurred while reading the password: {e}")
+        return None
 
 
 def setup_logger(log_file: str):
