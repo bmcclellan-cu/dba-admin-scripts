@@ -398,7 +398,9 @@ Input:      hexString_in   - An even length string containing hex characters rep
                                 'I' = signed integer
                                 'D' = discrete, output as an unsigned integer (no negative states!)
 
-Output:     valueAsNumber  - The decommed telemetry point
+Output:     valueAsNumber  - The decommed telemetry point. If NULL, then the decommed value was successfully
+                             converted to a NUMBER, but is invalid (has magnitude greater than 1e125). It is 
+                             not expected that any valid data points will be outside of this range.
 
 Returns:    1=success, 0=failure
             Failure can be caused by trying to decom a float from a bit string which isn't a
@@ -407,6 +409,7 @@ Returns:    1=success, 0=failure
 
 History:
   mm/dd/yy Who  What
+  03/07/25 RS   Fixed bug with BITAND, added overflow check.
   02/23/23 SM   Added error handling.
   01/15/20 JH   Comment and output reformatting.
   06/07/19 SM   Initial version.
@@ -558,9 +561,19 @@ BEGIN
         END IF;
     END IF;
 
+    -- Checks if the outputted number value is approaching the maximum for an oracle NUMBER datatype. 
+    -- If so, then return a NULL value, which is dropped later on. Any values of this magnitude are assumed
+    -- to be invalid, and are discarded.
+    IF valueAsNumber > 1e125 OR valueAsNumber < -1e125 THEN
+        IF gblDebugLevel > 0 THEN
+            logError('WARNING: Numeric overflow detected, dropping record with hex ' || hexString_in);
+        END IF;
+        valueAsNumber := NULL;
+        return 0;
+    END IF;
+
     -- The bits are now set correctly for an unsigned integer
-    -- If dataType is signed integer, and the MSB bit is set, 
-    --     then we want to interpret the bits as a negative number
+    -- If dataType is signed integer, and the MSB bit is set, then we want to interpret the bits as a negative number
     -- The correct negative value is returned by the expression:  (valueAsNumber - 2^bitLength_in)
     message := 'ValueAsNumber : ' || TO_CHAR(valueAsNumber);
     message := message || ', Hexstring_in : ' || hexString_in;
@@ -892,13 +905,15 @@ BEGIN
             row := result_table(i);
             status := decomFromHexString( row.hexString, bitOffsetInSubstring, bitLength, dataType,
 	    	      			  valueAsNumber);
-            IF (status = 1) THEN
-	        nValues := nValues + 1;
-	        value_arr(nValues) := valueAsNumber;
-		ert_arr(nValues)   := row.ERT;
-		sct_arr(nValues)   := row.SCT;
-	    ELSE
-		debugString := 'Error occurred with apid=' || TO_CHAR(apid) || ', offset=' || TO_CHAR(byteOffset) ||
+            IF (status = 1) AND (valueAsNumber IS NOT NULL) THEN
+                nValues := nValues + 1;
+                value_arr(nValues) := valueAsNumber;
+                ert_arr(nValues)   := row.ERT;
+                sct_arr(nValues)   := row.SCT;
+            ELSIF (valueAsNumber IS NULL) THEN
+                CONTINUE; -- Ignore any null values, which are a result of near-infinite values.
+	        ELSE
+		        debugString := 'Error occurred with apid=' || TO_CHAR(apid) || ', offset=' || TO_CHAR(byteOffset) ||
 		               ':' || TO_CHAR(bitOffsetInSubstring) || ', dataType=' || dataType;
 	        logError( 'INFO ' || debugString);
 	    END IF;
