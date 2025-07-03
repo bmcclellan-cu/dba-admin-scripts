@@ -264,7 +264,13 @@ fi
 
 # Create a virtual environment in the current directory and install needed dependencies.
 if [ $venv_opt -ne 0 ]; then
-    create_venv=$(python -m venv "$SCRIPT_DIR/venv")
+    newest_python=$(ls /usr/bin/python3* | grep -oP 'python3\.\d+' | sort -V | tail -n 1)
+    if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
+        echo "Failed to find newest version of python in order to create virtual environment. Exiting..."
+        exit 1
+    fi
+
+    create_venv=$("$newest_python" -m venv "$SCRIPT_DIR/venv")
     if [ $? -ne 0 ]; then
         echo "$create_venv"
         echo "Error occurred while creating python venv in $SCRIPT_DIR/venv. Exiting..."
