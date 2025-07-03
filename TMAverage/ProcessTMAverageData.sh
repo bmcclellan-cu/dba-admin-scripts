@@ -75,10 +75,21 @@ LOGFILE="$LOGDIR/TMAverage-$timestamp-Bash.log"
 # Sets all script output to be put into a logfile as well, including stderr
 exec > >(tee -a "$LOGFILE") 2>&1
 
+# Setup trap to send an email whenever the script exits.
+exit_handler(){
+    if [[ $? -eq 0 ]]; then
+        mailx -s "ProcessTMAverageData.sh Ran Successfully" "$DB_EMAIL_LIST" < "$LOGFILE"
+        exit 0
+    elif [[ $exit_code -eq 1 ]]; then
+        mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
+        exit 1
+    fi
+}
+trap exit_handler EXIT INT TERM # On exit, call exit_handler.
+
 # Check that the .passwd and .username files exist.
 if [ ! -f "$SCRIPT_DIR/.username" ] || [ ! -f "$SCRIPT_DIR/.passwd" ]; then
     echo "Missing .username and .passwd files at $SCRIPT_DIR. Exiting..."
-    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
 
@@ -86,7 +97,6 @@ fi
 VENV_ACTIVATE="${SCRIPT_DIR}/venv/bin/activate"
 if [ ! -f "$VENV_ACTIVATE" ]; then
     echo "ERROR: File venv/bin/activate not found in $SCRIPT_DIR! You must create a Python virtual environment to execute this script."
-    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
 
@@ -96,7 +106,6 @@ source "$VENV_ACTIVATE"
 # Virtual environment check
 if [ -z "$VIRTUAL_ENV" ]; then
     echo "Error: A valid python virtual environment must exist in $SCRIPT_DIR. Exiting..."
-    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
 
@@ -105,7 +114,6 @@ if [ $date_opt -eq 0 ]; then
     # Ensure that both range and offset are integers.
     if [[ ! "$3" =~ ^-?[0-9]+$ ]] || [[ ! "$4" =~ ^-?[0-9]+$ ]]; then
         echo "Error: Offset and range must both be integers. Exiting..."
-        mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
         exit 1
     fi
 
@@ -176,7 +184,6 @@ EOD
 if [ $? -ne 0 ]; then
     echo "$select_check"
     echo "Error checking if user $username has select access to tables: $select_tables"
-    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
 
@@ -184,7 +191,6 @@ fi
 select_check=$(echo "$select_check" | tr -d '[:space:]')
 if [[ $select_check != "$select_tab_count" ]]; then
     echo "Error: User $username does not have SELECT permission for tables $select_tables. Please run CreateTMAverageTable.sh to configure user. Exiting..."
-    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
 
@@ -207,16 +213,13 @@ EOD
 if [ $? -ne 0 ]; then
     echo "$insert_check"
     echo "Error checking if user $username has insert access to tables: $select_tables"
-    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
-    
 fi
 
 # Trim ALL whitespace, then check that all privileges are present.
 insert_check=$(echo "$insert_check" | tr -d '[:space:]')
 if [[ "$insert_check" != "1" ]]; then
     echo "Error: User $username does not have INSERT permission for tables $insert_tables. Please run CreateTMAverageTable.sh to configure user. Exiting..."
-    mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
 
@@ -228,8 +231,7 @@ echo "Running ProcessTMAverageData.py. See log output at /tmp/TMAverageLogs/"
 python "$SCRIPT_DIR/ProcessTMAverageData.py" $otfd_opt "$database" "$tmid" "$start_date" "$end_date" "$parallel_degree"
 if [ $? -ne 0 ]; then
     echo "ProcessTMAverageData.py failed See log outputs at /tmp/TMAverageLogs/ for more information."
-    mailx -s "ProcessTMAverageData.sh failed/Ran with errors" "$DB_EMAIL_LIST" < "$LOGFILE"
     exit 1
 fi
 
-mailx -s "ProcessTMAverageData.sh Ran Successfully" "$DB_EMAIL_LIST" < "$LOGFILE"
+exit 0

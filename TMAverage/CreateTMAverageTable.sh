@@ -98,7 +98,7 @@ if [ -n "$sid_check" ]; then
     exit 1
 fi
 
-# Gets the MISC schema, then truncate the _MISC from it.
+# Gets the MISC schema, then truncate the _MISC from it. 
 project_name=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
 if [ $? -ne 0 ]; then
     echo "$project_name"
