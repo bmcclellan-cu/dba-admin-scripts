@@ -90,7 +90,7 @@ def get_value_from_file(file_path):
             )
             return None
 
-        print(f"Password successfully read from: {full_file_path}")
+        print(f"Value successfully read from: {full_file_path}")
         return password
 
     except FileNotFoundError:
@@ -386,6 +386,7 @@ def fetch_analog_conversions_by_tmid(tmid, database):
             logger.fatal(
                 "An error occurred while retrieving Analog Conversion Polynomial. See above output:"
             )
+            raise error
 
     return result
 
