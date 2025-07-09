@@ -82,11 +82,11 @@ exec > >(tee -a "$LOGFILE") 2>&1
 exit_handler(){
     if [[ $? -eq 0 ]]; then
         echo "ProcessTMAverageData.sh ran successfully... Sending email to $DB_EMAIL_LIST."
-        mailx -s "ProcessTMAverageData.sh Ran Successfully" "$DB_EMAIL_LIST" < "$LOGFILE"
+        mailx -s "$HOSTNAME - $database - ProcessTMAverageData.sh Ran Successfully" "$DB_EMAIL_LIST" < "$LOGFILE"
         exit 0
     else
         echo "ProcessTMAverageData.sh ran with errors... Sending email to $DB_EMAIL_LIST."
-        mailx -s "ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
+        mailx -s "$HOSTNAME - $database - ProcessTMAverageData.sh failed" "$DB_EMAIL_LIST" < "$LOGFILE"
         exit 1
     fi
 }
