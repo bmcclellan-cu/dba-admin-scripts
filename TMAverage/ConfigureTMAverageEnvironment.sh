@@ -15,18 +15,22 @@
 # Created on Jun 6, 2025
 # Last modified on Jun 6, 2025 - RS
 ##########################################################################
-usage="Usage: ./CreateTMAverageTableUser.sh [ -v (optional, create venv in tmaverage script directory ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ absolute path to datafile ] [ username (optional) ] [ password (optional) ]"
-example="Example: ./CreateTMAverageTable.sh "
+usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafile ] (optional, create TMAverage tablespace and table.) ] [ -v (optional, create venv in tmaverage script directory ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ username (optional) ] [ password (optional) ]"
+example1="Example: ./ConfigureTMAverageEnvironment.sh -t /ssd_internal/Robert/AIMPROD_TMAVERAGE/tmaverage_table.dbf"
+example2="         ./ConfigureTMAverageEnvironment.sh -u -o -v PROCESSTMIDTEST testPWD"
 
 
 user_opt=0
 otfd_opt=0
 venv_opt=0
-while getopts ":huov" option; do
+table_opt=0
+datafile_path=""
+while getopts ":huovt:" option; do
     case $option in
     h)
         echo "$usage"
-        echo "$example"
+        echo "$example1"
+        echo "$example2"
         exit 0
         ;;
     u)
@@ -38,6 +42,10 @@ while getopts ":huov" option; do
     v)
         venv_opt=1
         ;;
+    t)
+        table_opt=1
+        datafile_path=$OPTARG
+        ;;
     \?)
         echo "Error: Invalid option"
         exit 1
@@ -47,7 +55,6 @@ done
 
 shift $(($OPTIND -1))
 
-datafile_path=""
 username=""
 password=""
 
@@ -60,16 +67,16 @@ tmanalog_table_name="TMANALOG_SID1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Check and set parameters
-if [[ $user_opt -eq 0 && $# -eq 1 ]]; then
-    datafile_path="$1"
-elif [[ $user_opt -ne 0 && $# -eq 3 ]]; then
-    datafile_path="$1"
-    username="$2"
-    password="$3"
+if [[ $user_opt -ne 0 && $# -eq 2 ]]; then
+    username="$1"
+    password="$2"
+elif [[ $user_opt -eq 0 && $# -eq 0 ]]; then
+    : # No parameters to set
 else    
     echo "Invalid parameters."
     echo "$usage"
-    echo "$example"
+    echo "$example1"
+    echo "$example2"
     exit 1
 fi
 
@@ -127,65 +134,68 @@ fi
 
 schema_name="${project_name^^}_L1A"
 
-# Check that L1A schema exists.
-l1a_schema_check=$("$HOME/common/oracle/CheckIfSchemaExists.sh" "$schema_name")
-if [ $? -ne 0 ]; then
-    echo "$l1a_schema_check"
-    echo "An error occurred while running CheckIfSchemaExists.sh. Exiting... "
-    exit 1
-fi
-if [[ "$l1a_schema_check" != "Yes" ]]; then
-    echo "Schema ${schema_name} does not exist. Exiting..."
-    exit 1
-fi
+# Create the TMAverage table if desired.
+if [ $table_opt -ne 0 ]; then
+    # Check that L1A schema exists.
+    l1a_schema_check=$("$HOME/common/oracle/CheckIfSchemaExists.sh" "$schema_name")
+    if [ $? -ne 0 ]; then
+        echo "$l1a_schema_check"
+        echo "An error occurred while running CheckIfSchemaExists.sh. Exiting... "
+        exit 1
+    fi
+    if [[ "$l1a_schema_check" != "Yes" ]]; then
+        echo "Schema ${schema_name} does not exist. Exiting..."
+        exit 1
+    fi
 
-# Create tablespace for TMAverage
-echo "Creating tablespace $tablespace_name..."
-create_tablespace=$("$HOME/common/oracle/CreateNewTablespace.sh" "$tablespace_name" "$datafile_path")
-status_code=$?
-if [ $status_code -ne 0 ] && [[ "$create_tablespace" == *"already exists in the current database"* ]]; then
-    echo "Tablespace $tablespace_name already exists. Continuing..."
-elif [ $status_code -ne 0 ]; then
-    echo "$create_tablespace"
-    echo "An error occurred while running CreateNewTablespace.sh. Exiting..."
-    exit 1
-fi
+    # Create tablespace for TMAverage
+    echo "Creating tablespace $tablespace_name..."
+    create_tablespace=$("$HOME/common/oracle/CreateNewTablespace.sh" "$tablespace_name" "$datafile_path")
+    status_code=$?
+    if [ $status_code -ne 0 ] && [[ "$create_tablespace" == *"already exists in the current database"* ]]; then
+        echo "Tablespace $tablespace_name already exists. Continuing..."
+    elif [ $status_code -ne 0 ]; then
+        echo "$create_tablespace"
+        echo "An error occurred while running CreateNewTablespace.sh. Exiting..."
+        exit 1
+    fi
 
-# Check if TMAverage table already exists
-check_table_exists=$("$HOME/common/oracle/CheckIfTableExists.sh" "$schema_name" "$table_name")
-if [ $? -ne 0 ]; then
-    echo "$check_table_exists"
-    echo "An error occurred while running CheckIfTableExists.sh Existing..."
-    exit 1
-fi
+    # Check if TMAverage table already exists
+    check_table_exists=$("$HOME/common/oracle/CheckIfTableExists.sh" "$schema_name" "$table_name")
+    if [ $? -ne 0 ]; then
+        echo "$check_table_exists"
+        echo "An error occurred while running CheckIfTableExists.sh Existing..."
+        exit 1
+    fi
 
-# Create TMAverage table
-echo "Creating table $schema_name.$table_name in tablespace $tablespace_name..."
-create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
-    set heading off
-    set feedback off
-    whenever oserror exit 1
-    whenever sqlerror exit 1
+    # Create TMAverage table
+    echo "Creating table $schema_name.$table_name in tablespace $tablespace_name..."
+    create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+        set heading off
+        set feedback off
+        whenever oserror exit 1
+        whenever sqlerror exit 1
 
-    CREATE TABLE "$schema_name"."$table_name"
-    ( "TMID" NUMBER(7,0) NOT NULL ENABLE,
-    "SCT_VTCW" NUMBER(16,0) NOT NULL ENABLE,
-    "AVERAGE_VALUE" FLOAT(126) NOT NULL ENABLE,
-    "MINIMUM_VALUE" FLOAT(126) NOT NULL ENABLE,
-    "MAXIMUM_VALUE" FLOAT(126) NOT NULL ENABLE,
-    "VALUE_COUNT" NUMBER(7,0) NOT NULL ENABLE,
-    PRIMARY KEY(TMID, SCT_VTCW)
-    ) TABLESPACE "$tablespace_name";
-    exit;
+        CREATE TABLE "$schema_name"."$table_name"
+        ( "TMID" NUMBER(7,0) NOT NULL ENABLE,
+        "SCT_VTCW" NUMBER(16,0) NOT NULL ENABLE,
+        "AVERAGE_VALUE" FLOAT(126) NOT NULL ENABLE,
+        "MINIMUM_VALUE" FLOAT(126) NOT NULL ENABLE,
+        "MAXIMUM_VALUE" FLOAT(126) NOT NULL ENABLE,
+        "VALUE_COUNT" NUMBER(7,0) NOT NULL ENABLE,
+        PRIMARY KEY(TMID, SCT_VTCW)
+        ) TABLESPACE "$tablespace_name";
+        exit;
 EOD
-)
-status_code=$?
-if [ $status_code -ne 0 ] && [[ "$create_table" == *"ORA-00955"* ]]; then
-    echo "Table already exists, continuing..."
-elif [ $status_code -ne 0 ]; then
-    echo "$create_table"
-    echo "An error occurred while creating table $table_name. Exiting..."
-    exit 1
+    )
+    status_code=$?
+    if [ $status_code -ne 0 ] && [[ "$create_table" == *"ORA-00955"* ]]; then
+        echo "Table already exists, continuing..."
+    elif [ $status_code -ne 0 ]; then
+        echo "$create_table"
+        echo "An error occurred while creating table $table_name. Exiting..."
+        exit 1
+    fi
 fi
 
 # Create the requested user for TMAverage
@@ -266,6 +276,7 @@ fi
 if [ $venv_opt -ne 0 ]; then
     newest_python=$(ls /usr/bin/python3* | grep -oP 'python3\.\d+' | sort -V | tail -n 1)
     if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
+        echo "$newest_python"
         echo "Failed to find newest version of python in order to create virtual environment. Exiting..."
         exit 1
     fi
@@ -278,6 +289,10 @@ if [ $venv_opt -ne 0 ]; then
     fi
     # Activate venv
     source "$SCRIPT_DIR/venv/bin/activate"
+    if [ $? -ne 0 ]; then
+        echo "An error occurred while activating venv environment. Exiting..."
+        exit 1
+    fi
 
     # Install needed dependencies.
     install_requirements=$(pip install -r "$SCRIPT_DIR/requirements.txt")

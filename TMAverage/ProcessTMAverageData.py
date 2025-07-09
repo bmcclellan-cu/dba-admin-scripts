@@ -4,6 +4,8 @@ import logging
 import math
 import traceback
 import multiprocessing
+import argparse
+import csv
 import os
 import datetime
 from functools import partial
@@ -13,22 +15,12 @@ import oracledb
 import numpy as np
 
 # Global variable for the database connection (variable exists independently for each process and is persistent as long as the process exists.)
-db_connection = None
+db_connection: oracledb.Connection = None
 
 # Global variable to track if the thread is ready to function. For example, if it did not successfully initialize,
 # the thread will be in a failed state, and not even attempt to do any processing. The same occurs if the script is not able to access
 # the necessary tables (indicating permission or database access issues).
 failed = True
-
-
-# Dictionary of TMIDs to exclude on a DB-by-DB basis. Currently a stopgap until we figure out a better way to determine TMIDs not to
-# operate on.
-EXCLUDED_TMIDS = {
-    "ixpeprod": (
-        "2222",
-        "2227",
-    ),
-}
 
 # Dictionary of databases this script is designed for and the appropriate table to access. If script is run on an unsupported database,
 # it will fail.
@@ -169,7 +161,22 @@ def init_worker(
     db_connection = oracledb.connect(
         user=username, password=password, dsn=connection_string
     )
-    failed = False  # Only set global variable if successfully initialized.
+    failed = False  # Only set global variable if successfully initialized.=
+
+
+def fail_worker():
+    """
+    This function sets a worker into the failed state and reports it.
+    """
+    global failed
+    global db_connection
+    logger = multiprocessing.get_logger()
+    logger.critical(
+        "This thread is now in a failed state. Any future tasks assigned to it "
+        "will be dropped immediately."
+    )
+    failed = True
+    db_connection.close()
 
 
 def fetch_values_by_time_range(
@@ -218,11 +225,6 @@ def fetch_values_by_time_range(
                 "(TMAnalog(SELECT), TelemetryItemDefinition(SELECT), \n"
                 "TelemetryAnalogConversions(SELECT), TMAverage(ALL).\n"
             )
-            logger.critical(
-                "This thread is now in a failed state. Any future tasks assigned to it "
-                "will be dropped immediately"
-            )
-            failed = True
             raise error
         else:
             logger.exception("An unknown exception occurred.")
@@ -301,11 +303,7 @@ def fetch_otfd_values_by_time_range(
                 "(TMAnalog(SELECT), TelemetryItemDefinition(SELECT), \n"
                 "TelemetryAnalogConversions(SELECT), TMAverage(ALL).\n"
             )
-            logger.critical(
-                "This thread is now in a failed state. Any future tasks assigned to it "
-                "will be dropped immediately"
-            )
-            failed = True
+            fail_worker()
             raise error
         else:
             logger.exception("An unknown exception occurred.")
@@ -379,7 +377,7 @@ def fetch_analog_conversions_by_tmid(tmid, database):
                 "(TMAnalog(SELECT), TelemetryItemDefinition(SELECT), "
                 "TelemetryAnalogConversions(SELECT), TMAverage(ALL)"
             )
-            cursor.connection.close()
+            fail_worker()
             exit(1)
         else:
             logger.fatal(traceback.format_exc())
@@ -436,6 +434,7 @@ def insert_tmaverage_rows(database: str, tmaverage_values: list):
                 "Ensure that the script has the following permissions: "
                 "(TMAnalog(SELECT), TelemetryItemDefinition(SELECT), TelemetryAnalogConversions(SELECT), TMAverage(ALL) "
             )
+            fail_worker()
             raise error
         elif str(error).find("ORA-01654") != -1:
             logger.exception(
@@ -444,6 +443,7 @@ def insert_tmaverage_rows(database: str, tmaverage_values: list):
                 "Ensure that the TMAVERAGE tablespace has enough extra storage space for "
                 "the script to run."
             )
+            fail_worker()
             raise error
         else:
             logger.exception("An unknown exception occurred.")
@@ -648,64 +648,115 @@ def main():
     over 5 minute increments, then inserts them into the TMAverage table.
     """
     # Usage and example
-    usage = "Usage: ./ProcessTMAverage.py [ -o (optional, use OTFD) ] [ database ] [ TMID | ALL ] [ start date (inclusive) ] [ end date (inclusive) ] [ parallel_degree (optional) ]"
-    example = "Example: ./ProcessTMAverage.py goldprod ALL 12-JAN-25 13-FEB-25"
+    parser = argparse.ArgumentParser(
+        prog="ProcessTMAverageData.py",
+        description="This script will iterate through all TMIDs and insert averaged values for that telemetry point into TMAverage\n"
+        "Example: ./ProcessTMAverageData.py goldprod ALL 12-JAN-25 13-FEB-25",
+    )
 
-    is_otfd = False
+    parser.add_argument(
+        "-o",
+        dest="otfd",
+        action="store_true",
+        help="Use OnTheFlyDecom",
+    )
+    parser.add_argument(
+        "-e",
+        dest="exclude_filename",
+        type=str,
+        help="filename for newline-separated TMIDs to exclude",
+    )
+    parser.add_argument("database", type=str)
+    parser.add_argument(
+        "tmid",
+        type=str,
+        help="TMID to process, can be 'ALL' or newline-separated filename of TMIDs.",
+    )
+    parser.add_argument(
+        "start_date", type=str, help="(Inclusive), beginning of range to process."
+    )
+    parser.add_argument(
+        "end_date", type=str, help="(Exclusive), end of range to process."
+    )
+    parser.add_argument(
+        "parallel_degree",
+        type=int,
+        nargs="?",
+        default=1,
+        help="(optional, defaults to 1)",
+    )
 
-    for argument in sys.argv:
-        if argument == "-h":
-            print(usage)
-            print(example)
-            exit(0)
-        if argument == "-o":
-            is_otfd = True
-            sys.argv.remove(argument)
-            # Removes the flag from argv, emulates behavior of shift 1
+    arguments = parser.parse_args()
 
-    # Check that there were either 5 or 6 arguments passed.
-    num_args = len(sys.argv)
-    if num_args < 5 or num_args > 6:
-        print(usage)
-        print(example)
-        exit(1)
-
-    database = sys.argv[1].lower()
-    tmid_input = None
+    database = arguments.database.lower()
+    tmid_input = arguments.tmid
+    is_otfd = arguments.otfd
+    parallel_degree = arguments.parallel_degree
 
     # Configure the logger for the main thread
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    os.makedirs(f"/tmp/TMAverageLogs/{database}", exist_ok=True)
     logger = setup_logger(
         f"/tmp/TMAverageLogs/{database}/TMAverage-{timestamp}-Main.log"
     )
 
-    # Validate TMID input
-    if sys.argv[2].upper() != "ALL":
+    # Validate TMID input if not all. If all, will query for data once db connection is
+    # made
+    tmids = []
+    if tmid_input.upper() != "ALL":
         try:
-            tmid_input = int(sys.argv[2])
+            tmids = [int(tmid_input)]
         except ValueError:
-            logger.critical("TMID must be a number or 'ALL'.")
-            exit(1)
+            try:
+                # If TMID is not ALL or a number, check if it is a file.
+                with open(tmid_input, mode="r", newline="\n") as file:
+                    csv_reader = csv.reader(file)
+                    for row in csv_reader:
+                        tmids.append(int(row[0]))
+            except:
+                logger.critical(
+                    "TMID must be a number, 'ALL', or a valid filename containing newline-separated TMIDs. Exiting..."
+                )
+                sys.exit(1)
     else:
-        tmid_input = "ALL"
+        tmids = "ALL"  # This tells later code to query for TMIDs.
+
+    # Validate exclude file input if it exists. This flag is only valid for TMIDs 'ALL'
+    excluded_tmids = []
+    if arguments.exclude_filename:
+        if tmids != "ALL":
+            logger.critical(
+                "The exclude flag may only be used for TMIDs 'ALL'. Exiting..."
+            )
+            sys.exit(1)
+        try:
+            with open(arguments.exclude_filename, mode="r", newline="\n") as file:
+                csv_reader = csv.reader(file)
+                for row in csv_reader:
+                    excluded_tmids.append(int(row[0]))
+        except:
+            logger.critical(
+                "exclude_filename must be a valid filename containing newline-separated TMIDs to exclude. Exiting..."
+            )
+            sys.exit(1)
 
     start_date = None
     end_date = None
 
     # Validate date input
     try:
-        start_date = datetime.datetime.strptime(sys.argv[3], "%d-%b-%y").date()
+        start_date = datetime.datetime.strptime(arguments.start_date, "%d-%b-%y").date()
     except ValueError:
         logger.critical(
-            f"Inputted date {sys.argv[3]} does not match format DD-MMM-YY. Exiting..."
+            f"Inputted date {arguments.start_date} does not match format DD-MMM-YY. Exiting..."
         )
         exit(1)
 
     try:
-        end_date = datetime.datetime.strptime(sys.argv[4], "%d-%b-%y").date()
+        end_date = datetime.datetime.strptime(arguments.end_date, "%d-%b-%y").date()
     except ValueError:
         logger.critical(
-            f"Inputted date {sys.argv[4]} does not match format DD-MMM-YY. Exiting..."
+            f"Inputted date {arguments.end_date} does not match format DD-MMM-YY. Exiting..."
         )
         exit(1)
 
@@ -714,17 +765,6 @@ def main():
     if num_of_days < 1:
         logger.critical("Error, end date is earlier than start date. Exiting...")
         exit(1)
-
-    # Validate parallel degree
-    parallel_degree = None
-    if num_args == 5:
-        parallel_degree = 1
-    else:
-        try:
-            parallel_degree = int(sys.argv[5])
-        except ValueError:
-            logger.critical("Parallel degree must be a number.")
-            exit(1)
 
     username = get_value_from_file("./.username")
     password = get_value_from_file("./.passwd")
@@ -762,15 +802,13 @@ def main():
     cursor = connection.cursor()
 
     try:
-        # Get list of all tmids
-        if tmid_input == "ALL":
-
+        # If all tmids is specified, then query for them.
+        if tmids == "ALL":
             # Check if database has any TMIDs that are excluded. If so, generate SQL to filter them out.
             exclusion_clause = ""
-            excluded_tmids = EXCLUDED_TMIDS.get(database, ())
             if len(excluded_tmids) > 0:
                 exclusion_list = "', '".join(
-                    EXCLUDED_TMIDS[database]
+                    [str(id) for id in excluded_tmids]
                 )  # Generates a string list of the form "item1, item2"
                 exclusion_clause = f" AND TLMID NOT IN ('{exclusion_list}')"
 
@@ -780,8 +818,6 @@ def main():
             tmids = [tmid[0] for tmid in tmids]
             tmids.sort()
             logger.info(f"There are {len(tmids)} unique tmids.")
-        else:
-            tmids = [tmid_input]
     except:
         logger.exception(
             f"An error occurred while fetching TMIDs from {TELEMETRYITEMDEFINITION_DBS[database]}. Exiting..."

@@ -11,24 +11,28 @@
 # Author: Robert Schmidt
 # Created on: June 16th, 2025
 ###############################################################
-usage="Usage: ./ProcessTMAverageData.sh [ -o (optional, use OTFD) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
+usage="Usage: ./ProcessTMAverageData.sh [ -o (optional, use OTFD) ] [ -e [ filename ] (filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
 example="Example: ./ProcessTMAverageData.sh goldprod ALL 14 7 8"
 
 otfd_opt=""
 date_opt=0
+exclude_opt=""
 # Process input options
-while getopts ":hod" option; do
+while getopts ":hode:" option; do
     case $option in
     h)
         echo "$usage"
         echo "$example"
         exit 0
         ;;
-    o)xr
+    o)
         otfd_opt="-o"
         ;;
     d)
         date_opt=1
+        ;;
+    e)
+        exclude_opt=" -e $OPTARG "
         ;;
     \?)
         echo "Error: Invalid option"
@@ -50,11 +54,10 @@ if [ $# -lt 4 ] || [ $# -gt 5 ]; then
 fi
 
 database=${1,,}
-tmid=${2^^}
+tmid=${2}
 parallel_degree=${5^^}
 
-export ORACLE_SID=${database}
-
+export ORACLE_SID="$database"
 
 sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I "$ORACLE_SID")
 if [ -n "$sid_check" ]; then
@@ -98,7 +101,7 @@ fi
 # Check for existence of Python virtual environment
 VENV_ACTIVATE="${SCRIPT_DIR}/venv/bin/activate"
 if [ ! -f "$VENV_ACTIVATE" ]; then
-    echo "ERROR: File venv/bin/activate not found in $SCRIPT_DIR! You must create a Python virtual environment to execute this script."
+    echo "ERROR: File venv/bin/activate not found in $SCRIPT_DIR! Please run ./ConfigureTMAverageEnvironment.sh -v to create one with the necessary dependencies."
     exit 1
 fi
 
@@ -192,7 +195,7 @@ fi
 # Trim ALL whitespace, then check that all privileges are present.
 select_check=$(echo "$select_check" | tr -d '[:space:]')
 if [[ $select_check != "$select_tab_count" ]]; then
-    echo "Error: User $username does not have SELECT permission for tables $select_tables. Please run CreateTMAverageTable.sh to configure user. Exiting..."
+    echo "Error: User $username does not have SELECT permission for tables $select_tables. Please run ConfigureTMAverageEnvironment.sh.sh to configure user. Exiting..."
     exit 1
 fi
 
@@ -221,16 +224,17 @@ fi
 # Trim ALL whitespace, then check that all privileges are present.
 insert_check=$(echo "$insert_check" | tr -d '[:space:]')
 if [[ "$insert_check" != "1" ]]; then
-    echo "Error: User $username does not have INSERT permission for tables $insert_tables. Please run CreateTMAverageTable.sh to configure user. Exiting..."
+    echo "Error: User $username does not have INSERT permission for tables $insert_tables, or the tables do not exist."
+    echo "Please run ConfigureTMAverageEnvironment.sh.sh to configure user and confirm existence of the required tables. Exiting..."
     exit 1
 fi
 
-echo "Running... $SCRIPT_DIR/ProcessTMAverageData.py $otfd_opt $database $tmid $start_date $end_date $parallel_degree"
+echo "Running... $SCRIPT_DIR/ProcessTMAverageData.py $otfd_opt $exclude_opt $database $tmid $start_date $end_date $parallel_degree"
 
 
 # Any additional checks are run by the script itself, running script
 echo "Running ProcessTMAverageData.py. See log output at /tmp/TMAverageLogs/"
-python "$SCRIPT_DIR/ProcessTMAverageData.py" $otfd_opt "$database" "$tmid" "$start_date" "$end_date" "$parallel_degree"
+python "$SCRIPT_DIR/ProcessTMAverageData.py" $otfd_opt $exclude_opt "$database" "$tmid" "$start_date" "$end_date" "$parallel_degree"
 if [ $? -ne 0 ]; then
     echo "ProcessTMAverageData.py failed See log outputs at /tmp/TMAverageLogs/ for more information."
     exit 1
