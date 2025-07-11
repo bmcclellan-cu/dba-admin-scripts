@@ -12,7 +12,8 @@
 # Created on: June 16th, 2025
 ###############################################################
 usage="Usage: ./ProcessTMAverageData.sh [ -o (optional, use OTFD) ] [ -e [ filename ] (filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
-example="Example: ./ProcessTMAverageData.sh goldprod ALL 14 7 8"
+example1="Example: ./ProcessTMAverageData.sh goldprod ALL 14 7 8"
+example2="         ./ProcessTMAverageData.sh -d goldprod ALL 12-JAN-23 14-JAN-23"
 
 otfd_opt=""
 date_opt=0
@@ -22,7 +23,8 @@ while getopts ":hode:" option; do
     case $option in
     h)
         echo "$usage"
-        echo "$example"
+        echo "$example1"
+        echo "$example2"
         exit 0
         ;;
     o)
@@ -49,7 +51,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Check number of arguments
 if [ $# -lt 4 ] || [ $# -gt 5 ]; then
     echo "$usage"
-    echo "$example"
+    echo "$example1"
+    echo "$example2"
     exit 1
 fi
 
@@ -169,6 +172,7 @@ fi
 
 # Get username to check for access
 username=$(<./.username)
+username=${username^^}
 
 # Check read-only table access
 select_check=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
@@ -177,7 +181,7 @@ select_check=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
     whenever oserror exit 1
     whenever sqlerror exit 1
 
-    SELECT COUNT(*) 
+    SELECT COUNT(table_name) 
     FROM dba_tab_privs 
     WHERE 
     grantee = '$username' AND
