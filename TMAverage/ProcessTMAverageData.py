@@ -874,7 +874,13 @@ def main():
                     day_inserted_rows += result[1]
 
             except KeyboardInterrupt:
-                logger.exception("Script has been cancelling. Terminating...")
+                logger.critical(
+                    "Script has been cancelled. Terminating multiprocessing pool..."
+                )
+
+                logger.info(f"Rows ingested before cancel: {total_ingested_rows}")
+                logger.info(f"Rows ingested before cancel: {total_inserted_rows}")
+
                 worker_pool.terminate()
                 exit(1)
             except:
