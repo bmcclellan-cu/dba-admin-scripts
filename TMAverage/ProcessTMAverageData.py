@@ -766,8 +766,8 @@ def main():
         logger.critical("Error, end date is earlier than start date. Exiting...")
         exit(1)
 
-    username = get_value_from_file("./.username")
-    password = get_value_from_file("./.passwd")
+    username = get_value_from_file(".username")
+    password = get_value_from_file(".passwd")
 
     if password is None or username is None:
         # Error message is already printed by get_password_from_file
@@ -857,6 +857,7 @@ def main():
         day_inserted_rows = 0
         day_error_status = False
         critical_failure = False
+        unique_constraint_error = False
 
         num_results = len(tmids)
 
@@ -883,6 +884,16 @@ def main():
 
                 worker_pool.terminate()
                 exit(1)
+            except oracledb.IntegrityError as error:
+                if str(error).find("ORA-00001") != -1:
+                    # This is not a critical failure, and script will continue processing. Log error to user and continue
+                    unique_constraint_error = True
+                else:
+                    error_status = True
+                    logger.exception(
+                        f"An exception occurred while processing data for TMID {tmid_input} for date {single_date}. Please see below output.",
+                        stack_info=True,
+                    )
             except:
                 error_status = True
                 logger.exception(
@@ -893,7 +904,13 @@ def main():
         if day_error_status:
             error_status = True
             logger.error(
-                f"One or more error(s) occurred during processing TMID {tmid_input} for date {single_date}. Please check log outputs for more details."
+                f"One or more error(s) occurred during processing TMID {tmid_input} for date {single_date}. "
+                "Please check worker log files at /tmp/TMAverageLogs/ for more details. Continuing..."
+            )
+        if unique_constraint_error:
+            logger.error(
+                f"One or more unique constraint errors (ORA-00001) occurred while processing TMID {tmid_input} for date {single_date}. "
+                "Please check worker log files at /tmp/TMAverageLogs/ for more details. Continuing..."
             )
         if critical_failure:
             logger.critical(
