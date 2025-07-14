@@ -8,6 +8,9 @@
 #          range is set to 3 days, so the script will process data from 11-JUL-25 to 13-JUL-25 (3 days of data)).
 #          If you want to specify a specific date range, you need to invoke the .py script directly.
 # 
+# Note:    Please do not run this script at a parallel degree above 16 on lasp-db5, as the script consumes
+#          a lot of IO, and may cause performance issues.
+# 
 # Author: Robert Schmidt
 # Created on: June 16th, 2025
 ###############################################################
@@ -59,6 +62,12 @@ fi
 database=${1,,}
 tmid=${2}
 parallel_degree=${5^^}
+parallel_degree=${parallel_degree:-1}
+
+if [[ ! $parallel_degree =~ ^[0-9]+$ ]]; then
+    echo "Parallel degree must be a positive integer"
+    exit 1
+fi
 
 export ORACLE_SID="$database"
 
@@ -199,7 +208,7 @@ fi
 # Trim ALL whitespace, then check that all privileges are present.
 select_check=$(echo "$select_check" | tr -d '[:space:]')
 if [[ $select_check != "$select_tab_count" ]]; then
-    echo "Error: User $username does not have SELECT permission for tables $select_tables. Please run ConfigureTMAverageEnvironment.sh.sh to configure user. Exiting..."
+    echo "Error: User $username does not have SELECT permission for tables $select_tables. Please run ConfigureTMAverageEnvironment.sh to configure user. Exiting..."
     exit 1
 fi
 
@@ -229,7 +238,7 @@ fi
 insert_check=$(echo "$insert_check" | tr -d '[:space:]')
 if [[ "$insert_check" != "1" ]]; then
     echo "Error: User $username does not have INSERT permission for tables $insert_tables, or the tables do not exist."
-    echo "Please run ConfigureTMAverageEnvironment.sh.sh to configure user and confirm existence of the required tables. Exiting..."
+    echo "Please run ConfigureTMAverageEnvironment.sh to configure user and confirm existence of the required tables. Exiting..."
     exit 1
 fi
 
@@ -238,7 +247,7 @@ echo "Running... $SCRIPT_DIR/ProcessTMAverageData.py $otfd_opt $exclude_opt $dat
 
 # Any additional checks are run by the script itself, running script
 echo "Running ProcessTMAverageData.py. See log output at /tmp/TMAverageLogs/"
-python "$SCRIPT_DIR/ProcessTMAverageData.py" $otfd_opt $exclude_opt "$database" "$tmid" "$start_date" "$end_date" "$parallel_degree"
+python "$SCRIPT_DIR/ProcessTMAverageData.py" $otfd_opt $exclude_opt "$database" "$tmid" "$start_date" "$end_date" "${parallel_degree}"
 if [ $? -ne 0 ]; then
     echo "ProcessTMAverageData.py failed See log outputs at /tmp/TMAverageLogs/ for more information."
     exit 1
