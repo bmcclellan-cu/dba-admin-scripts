@@ -34,11 +34,11 @@ TMANALOG_DBS = {
 
 # The table and schema to access for the TMAverage table. Should theoretically be derived from the mission name.
 TMAVERAGE_DBS = {
-    "aimprod": "AIM_L1A.TMAVERAGE",
-    "goldprod": "GOLD_L1A.TMAverage",
-    "evep12c": "EVE_L1A.TMAverage",
-    "tsisprod": "TSIS_L1A.TMAverage",
-    "ixpeprod": "IXPE_L1A.TMAverage",
+    "aimprod": "AIM_L1A.TMAVERAGE_SID1",
+    "goldprod": "GOLD_L1A.TMAVERAGE_SID1",
+    "evep12c": "EVE_L1A.TMAVERAGE_SID1",
+    "tsisprod": "TSIS_L1A.TMAVERAGE_SID1",
+    "ixpeprod": "IXPE_L1A.TMAVERAGE_SID1",
 }
 
 TELEMETRYITEMDEFINITION_DBS = {
