@@ -27,9 +27,6 @@ while getopts ":h" option; do
     esac
 done
 
-# Resolve the directory where this script is located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 if [ $# -ne 1 ]; then
     echo "$usage"
     echo "$example1"
@@ -41,7 +38,7 @@ database=${1,,}
 # Constant variables
 table_name="TMAVERAGE_SID1"
 
-sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I "$ORACLE_SID")
+sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I "$database")
 if [ -n "$sid_check" ]; then
     if [ "$sid_check" == "-1" ]; then
         echo "ERROR"
@@ -52,6 +49,8 @@ if [ -n "$sid_check" ]; then
     echo "provided \$database is not open. Exiting..."
     exit 1
 fi
+
+export ORACLE_SID="$database"
 
 # Gets the MISC schema, then truncate the _MISC from it.
 project_name=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
