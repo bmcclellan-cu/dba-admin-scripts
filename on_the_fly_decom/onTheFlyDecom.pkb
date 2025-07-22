@@ -12,6 +12,7 @@ Purpose:    This contains the generic, non-mission-specific code used for on-the
 Revisions:
   mm/dd/yy who  description
   10/19/23 SM   Initial version.
+  07/22/25 RS   Updated logging + fixed bug.
   
 Methods:
   logError             - The error logging function writes to the onTheFlyDecom_errors table.
@@ -120,7 +121,7 @@ Notes:
 
 
 
-CREATE OR REPLACE PACKAGE BODY IXPE_MISC.onTheFlyDecom
+CREATE OR REPLACE PACKAGE BODY onTheFlyDecom
 AS
 
 -- These options, and additional mission-specific options, are settable by calling the setOption
