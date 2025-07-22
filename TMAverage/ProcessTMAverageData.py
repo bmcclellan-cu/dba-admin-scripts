@@ -436,12 +436,12 @@ def insert_tmaverage_rows(database: str, tmaverage_values: list):
             )
             fail_worker()
             raise error
-        elif str(error).find("ORA-01654") != -1:
+        elif str(error).find("ORA-01654") != -1 or str(error).find("ORA-01647"):
             logger.exception(
-                "ORA-01654: unable to extend index. "
-                "This error is likely due to the script running out of storage space. "
-                "Ensure that the TMAVERAGE tablespace has enough extra storage space for "
-                "the script to run."
+                "ORA-01654: unable to extend index. / ORA-01647: tablespace is read-only, cannot allocate space in it"
+                "This error is likely due to the script running out of storage space or the tablespace being set as read-only. "
+                "Ensure that the TMAVERAGE tablespace has enough extra storage space for the script to run and that the TMAVERAGE "
+                "tablespace is READ WRITE."
             )
             fail_worker()
             raise error

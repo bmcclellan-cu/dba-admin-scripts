@@ -244,6 +244,19 @@ if [[ "$insert_check" != "1" ]]; then
     exit 1
 fi
 
+# Check tablespace write status
+check_tablespace=$("$HOME/common/oracle/CheckTablespaceReadStatus.sh" TMAVERAGE)
+if [ $? -ne 0 ]; then
+    echo "$check_tablespace"
+    echo "An error occurred while checking tablespace read-write status. Exiting..."
+    exit 1
+elif [ "$check_tablespace" != "READ-WRITE" ]; then
+    echo "Tablespace TMAVERAGE must be in READ-WRITE mode (currently $check_tablespace). Exiting..."
+    exit 1
+fi
+
+
+
 echo "Running... $SCRIPT_DIR/ProcessTMAverageData.py $otfd_opt $exclude_opt $database $tmid $start_date $end_date $parallel_degree"
 
 
