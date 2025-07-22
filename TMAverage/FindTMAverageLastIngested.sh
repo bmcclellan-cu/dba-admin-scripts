@@ -92,5 +92,10 @@ fi
 
 get_latest_timestamp=$(echo "$get_latest_timestamp" | xargs) # Trim
 
-echo "Latest data timestamp: $get_latest_timestamp"
+if [[ -z "$get_latest_timestamp" ]]; then
+    echo "No data found in $schema_name.$table_name."
+else
+    echo "Latest data timestamp: $get_latest_timestamp"
+fi
+
 exit 0
