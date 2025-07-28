@@ -70,6 +70,17 @@ project_name="${project_name^^}"
 
 schema_name="${project_name}_L1A"
 
+# Check that table exists.
+table_check=$("$HOME/common/oracle/CheckIfTableExists.sh" "$schema_name" "$table_name")
+if [ $? -ne 0 ]; then
+    echo "An error occurred while running CheckIfTableExists.sh. Exiting..."
+    exit 1
+fi
+if [ "$table_check" != "Yes" ]; then
+    echo "ERROR: Table $schema_name.$table_name does not exist. Exiting..."
+    exit 1
+fi
+
 echo "Getting latest data timestamp for $schema_name.$table_name. This may take a while for larger tables..."
 
 get_latest_timestamp=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
