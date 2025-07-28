@@ -51,18 +51,17 @@ while getopts ":hode:" option; do
 done
 
 # Set environment variables
-if [ -f /export/home/oracle/19c.env ]; then
-    source /export/home/oracle/19c.env
+if [ -f /export/home/oracle/.bashrc ]; then
+    source /export/home/oracle/.bashrc
     if [ $? -ne 0 ]; then
-        echo "An error occurred while sourcing /export/home/oracle/19c.env. Exiting..."
-        exit 1
+        echo "An error occurred while sourcing /export/home/oracle/.bashrc. Exiting..."
     fi
 else
     export ALL_DBA_EMAIL_LIST="Brian.McClellan@lasp.colorado.edu Jackson.Cockrum@lasp.colorado.edu Robert.Schmidt@lasp.colorado.edu Bryan.Turns@lasp.colorado.edu"
     export ORACLE_HOME=/dba/oracle/installs/orabase/product/19.7.0/dbhome_1
     export PATH=$ORACLE_HOME/bin:$PATH
+    export LD_LIBRARY_PATH=$ORACLE_HOME/lib
 fi
-export LD_LIBRARY_PATH=$ORACLE_HOME/lib
 
 
 shift $(($OPTIND -1))
