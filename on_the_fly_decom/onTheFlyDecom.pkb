@@ -12,6 +12,7 @@ Purpose:    This contains the generic, non-mission-specific code used for on-the
 Revisions:
   mm/dd/yy who  description
   10/19/23 SM   Initial version.
+  07/22/25 RS   Updated logging + fixed bug.
   
 Methods:
   logError             - The error logging function writes to the onTheFlyDecom_errors table.
@@ -85,7 +86,7 @@ Notes:
        Enter value for t:  (where t is the letter after the ampersand)
 
   4. Exception Handling and End-User Error Handling
-     - If you let an exception propogate out to the caller, then the onTheFlyDecom_errors table
+     - If you let an exception propagate out to the caller, then the onTheFlyDecom_errors table
        gets emptied.  So have to catch all exceptions so that the end-user application can get
        information from that table.
      - The end user is expected to check the onTheFlyDecom_errors table after each call to
@@ -151,39 +152,67 @@ gblSequence NUMBER := 1;  /* sequence column (row counter) in onTheFlyDecom_erro
 /*************************************************************************************************
 Procedure:  logError
 
-Purpose:    Inserts a new row with a message to the onTheFlyDecom_errors temporary table, or updates
-            the occurrence if the same message has already occurred (but if gblDebugLevel != 0,
-	    it inserts a new row instead of updating occurrence).
+Purpose:    Inserts a new row with a message to the onTheFlyDecom_errors temporary table, incrementing
+            a global counter indicating the order of events. The collateErrors function is used to 
+            compact the errors such that identical error messages are not repeated.
 
 Input:      message - VARCHAR2 The error message to log.
                       It should start with "ERROR ", "WARNING " or "INFO ".
 
 Notes:
-    Rows in the onTheFlyDecom_errors temporary table are of the form id, message, occurrences.
+    Rows in the onTheFlyDecom_errors temporary table are of the form sequence, message, occurrences.
 *************************************************************************************************/
-PROCEDURE logError(message VARCHAR2)
+PROCEDURE logError(msg VARCHAR2)
 IS
     tmpOccurrences NUMBER;
 BEGIN
-    IF (gblDebugLevel = 0) THEN
-        EXECUTE IMMEDIATE 'SELECT occurrences FROM onTheFlyDecom_errors WHERE message = ''' || message || ''''
-            INTO tmpOccurrences;
-        EXECUTE IMMEDIATE 'UPDATE onTheFlyDecom_errors SET occurrences = ' ||
-                           TO_CHAR( tmpOccurrences + 1) || 'WHERE message = ''' || message || '''';
-    ELSE
-        RAISE NO_DATA_FOUND;  -- force an insert
-    END IF;
+    INSERT INTO onTheFlyDecom_errors (sequence, message, occurrences) VALUES (gblSequence, msg, 1);
+    gblSequence := gblSequence + 1;
 EXCEPTION
-    WHEN NO_DATA_FOUND THEN
-        EXECUTE IMMEDIATE 'INSERT INTO onTheFlyDecom_errors (sequence, message, occurrences) VALUES (' ||
-	                  TO_CHAR(gblSequence) || ',''' || message || ''', 1)';
-	gblSequence := gblSequence + 1;
     WHEN others THEN
         DBMS_OUTPUT.PUT_LINE('Error in logError: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
 
 END logError;
 
 
+/*************************************************************************************************
+Procedure:  collateErrors
+
+Purpose:    If gblDebugLevel is 0, takes the errors currently in the onTheFlyDecom_errors table and 
+            deletes errors with identical error messages, incrementing an occurrences counter to reflect
+            the number of errors. The lowest sequence is preserved, such that the order that the errors 
+            initially occurred in is preserved. This was done to the inefficiency of incrementing said
+            counter throughout runtime when displaying 80K+ errors.
+
+Input:      None
+
+Notes:
+    Rows in the onTheFlyDecom_errors temporary table are of the form sequence, message, occurrences.
+*************************************************************************************************/
+PROCEDURE collateErrors IS
+BEGIN
+    if (gblDebugLevel = 0) THEN
+        MERGE INTO onTheFlyDecom_errors t
+        USING (
+            SELECT message, COUNT(*) AS cnt
+            FROM onTheFlyDecom_errors
+            GROUP BY message
+        ) s
+        ON (t.message = s.message)
+        WHEN MATCHED THEN
+        UPDATE SET t.occurrences = s.cnt;
+
+        DELETE FROM onTheFlyDecom_errors t
+        WHERE sequence NOT IN (
+            SELECT MIN(sequence)
+            FROM onTheFlyDecom_errors
+            GROUP BY message
+        );
+    END IF;
+EXCEPTION
+    WHEN others THEN
+        DBMS_OUTPUT.PUT_LINE('Error in collateErrors: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
+END collateErrors;
 
 /*************************************************************************************************
 Procedure:  getVersion
@@ -370,7 +399,9 @@ Input:      hexString_in   - An even length string containing hex characters rep
                                 'I' = signed integer
                                 'D' = discrete, output as an unsigned integer (no negative states!)
 
-Output:     valueAsNumber  - The decommed telemetry point
+Output:     valueAsNumber  - The decommed telemetry point. If NULL, then the decommed value was successfully
+                             converted to a NUMBER, but is invalid (has magnitude greater than 1e125). It is 
+                             not expected that any valid data points will be outside of this range.
 
 Returns:    1=success, 0=failure
             Failure can be caused by trying to decom a float from a bit string which isn't a
@@ -379,6 +410,7 @@ Returns:    1=success, 0=failure
 
 History:
   mm/dd/yy Who  What
+  03/07/25 RS   Fixed bug with BITAND, added overflow check.
   02/23/23 SM   Added error handling.
   01/15/20 JH   Comment and output reformatting.
   06/07/19 SM   Initial version.
@@ -410,6 +442,7 @@ IS
     mask NUMBER;
     bitIsSet BOOLEAN;
     errMsg VARCHAR2(500) := 'decomFromHexString: Error! ';
+    message VARCHAR2(500) := '';
 BEGIN
 
     -- First, the inputs are validated -----------------------------------------------------------
@@ -488,8 +521,13 @@ BEGIN
         --     to insure all the bits are contained within the raw bytes
         -- First we bit-shift to the right, so that all the bits we're interested in
         --     are in the lower 4 bytes
-
-        valueAsNumber := TO_NUMBER( hexString_in, 'XXXXXXXXXXXXXXXX');
+        BEGIN
+            valueAsNumber := TO_NUMBER( hexString_in, 'XXXXXXXXXXXXXXXX');
+        EXCEPTION
+        WHEN others THEN
+            errMsg := errMsg || 'Cannot convert bits directly to number';
+            return 0;
+        END;
         -- 'valueAsNumber' can be thought of as a 64-bit unsigned integer
 
         lastBitOffset := bitOffset_in + bitLength_in - 1;
@@ -524,21 +562,36 @@ BEGIN
         END IF;
     END IF;
 
-    -- The bits are now set correctly for an unsigned integer
-    -- If dataType is signed integer, and the MSB bit is set, 
-    --     then we want to interpret the bits as a negative number
-    -- The correct negative value is returned by the expression:  (valueAsNumber - 2^bitLength_in)
+    -- Checks if the outputted number value is approaching the maximum for an oracle NUMBER datatype. 
+    -- If so, then return a NULL value, which is dropped later on. Any values of this magnitude are assumed
+    -- to be invalid, and are discarded.
+    IF valueAsNumber > 1e125 OR valueAsNumber < -1e125 THEN
+        IF gblDebugLevel > 0 THEN
+            logError('WARNING: Numeric overflow detected, dropping record with hex ' || hexString_in);
+        END IF;
+        valueAsNumber := NULL;
+        return 0;
+    END IF;
 
-    bitIsSet := (BITAND( valueAsNumber, POWER(2,bitLength_in-1)) != 0);
-    IF dataType_in = 'I' and bitIsSet THEN
-        valueAsNumber := valueAsNumber - POWER( 2, bitLength_in);
+    -- The bits are now set correctly for an unsigned integer
+    -- If dataType is signed integer, and the MSB bit is set, then we want to interpret the bits as a negative number
+    -- The correct negative value is returned by the expression:  (valueAsNumber - 2^bitLength_in)
+    message := 'ValueAsNumber : ' || TO_CHAR(valueAsNumber);
+    message := message || ', Hexstring_in : ' || hexString_in;
+
+    IF dataType_in = 'I' THEN
+        -- Only attempt to BITAND if the value is an int, otherwise the operation may fail.
+        bitIsSet := (BITAND(valueAsNumber, POWER(2,bitLength_in-1)) != 0);
+        IF bitIsSet THEN
+            valueAsNumber := valueAsNumber - POWER( 2, bitLength_in); 
+        END IF;
     END IF;
 
     RETURN 1;
 
     EXCEPTION
     WHEN others THEN
-        logError('ERROR decomFromHexString: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
+        logError('ERROR decomFromHexString: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM || ' with: ' || message);
         return 0;
 
 END decomFromHexString;
@@ -853,13 +906,15 @@ BEGIN
             row := result_table(i);
             status := decomFromHexString( row.hexString, bitOffsetInSubstring, bitLength, dataType,
 	    	      			  valueAsNumber);
-            IF (status = 1) THEN
-	        nValues := nValues + 1;
-	        value_arr(nValues) := valueAsNumber;
-		ert_arr(nValues)   := row.ERT;
-		sct_arr(nValues)   := row.SCT;
-	    ELSE
-		debugString := 'Error occurred with apid=' || TO_CHAR(apid) || ', offset=' || TO_CHAR(byteOffset) ||
+            IF (status = 1) AND (valueAsNumber IS NOT NULL) THEN
+                nValues := nValues + 1;
+                value_arr(nValues) := valueAsNumber;
+                ert_arr(nValues)   := row.ERT;
+                sct_arr(nValues)   := row.SCT;
+            ELSIF (valueAsNumber IS NULL) THEN
+                CONTINUE; -- Ignore any null values, which are a result of near-infinite values.
+	        ELSE
+		        debugString := 'Error occurred with apid=' || TO_CHAR(apid) || ', offset=' || TO_CHAR(byteOffset) ||
 		               ':' || TO_CHAR(bitOffsetInSubstring) || ', dataType=' || dataType;
 	        logError( 'INFO ' || debugString);
 	    END IF;
@@ -1125,7 +1180,7 @@ BEGIN
     -- Set the time range for the queries to TelemetryStorageLocation and TMdecom.
     -- Usually this is the ERT range of the queries.
     -- For EMM it may be the ERT range of a test, if no ERT range was input, but a testId was input.
-    -- It may also be a SCT range, for flight data where SCT is commesurate with ERT.
+    -- It may also be a SCT range, for flight data where SCT is commensurate with ERT.
 
     status := onTheFlyDecomMissionSpecific.getDefinitionStartStopTimes( systemId_in,
     	                                                                startERT_in, stopERT_in,
@@ -1481,24 +1536,30 @@ BEGIN
             END;    
         END LOOP;  -- end loop through TelemetryStorageLocation rows
 
+        collateErrors();
+
         RETURN;
 
     EXCEPTION
         WHEN NO_DATA_FOUND THEN
             LogError('ERROR selectNumericTlm: No telemetryStorageLocation ' ||
                      'rows found for time range ' || definitionStartTime || ' - ' || definitionStopTime);
+            collateErrors();
             RETURN;
     END;
 
     EXCEPTION
         WHEN time_error THEN
             logError('ERROR selectNumericTlm: Invalid or missing time range');
+            collateErrors();
             RETURN;
         WHEN others THEN
             logError('ERROR selectNumericTlm: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
+            collateErrors();
             RETURN;
 
 END selectNumericTlm;
 
 END onTheFlyDecom;
 /
+
