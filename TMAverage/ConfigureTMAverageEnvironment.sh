@@ -60,7 +60,7 @@ password=""
 
 # Set static values. These are used so that exceptions can be easily managed (aim).
 tablespace_name="TMAVERAGE"
-table_name="TMAVERAGE"
+table_name="TMAVERAGE_SID1"
 tmanalog_table_name="TMANALOG_SID1"
 
 # Resolve the directory where this script is located
@@ -177,15 +177,18 @@ if [ $table_opt -ne 0 ]; then
         whenever sqlerror exit 1
 
         CREATE TABLE "$schema_name"."$table_name"
-        ( "TMID" NUMBER(7,0) NOT NULL ENABLE,
-        "SCT_VTCW" NUMBER(16,0) NOT NULL ENABLE,
-        "AVERAGE_VALUE" FLOAT(126) NOT NULL ENABLE,
-        "MINIMUM_VALUE" FLOAT(126) NOT NULL ENABLE,
-        "MAXIMUM_VALUE" FLOAT(126) NOT NULL ENABLE,
-        "VALUE_COUNT" NUMBER(7,0) NOT NULL ENABLE,
-        PRIMARY KEY(TMID, SCT_VTCW)
-        ) TABLESPACE "$tablespace_name";
-        exit;
+        (
+            TMID NUMBER(7,0) NOT NULL ENABLE,
+            SCT_VTCW NUMBER(16,0) NOT NULL ENABLE,
+            AVERAGE_VALUE FLOAT(126) NOT NULL ENABLE,
+            MINIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
+            MAXIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
+            VALUE_COUNT NUMBER(7,0) NOT NULL ENABLE,
+            CONSTRAINT PK_TMAVERAGE_SID1 PRIMARY KEY (TMID, SCT_VTCW) ENABLE
+        )
+        ORGANIZATION INDEX PCTFREE 0 LOGGING
+        TABLESPACE "$tablespace_name";
+
 EOD
     )
     status_code=$?

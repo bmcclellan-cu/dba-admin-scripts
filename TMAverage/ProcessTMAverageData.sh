@@ -11,10 +11,12 @@
 # Note:    Please do not run this script at a parallel degree above 16 on lasp-db5, as the script consumes
 #          a lot of IO, and may cause performance issues.
 # 
+#          For more detailed documentation go to https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
+# 
 # Author: Robert Schmidt
 # Created on: June 16th, 2025
 ###############################################################
-usage="Usage: ./ProcessTMAverageData.sh [ -o (optional, use OTFD) ] [ -e [ filename ] (filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
+usage="Usage: ./ProcessTMAverageData.sh [ -o (optional, use OTFD) ] [ -e [ filename ] (filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL | filename] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
 example1="Example: ./ProcessTMAverageData.sh goldprod ALL 14 7 8"
 example2="         ./ProcessTMAverageData.sh -d goldprod ALL 12-JAN-23 14-JAN-23"
 
@@ -171,7 +173,7 @@ else
     select_tables="'TELEMETRYITEMDEFINITION', 'TELEMETRYANALOGCONVERSIONS', 'TMANALOG_SID1'"
     select_tab_count=$((select_tab_count+3))
 fi
-insert_tables="'TMAVERAGE'"
+insert_tables="'TMAVERAGE_SID1'"
 
 # Check for read access to ONTHEFLYDECOM tables.
 if [[ -n "$otfd_opt" ]]; then
@@ -241,6 +243,18 @@ if [[ "$insert_check" != "1" ]]; then
     echo "Please run ConfigureTMAverageEnvironment.sh to configure user and confirm existence of the required tables. Exiting..."
     exit 1
 fi
+
+# Check tablespace write status
+check_tablespace=$("$HOME/common/oracle/CheckTablespaceReadStatus.sh" TMAVERAGE)
+if [ $? -ne 0 ]; then
+    echo "$check_tablespace"
+    echo "An error occurred while checking tablespace read-write status. Exiting..."
+    exit 1
+elif [ "$check_tablespace" != "READ-WRITE" ]; then
+    echo "Tablespace TMAVERAGE must be in READ-WRITE mode (currently $check_tablespace). Exiting..."
+    exit 1
+fi
+
 
 echo "Running... $SCRIPT_DIR/ProcessTMAverageData.py $otfd_opt $exclude_opt $database $tmid $start_date $end_date $parallel_degree"
 

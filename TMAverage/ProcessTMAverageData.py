@@ -34,11 +34,11 @@ TMANALOG_DBS = {
 
 # The table and schema to access for the TMAverage table. Should theoretically be derived from the mission name.
 TMAVERAGE_DBS = {
-    "aimprod": "AIM_L1A.TMAVERAGE",
-    "goldprod": "GOLD_L1A.TMAverage",
-    "evep12c": "EVE_L1A.TMAverage",
-    "tsisprod": "TSIS_L1A.TMAverage",
-    "ixpeprod": "IXPE_L1A.TMAverage",
+    "aimprod": "AIM_L1A.TMAVERAGE_SID1",
+    "goldprod": "GOLD_L1A.TMAVERAGE_SID1",
+    "evep12c": "EVE_L1A.TMAVERAGE_SID1",
+    "tsisprod": "TSIS_L1A.TMAVERAGE_SID1",
+    "ixpeprod": "IXPE_L1A.TMAVERAGE_SID1",
 }
 
 TELEMETRYITEMDEFINITION_DBS = {
@@ -436,12 +436,12 @@ def insert_tmaverage_rows(database: str, tmaverage_values: list):
             )
             fail_worker()
             raise error
-        elif str(error).find("ORA-01654") != -1:
+        elif str(error).find("ORA-01654") != -1 or str(error).find("ORA-01647"):
             logger.exception(
-                "ORA-01654: unable to extend index. "
-                "This error is likely due to the script running out of storage space. "
-                "Ensure that the TMAVERAGE tablespace has enough extra storage space for "
-                "the script to run."
+                "ORA-01654: unable to extend index. / ORA-01647: tablespace is read-only, cannot allocate space in it"
+                "This error is likely due to the script running out of storage space or the tablespace being set as read-only. "
+                "Ensure that the TMAVERAGE tablespace has enough extra storage space for the script to run and that the TMAVERAGE "
+                "tablespace is READ WRITE."
             )
             fail_worker()
             raise error
