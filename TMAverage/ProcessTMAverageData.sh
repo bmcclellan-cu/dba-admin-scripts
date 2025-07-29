@@ -146,7 +146,7 @@ fi
 # Validate that username and password are valid. (NOTE: Currently pointing to personal repo, will update when PR is merged.)
 username=$(<"$SCRIPT_DIR/.username")
 password=$(<"$SCRIPT_DIR/.passwd")
-test_login=$("$HOME"/Robert/anothercommon/oracle/TestOracleUserLogin.sh "$username" "$password")
+test_login=$("$HOME/common/oracle/TestOracleUserLogin.sh" "$username" "$password")
 if [ $? -ne 0 ]; then
     echo "$test_login"
     echo "An error occurred while running TestOracleUserLogin.sh. Exiting..."
