@@ -207,7 +207,22 @@ if [ $user_opt -ne 0 ]; then
     create_user=$("$HOME/common/oracle/CreateNewSchema.sh" "$username" "$password" "USERS")
     status_code=$?
     if [ $status_code -ne 0 ] && [[ $create_user == *"already exists"* ]]; then
-        echo "User with username $username already exists on database $ORACLE_SID. Continuing..."
+        echo "User with username $username already exists on database $ORACLE_SID. Resetting password..."
+        alter_user=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+            set heading off
+            set feedback off
+            whenever oserror exit 1
+            whenever sqlerror exit 1
+
+            ALTER USER $username IDENTIFIED BY $password;
+EOD
+        )
+        if [ $? -ne 0 ]; then
+            echo "$alter_user"
+            echo "An error occurred while resetting password for user $username. Exiting..."
+            exit 1
+        fi
+        echo "Successfully reset password for user $username."
     elif [ $status_code -ne 0 ]; then
         echo "$create_user"
         echo "An error occurred while creating user $username with password $password. Exiting..."

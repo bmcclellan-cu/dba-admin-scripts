@@ -18,7 +18,7 @@
 # Created on: July 21st, 2025
 # Modified on: July 28th, 2025 - RS
 ###############################################################
-usage="Usage: ./ProcessTMAverageData.sh [ -o (optional, use OTFD) ] [ -e [ filename ] (filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL | filename] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
+usage="Usage: ./ProcessTMAverageData.sh [ -o (optional, use OTFD) ] [ -e [ filename ] (absolute path filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL | filename] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
 example1="Example: ./ProcessTMAverageData.sh goldprod ALL 14 7 8"
 example2="         ./ProcessTMAverageData.sh -d goldprod ALL 12-JAN-23 14-JAN-23"
 
@@ -41,6 +41,18 @@ while getopts ":hode:" option; do
         date_opt=1
         ;;
     e)
+        if [ -z "$OPTARG" ]; then
+            echo "Error: Option -e requires a filename argument."
+            exit 1
+        fi
+        if [ ! -f "$OPTARG" ]; then
+            echo "Error: File $OPTARG does not exist."
+            exit 1
+        fi
+        if [[ "$OPTARG" != /* ]]; then
+            echo "Error: Option -e requires an absolute path filename. Providing relative path inputs may lead to unintended behavior in a crontab."
+            exit 1
+        fi
         exclude_opt=" -e $OPTARG "
         ;;
     \?)
@@ -49,6 +61,10 @@ while getopts ":hode:" option; do
         ;;
     esac
 done
+
+# Constant variables
+tmaverage_table="TMAVERAGE_SID1"
+tablespace_name="TMAVERAGE_SID1"
 
 # Set environment variables
 if [ -f /export/home/oracle/.bashrc ]; then
@@ -62,7 +78,6 @@ else
     export PATH=$ORACLE_HOME/bin:$PATH
     export LD_LIBRARY_PATH=$ORACLE_HOME/lib
 fi
-
 
 shift $(($OPTIND -1))
 
@@ -128,6 +143,20 @@ if [ ! -f "$SCRIPT_DIR/.username" ] || [ ! -f "$SCRIPT_DIR/.passwd" ]; then
     exit 1
 fi
 
+# Validate that username and password are valid. (NOTE: Currently pointing to personal repo, will update when PR is merged.)
+username=$(<"$SCRIPT_DIR/.username")
+password=$(<"$SCRIPT_DIR/.passwd")
+test_login=$("$HOME"/Robert/anothercommon/oracle/TestOracleUserLogin.sh "$username" "$password")
+if [ $? -ne 0 ]; then
+    echo "$test_login"
+    echo "An error occurred while running TestOracleUserLogin.sh. Exiting..."
+    exit 1
+fi
+if [[ "$test_login" != "Yes" ]]; then
+    echo "A .username and/or .passwd file in directory $SCRIPT_DIR is invalid. Exiting..."
+    exit 1
+fi
+
 # Check for existence of Python virtual environment
 VENV_ACTIVATE="${SCRIPT_DIR}/venv/bin/activate"
 if [ ! -f "$VENV_ACTIVATE" ]; then
@@ -189,7 +218,7 @@ else
     select_tables="'TELEMETRYITEMDEFINITION', 'TELEMETRYANALOGCONVERSIONS', 'TMANALOG_SID1'"
     select_tab_count=$((select_tab_count+3))
 fi
-insert_tables="'TMAVERAGE_SID1'"
+insert_tables="'$tmaverage_table'"
 
 # Check for read access to ONTHEFLYDECOM tables.
 if [[ -n "$otfd_opt" ]]; then
@@ -261,13 +290,13 @@ if [[ "$insert_check" != "1" ]]; then
 fi
 
 # Check tablespace write status
-check_tablespace=$("$HOME/common/oracle/CheckTablespaceReadStatus.sh" TMAVERAGE)
+check_tablespace=$("$HOME/common/oracle/CheckTablespaceReadStatus.sh" "$tablespace_name")
 if [ $? -ne 0 ]; then
     echo "$check_tablespace"
     echo "An error occurred while checking tablespace read-write status. Exiting..."
     exit 1
 elif [ "$check_tablespace" != "READ-WRITE" ]; then
-    echo "Tablespace TMAVERAGE must be in READ-WRITE mode (currently $check_tablespace). Exiting..."
+    echo "Tablespace $tablespace_name must be in READ-WRITE mode (currently $check_tablespace). Exiting..."
     exit 1
 fi
 
