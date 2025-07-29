@@ -271,8 +271,6 @@ elif [ "$check_tablespace" != "READ-WRITE" ]; then
     exit 1
 fi
 
-
-
 echo "Running... $SCRIPT_DIR/ProcessTMAverageData.py $otfd_opt $exclude_opt $database $tmid $start_date $end_date $parallel_degree"
 
 
