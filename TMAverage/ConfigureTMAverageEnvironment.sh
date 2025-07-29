@@ -59,7 +59,7 @@ username=""
 password=""
 
 # Set static values. These are used so that exceptions can be easily managed (aim).
-tablespace_name="TMAVERAGE"
+tablespace_name="TMAVERAGE_SID1"
 table_name="TMAVERAGE_SID1"
 tmanalog_table_name="TMANALOG_SID1"
 

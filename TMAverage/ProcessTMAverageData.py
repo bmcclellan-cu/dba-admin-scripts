@@ -478,8 +478,16 @@ def convert_dt2gps(DTValue, isAim):
 
     try:
         result = cursor.execute(sql).fetchone()[0]
+    except oracledb.DatabaseError as error:
+        if "ORA-00904" in str(error):
+            logger.exception(
+                "ORA-00904: invalid identifier. \n"
+                "The DT2GPS procedure is not currently loaded. Please run LoadGPSFunctions.sh to load them into the database."
+            )
+            fail_worker()
+            raise error
     except Exception as error:
-        logger.Exception(
+        logger.exception(
             "An unknown exception occurred while calling DT2GPS. See above output for more details."
         )
         raise error

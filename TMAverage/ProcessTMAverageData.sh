@@ -16,7 +16,7 @@
 # Author: Robert Schmidt
 # 
 # Created on: July 21st, 2025
-# Modified on: July 28th, 2025 - RS
+# Modified on: July 29th, 2025 - RS
 ###############################################################
 usage="Usage: ./ProcessTMAverageData.sh [ -o (optional, use OTFD) ] [ -e [ filename ] (absolute path filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL | filename] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
 example1="Example: ./ProcessTMAverageData.sh goldprod ALL 14 7 8"
@@ -42,21 +42,21 @@ while getopts ":hode:" option; do
         ;;
     e)
         if [ -z "$OPTARG" ]; then
-            echo "Error: Option -e requires a filename argument."
+            echo "ERROR: Option -e requires a filename argument. Exiting..."
             exit 1
         fi
         if [ ! -f "$OPTARG" ]; then
-            echo "Error: File $OPTARG does not exist."
+            echo "ERROR: File $OPTARG does not exist. Exiting..."
             exit 1
         fi
         if [[ "$OPTARG" != /* ]]; then
-            echo "Error: Option -e requires an absolute path filename. Providing relative path inputs may lead to unintended behavior in a crontab."
+            echo "ERROR: Option -e requires an absolute path filename. Providing relative path inputs may lead to unintended behavior in a crontab. Exiting..."
             exit 1
         fi
         exclude_opt=" -e $OPTARG "
         ;;
     \?)
-        echo "Error: Invalid option"
+        echo "ERROR: Invalid option. Exiting..."
         exit 1
         ;;
     esac
@@ -73,11 +73,13 @@ if [ -f /export/home/oracle/.bashrc ]; then
         echo "An error occurred while sourcing /export/home/oracle/.bashrc. Exiting..."
     fi
 else
-    export ALL_DBA_EMAIL_LIST="Brian.McClellan@lasp.colorado.edu Jackson.Cockrum@lasp.colorado.edu Robert.Schmidt@lasp.colorado.edu Bryan.Turns@lasp.colorado.edu"
+    export DB_EMAIL_LIST="Brian.McClellan@lasp.colorado.edu Jackson.Cockrum@lasp.colorado.edu Robert.Schmidt@lasp.colorado.edu Bryan.Turns@lasp.colorado.edu"
     export ORACLE_HOME=/dba/oracle/installs/orabase/product/19.7.0/dbhome_1
     export PATH=$ORACLE_HOME/bin:$PATH
     export LD_LIBRARY_PATH=$ORACLE_HOME/lib
 fi
+
+export DB_EMAIL_LIST="Robert.Schmidt@lasp.colorado.edu"
 
 shift $(($OPTIND -1))
 
@@ -98,7 +100,7 @@ parallel_degree=${5^^}
 parallel_degree=${parallel_degree:-1}
 
 if [[ ! $parallel_degree =~ ^[0-9]+$ ]]; then
-    echo "Parallel degree must be a positive integer"
+    echo "ERROR: Parallel degree must be a positive integer. Exiting..."
     exit 1
 fi
 
@@ -107,12 +109,10 @@ export ORACLE_SID="$database"
 sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I "$ORACLE_SID")
 if [ -n "$sid_check" ]; then
     if [ "$sid_check" == "-1" ]; then
-        echo "ERROR"
-        echo "\$ORACLE_SID not set..."
+        echo "ERROR: \$ORACLE_SID not set. Exiting..."
         exit 1
     fi
-    echo "ERROR"
-    echo "provided \$database is not open. Exiting..."
+    echo "ERROR: Provided database is not open. Exiting..."
     exit 1
 fi
 
@@ -137,9 +137,9 @@ exit_handler(){
 }
 trap exit_handler EXIT INT TERM # On exit, call exit_handler.
 
-# Check that the .passwd and .username files exist.
+# Check that the .username and .passwd files exist
 if [ ! -f "$SCRIPT_DIR/.username" ] || [ ! -f "$SCRIPT_DIR/.passwd" ]; then
-    echo "Missing .username and .passwd files at $SCRIPT_DIR. Exiting..."
+    echo "ERROR: Missing .username and .passwd files at $SCRIPT_DIR. Exiting..."
     exit 1
 fi
 
@@ -153,14 +153,14 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 if [[ "$test_login" != "Yes" ]]; then
-    echo "A .username and/or .passwd file in directory $SCRIPT_DIR is invalid. Exiting..."
+    echo "ERROR: .username or .passwd file in $SCRIPT_DIR is invalid. Please run './ConfigureTMAverageEnvironment.sh -u <username> <password>' to update. Exiting..."
     exit 1
 fi
 
 # Check for existence of Python virtual environment
 VENV_ACTIVATE="${SCRIPT_DIR}/venv/bin/activate"
 if [ ! -f "$VENV_ACTIVATE" ]; then
-    echo "ERROR: File venv/bin/activate not found in $SCRIPT_DIR! Please run ./ConfigureTMAverageEnvironment.sh -v to create one with the necessary dependencies."
+    echo "ERROR: File venv/bin/activate not found in $SCRIPT_DIR! Please run ./ConfigureTMAverageEnvironment.sh -v to create one with the necessary dependencies. Exiting..."
     exit 1
 fi
 
@@ -169,15 +169,15 @@ source "$VENV_ACTIVATE"
 
 # Virtual environment check
 if [ -z "$VIRTUAL_ENV" ]; then
-    echo "Error: A valid python virtual environment must exist in $SCRIPT_DIR. Exiting..."
+    echo "ERROR: A valid Python virtual environment must exist in $SCRIPT_DIR. Please run ./ConfigureTMAverageEnvironment.sh -v to create one with the necessary dependencies. Exiting..."
     exit 1
 fi
 
-# If date option is not given, then process to date from offset and range.
+# If date option is not given, then determine dates from offset and range
 if [ $date_opt -eq 0 ]; then
-    # Ensure that both range and offset are integers.
+    # Ensure that both offset and range are integers
     if [[ ! "$3" =~ ^-?[0-9]+$ ]] || [[ ! "$4" =~ ^-?[0-9]+$ ]]; then
-        echo "Error: Offset and range must both be integers. Exiting..."
+        echo "ERROR: Offset and range must both be integers. Exiting..."
         exit 1
     fi
 
@@ -185,13 +185,13 @@ if [ $date_opt -eq 0 ]; then
     start_date=$(date -d "-$3 days" "+%d-%b-%y")
     # Subtract 1 from range, so that script processes $range days of data, as the script is inclusive
     end_date=$(date -d "$start_date +$(($4-1)) days" "+%d-%b-%y")
-    echo "Using start_date $start_date and end_date $end_date"
+    echo "Using start date $start_date and end date $end_date"
 else
     start_date=${3^^}
     end_date=${4^^}
 fi
 
-# Gets the MISC schema, then truncate the _MISC from it.
+# Get the MISC schema, then truncate the _MISC from it
 project_name=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
 if [ $? -ne 0 ]; then
     echo "$project_name"
@@ -199,7 +199,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 if [[ "$project_name" != *"_MISC" ]]; then
-    echo "Attempted to retrieve MISC schema, got $project_name instead. Schema name must match glob *'_MISC'. Exiting..."
+    echo "ERROR: Attempted to retrieve MISC schema, got $project_name instead. Schema name must match glob *'_MISC'. Exiting..."
     exit 1
 else
     project_name="${project_name::-5}"
@@ -207,7 +207,7 @@ fi
 project_name="${project_name^^}"
 
 select_tab_count=0
-# Check for access to the necessary tables
+# Set up table names based on project type
 if [[ $project_name == "AIM" ]]; then
     select_tables="'TELEMETRYITEMDEFINITION', 'TELEMETRYANALOGCONVERSIONS', 'TMANALOG_TABLE'"
     select_tab_count=$((select_tab_count+3))
@@ -220,7 +220,7 @@ else
 fi
 insert_tables="'$tmaverage_table'"
 
-# Check for read access to ONTHEFLYDECOM tables.
+# Check for read access to ONTHEFLYDECOM tables
 if [[ -n "$otfd_opt" ]]; then
     select_tables+=", 'ONTHEFLYDECOM_RESULTS', 'ONTHEFLYDECOM_ERRORS'"
     select_tab_count=$((select_tab_count+2))
@@ -230,7 +230,7 @@ fi
 username=$(<"$SCRIPT_DIR/.username")
 username=${username^^}
 
-# Check read-only table access
+# Check SELECT permissions for read-only tables
 select_check=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
     set heading off
     set feedback off
@@ -248,18 +248,18 @@ EOD
 )
 if [ $? -ne 0 ]; then
     echo "$select_check"
-    echo "Error checking if user $username has select access to tables: $select_tables"
+    echo "An error occurred while checking SELECT permissions for user $username. Exiting..."
     exit 1
 fi
 
-# Trim ALL whitespace, then check that all privileges are present.
+# Trim ALL whitespace, then check that all privileges are present
 select_check=$(echo "$select_check" | tr -d '[:space:]')
 if [[ $select_check != "$select_tab_count" ]]; then
-    echo "Error: User $username does not have SELECT permission for tables $select_tables. Please run ConfigureTMAverageEnvironment.sh to configure user. Exiting..."
+    echo "ERROR: User $username does not have SELECT permission for tables $select_tables. Please run ConfigureTMAverageEnvironment.sh to configure user. Exiting..."
     exit 1
 fi
 
-# Check insert table access
+# Check INSERT permissions for read-write tables
 insert_check=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
     set heading off
     set feedback off
@@ -277,14 +277,14 @@ EOD
 )
 if [ $? -ne 0 ]; then
     echo "$insert_check"
-    echo "Error checking if user $username has insert access to tables: $select_tables"
+    echo "An error occurred while checking INSERT permissions for user $username. Exiting..."
     exit 1
 fi
 
-# Trim ALL whitespace, then check that all privileges are present.
+# Trim ALL whitespace, then check that all privileges are present
 insert_check=$(echo "$insert_check" | tr -d '[:space:]')
 if [[ "$insert_check" != "1" ]]; then
-    echo "Error: User $username does not have INSERT permission for tables $insert_tables, or the tables do not exist."
+    echo "ERROR: User $username does not have INSERT permission for tables $insert_tables, or the tables do not exist."
     echo "Please run ConfigureTMAverageEnvironment.sh to configure user and confirm existence of the required tables. Exiting..."
     exit 1
 fi
@@ -293,21 +293,21 @@ fi
 check_tablespace=$("$HOME/common/oracle/CheckTablespaceReadStatus.sh" "$tablespace_name")
 if [ $? -ne 0 ]; then
     echo "$check_tablespace"
-    echo "An error occurred while checking tablespace read-write status. Exiting..."
+    echo "An error occurred while running CheckTablespaceReadStatus.sh. Exiting..."
     exit 1
 elif [ "$check_tablespace" != "READ-WRITE" ]; then
-    echo "Tablespace $tablespace_name must be in READ-WRITE mode (currently $check_tablespace). Exiting..."
+    echo "ERROR: Tablespace $tablespace_name must be in READ-WRITE mode (currently $check_tablespace). Exiting..."
     exit 1
 fi
 
 echo "Running... $SCRIPT_DIR/ProcessTMAverageData.py $otfd_opt $exclude_opt $database $tmid $start_date $end_date $parallel_degree"
 
 
-# Any additional checks are run by the script itself, running script
+# Execute the Python script with the prepared arguments
 echo "Running ProcessTMAverageData.py. See log output at /tmp/TMAverageLogs/"
 python "$SCRIPT_DIR/ProcessTMAverageData.py" $otfd_opt $exclude_opt "$database" "$tmid" "$start_date" "$end_date" "${parallel_degree}"
 if [ $? -ne 0 ]; then
-    echo "ProcessTMAverageData.py failed See log outputs at /tmp/TMAverageLogs/ for more information."
+    echo "An error occurred while running ProcessTMAverageData.py. See log outputs at /tmp/TMAverageLogs/ for more information. Exiting..."
     exit 1
 fi
 
