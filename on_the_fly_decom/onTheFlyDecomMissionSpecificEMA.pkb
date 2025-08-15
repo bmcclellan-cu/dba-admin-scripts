@@ -1,17 +1,17 @@
 /*************************************************************************************************
-File:       onTheFlyDecomMissionSpecificEMM.pkb (package body for package: onTheFlyDecomMissionSpecific
+File:       onTheFlyDecomMissionSpecificIXPE.pkb (package body for package: onTheFlyDecomMissionSpecific
 
-Purpose:    EMM-specific code for on-the-fly decom, called by the core package.
+Purpose:    IXPE-specific code for on-the-fly decom, called by the core package.
   
 Revisions:
   mm/dd/yy who  description
   10/19/23 SM   Initial version.
-
+  
 Usage: 
   1. In sqlplus:
-     @<full_path>/onTheFlyDecomMissionSpecific.pks     -- compile the package spec
-     @<full_path>/onTheFlyDecomMissionSpecificEMM.pkb  -- compile the package body
-  
+     @<full_path>/onTheFlyDecomMissionSpecific.pks      -- compile the package spec
+     @<full_path>/onTheFlyDecomMissionSpecificIXPE.pkb  -- compile the package body
+
 Notes:
   1. Contents (In order of appearance)          
      FUNCTION  getVersion
@@ -25,26 +25,9 @@ Notes:
      
   2. Mission Specific Global Variables:
      These are optional inputs which can be set by calling setOption or clearOption.
-     gblVCs:
-       Same as currently used by the DB_ROUTINES interface used by TCAD and retrieve_eng.
-       For EMM: 
-         If the least significant bit is set, i.e. (gblVCs and 1) != 0, then retrieve real-time data
-         from the *_RT tables: L0_Packets_RT, TManalog_RT, TMdiscrete_RT.
-         If the next bit is set, i.e. (gblVCs and 2) != 0, then retrieve playback data from the playback
-         tables: L0_Packets_PBK, TManalog_PBK, TMdiscrete_PBK.
-         If both bits are set, retrieve both real-time and playback data from the view which combines
-         the RT and PBK tables: L0_Packets, TManalog, TMdiscrete.
-         gblVCs ("virtual channels") is an integer used as a bit field, where each bit specifies
-         a different type of data to retrieve.  They may mean different things on different missions.
-         On EMM they mean real-time or playback, but EMM has multiple VCIDs for each of these.
-         On other missions there may be a separate bit for each VCID.
-         This is an integer, the default is 3.
-       For GOLD: Not used.
-       For IXPE: Not used.
-     gblTestId:
-       This is a signed integer, the default is -1, i.e. no testId, so  don't specify testId
-       in queries; all testIds will be included.
-       EMM only.
+     gblTlmFileName:
+       This is a string, the default is "" (empty string).
+       IXPE only; the IXPE code will support this, but not testId.
 
   3. Compiler Errors:
      - A login.sql file can cause compiler errors.
@@ -54,7 +37,9 @@ Notes:
 
 *************************************************************************************************/
 
-CREATE OR REPLACE PACKAGE BODY onTheFlyDecomMissionSpecific
+
+
+CREATE OR REPLACE PACKAGE BODY EMA_MISC.onTheFlyDecomMissionSpecific
 AS
 
 -- These options are settable by calling the setOption or clearOption procedure.
@@ -63,12 +48,10 @@ AS
 -- for different missions, as may the options which selectNumericTlm supports.
 -- Each mission has its own instance of this code, although it may be identical for missions
 -- with the same options.  We do not support a generalized code base which supports all options.
-gblTestId  NUMBER := -1;          /* EMM only   */
-gblVCs     NUMBER := -1;          /* NUMBER interpreted as a bit field, specifying realtime and/or playback
-                                     data retrieval:
-                                     1 Indicates only realtime data is desired.
-                                     2 Indicates only playback data is desired.
-                                     Any other value will get both realtime and playback data. */
+gblTlmFileName   VARCHAR2(128) := '';
+
+-- TODO: Add global flag for RT/PBK data.
+
 
 
 /*************************************************************************************************
@@ -81,9 +64,8 @@ FUNCTION getVersion
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'EMM 0.1';
+    return 'IXPE 0.1';
 END getVersion;
-
 
 /*************************************************************************************************
 Function:  setOption
@@ -102,15 +84,14 @@ IS
     upperCaseOptionName VARCHAR2(128) := '';
 BEGIN
     upperCaseOptionName := UPPER( optionName);
-    IF (upperCaseOptionName = 'TESTID') THEN
-        gblTestId := TO_NUMBER( optionValue);
-    ELSIF (upperCaseOptionName = 'VCS') THEN
-        gblVCs := TO_NUMBER( optionValue);
+    IF (upperCaseOptionName = 'TLMFILENAME') THEN  -- IXPE only
+        gblTlmFileName := optionValue;
     ELSE
         RETURN 0;
     END IF;
     RETURN 1;
 END setOption;
+
 
 
 /*************************************************************************************************
@@ -128,13 +109,10 @@ IS
     upperCaseOptionName VARCHAR2(128) := '';
 BEGIN
     upperCaseOptionName := UPPER( optionName);
-    IF (upperCaseOptionName = 'TESTID') THEN
-        gblTestId := -1;
-    ELSIF (upperCaseOptionName = 'VCS') THEN
-        gblVCs := -1;
+    IF (upperCaseOptionName = 'TLMFILENAME') THEN  -- IXPE only
+        gblTlmFileName := '';
     ELSIF (upperCaseOptionName = 'ALL') THEN
-        gblTestId := -1;
-        gblVCs := -1;
+        gblTlmFileName := '';
     ELSE
         RETURN 0;
     END IF;
@@ -153,9 +131,8 @@ FUNCTION getOptionsHelp
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'EMM options are: TESTID: xx, VCS: 1=realtime, 2=playback, 3=both';
+    return 'IXPE options are: TLMFILENAME: <filename>';
 END getOptionsHelp;
-
 
 /*************************************************************************************************
 Function:   getTableName
@@ -180,54 +157,77 @@ IS
     tableNameExtension VARCHAR2(10) := '';
     invalidType EXCEPTION;
 BEGIN
-    -- Start by determining the extension of the table name
-    -- Use the VCs find if the realtime data or playback data extensions should be added.
-    IF (BITAND( gblVCs, 1) = 1 AND BITAND( gblVCs, 2) = 0) THEN
-        tableNameExtension := '_RT';
-    ELSIF (BITAND( gblVCs, 2) = 2 AND BITAND( gblVCs, 1) = 0) THEN
-        tableNameExtension := '_PBK';
-    ELSE
-        tableNameExtension := '';
-    END IF;
-
-    IF    (type_in = 0) THEN
-        tableName := 'emm_schema' || LPAD(TO_CHAR(systemId_in), 2, '0') || '.L0_Packets' ||
-                      tableNameExtension;
+    -- Get base tablename by type.
+    IF (type_in = 0) THEN
+        tableName := 'L0_Packets';
     ELSIF (type_in = 1) THEN
-        tableName := 'emm_schema' || LPAD(TO_CHAR(systemId_in), 2, '0') || '.TManalog' ||
-                      tableNameExtension;
+        tableName := 'TManalog';
     ELSIF (type_in = 2) THEN
-        tableName := 'emm_schema' || LPAD(TO_CHAR(systemId_in), 2, '0') || '.TMdiscrete' ||
-                      tableNameExtension;
+        tableName := 'TMdiscrete';
+    ELSIF (type_in = 3) THEN
+        tableName := 'TelemetryStorageLocation';
+    ELSIF (type_in = 4) THEN
+        tableName := 'TMDecom';
     ELSE
         RAISE invalidType;
     END IF;
 
-    RETURN tableName;
+    -- Add schema-SID prefix
+    tableName := 'EMA_SCHEMA' || LPAD(TO_CHAR(systemId_in), 2) || '.' || tableName;
 
+    -- TODO: Add _RT/_PBK suffix.
+
+    RETURN tableName;
 END getTableName;
+
+/*************************************************************************************************
+Function:   getTimeColumnsL0
+
+Purpose:    This function returns an array of the columns to query for in L0 SELECT queries. 
+            These are expected to match up to the values in getInsertColumns, where the output from 
+            this function would be <time_col1, time_col2, time_col3>, and the output from getInsertColumns 
+            would be <insert_time_col1, insert_time_col2, insert_time_col3, value>. These values do not need 
+            to be identical, but the value that is represented should be the same (SCT_VTCW -> SCT).
+            If these values do not match, the returned data may have incorrectly labeled data.
+
+            
+Input:      None
+
+Returns:    A VARRAY of the time columns, maximum of 3.
+
+*************************************************************************************************/
+FUNCTION getTimeColumnsL0
+    RETURN ONTHEFLYDECOM.string_varray
+IS
+BEGIN
+    -- TODO: Debug to test using IXPE
+    return ONTHEFLYDECOM.string_varray('SCT_VTCW AS SCT', 'ERT', 'ADJUSTED_TIME as AST');
+END getTimeColumnsL0;
 
 
 
 /*************************************************************************************************
-Function:   getL0PacketsSCTColName
+Function:   getTimeColumnsL1
 
-Purpose:    This function returns the name of the SCT column in the L0_Packets table.
+Purpose:    This function returns an array of the columns to query for in L1 SELECT queries. 
+            These are expected to match up to the values in getInsertColumns, where the output from 
+            this function would be <time_col1, time_col2, time_col3>, and the output from getInsertColumns 
+            would be <insert_time_col1, insert_time_col2, insert_time_col3, value>. These values do not need 
+            to be identical, but the value that is represented should be the same (SCT_VTCW -> SCT).
+            If these values do not match, the returned data may have incorrectly labeled data.
 
+            
 Input:      None
 
-Returns:    The column name as a VARCHAR2
+Returns:    A VARRAY of the time columns, maximum of 3.
 
 *************************************************************************************************/
-FUNCTION getL0PacketsSCTColName
-         RETURN VARCHAR2
+FUNCTION getTimeColumnsL1
+    RETURN ONTHEFLYDECOM.string_varray
 IS
 BEGIN
-    RETURN 'SCT_GPS_USEC';
-
-END getL0PacketsSCTColName;
-
-
+    return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'AST');
+END getTimeColumnsL1;
 
 /*************************************************************************************************
 Procedure:   addToL0Query
@@ -244,10 +244,9 @@ Output:     exeString   - May or may not have been updated.
 PROCEDURE addToL0Query( exeString IN OUT VARCHAR2,
                         systemId_in IN NUMBER)
 IS
+    fileId NUMBER := -1;
 BEGIN
-    IF (gblTestId != -1) THEN
-        exeString := exeString || 'testId=' || TO_CHAR(gblTestId) || ' and ';
-    END IF;
+    NULL; -- TODO: Implement for EMA.
 END addToL0Query;
 
 
@@ -267,10 +266,9 @@ Output:     query       - May or may not have been updated.
 PROCEDURE addToL1Query( exeString IN OUT VARCHAR2,
                         systemId_in IN NUMBER)
 IS
+    fileId NUMBER := -1;
 BEGIN
-    IF (gblTestId != -1) THEN
-        exeString := exeString || 'testId=' || TO_CHAR(gblTestId) || ' and ';
-    END IF;
+    NULL; -- TODO: Implement for EMA.
 END addToL1Query;
 
 
@@ -279,10 +277,11 @@ END addToL1Query;
 FUNCTION: getDefinitionStartStopTimes
 
 Purpose:  Gets start/stop times for use in queries to the TelemetryStorageLocation and TMDecom tables.
-          Uses gblTestId.
+          The IXPE version of this function can be used for most missions.  Only EMM has a different
+	  version of this function, because it has testId.
 
 Inputs:
-    systemId_in  - E.g. 1 = FLIGHT, 2 = AIT, 3 = FSA, etc.
+    systemId_in  - E.g. 1 = FLIGHT, 2 = TEST
     startERT_in  - Starting Earth Received Time in GPS microseconds. -1 if not used.
     stopERT_in   - Ending Earth Received Time in GPS microseconds. -1 if not used.
     startSCT_in  - Starting spacecraft time in GPS microseconds. -1 if not used.
@@ -294,52 +293,48 @@ Outputs:
 
 Returns: 1=success, 0=failure
 
+Notes:
+  - SCT and/or ERT is always specified when filename is specified:
+    IXPE retrieve_eng always requires SCT and/or ERT, even when source_filename is specified.
+    Therefore we do not need code to select min_ert/max_ert of the TelemetrySourceFiles record.
+    Using min_sct/max_sct would be problematic because even current data has near-zero time-stamps
+    for min_sct, which if used as definition start/stop times, could cause a large number of
+    decom maps to be used, i.e. from 1980/006 GPS epoch..current time the entire history 
+
+
 *************************************************************************************************/
-FUNCTION getDefinitionStartStopTimes( systemId_in IN NUMBER,
-                                      startERT_in IN NUMBER,
-                                      stopERT_in  IN NUMBER,
-                                      startSCT_in IN NUMBER,
-                                      stopSCT_in  IN NUMBER,
-                                      startADJ_in IN NUMBER,
-                                      stopADJ_in IN NUMBER,
-	                                  definitionStartTime OUT NUMBER,
-				                      definitionStopTime OUT NUMBER)
+FUNCTION getDefinitionStartStopTimes(   systemId_in IN NUMBER,
+                                        startSCT_in IN NUMBER,
+                                        stopSCT_in  IN NUMBER,
+                                        startERT_in IN NUMBER,
+                                        stopERT_in  IN NUMBER,
+                                        startAST_in IN NUMBER,
+                                        stopAST_in  IN NUMBER,
+                                    definitionStartTime OUT NUMBER,
+                                    definitionStopTime OUT NUMBER)
 				      RETURN NUMBER
 IS
 BEGIN
     -- Initialize outputs in case return with error.
     definitionStartTime := -1;
     definitionStopTime := -1;
-    
-    -- If a ERT range was specified, use it as the definition range.
-    -- Else if a non-zero testId was specified, use that test's ERT range, as reflected by min/max ERT in TelemetrySourceFiles.
-    -- Else (testId=0 was specified, or no testId was specified), use the input SCT range.
-    -- When using a SCT range, have to assume it can be used for the time range when querying the TSL and TMD tables,
-    -- which means SCT and ERT times are assumed to be commensurate, i.e. the same, or close enough.  I.e. the time wasn't jammed.
 
-    IF (startERT_in >= 0) THEN
+    -- If ERT or SCT are specified, error immediately.
+    IF startERT_in >= 0 OR stopERT_in >= 0 OR startERT_in >= 0 OR stopERT_in >= 0 THEN
+        ONTHEFLYDECOM.logError('ERROR EMA only supports querying by AST.');
+        RETURN 0;
+    END IF;
+
+    IF (startAST_in >= 0 AND stopAST_in >= 0)  THEN
         -- Input ERT times are valid, so use them.
-        definitionStartTime := startERT_in;
-        definitionStopTime  := stopERT_in;
-    ELSIF (gblTestId >= 1) THEN
-        -- No ERT range was specified, but a non-zero testId was specified.  Use the ERT range of files associated with that testId.
-        SELECT min(MIN_ERT), max(MAX_ERT) INTO definitionStartTime,definitionStopTime FROM TelemetrySourceFiles WHERE 
-               testId = gblTestId AND schemaId = systemId_in;
-    ELSIF (startSCT_in >= 0) THEN
-        -- No ERT times were input.  Set the TSL and TMD times to SCT times.
-	-- Either testId=0 was specified, meaning return all tlm data *not* associated with a specific test, or
-	-- no testId was specified, meaning return all tlm data, regardless of testId value.
-        -- This is the case for flight, where SCT is the same as ERT, i.e. not jammed in the future like during IandT.
-        definitionStartTime := startSCT_in;
-        definitionStopTime  := stopSCT_in;
+        definitionStartTime := startAST_in;
+        definitionStopTime  := stopAST_in;
     ELSE
         RETURN 0;
     END IF;
     RETURN 1;
 
 END getDefinitionStartStopTimes;
-
-
 
 END onTheFlyDecomMissionSpecific;
 /
