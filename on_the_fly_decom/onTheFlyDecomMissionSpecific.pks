@@ -41,8 +41,8 @@ AS
         stopSCT_in IN NUMBER,
         startERT_in IN NUMBER,
         stopERT_in IN NUMBER,
-        startAST_in IN NUMBER,
-        stopAST_in IN NUMBER,
+        startASCT_in IN NUMBER,
+        stopASCT_in IN NUMBER,
         definitionStartTime OUT NUMBER,
         definitionStopTime OUT NUMBER,
         definitionColumn OUT NUMBER

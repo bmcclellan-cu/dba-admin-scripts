@@ -744,8 +744,8 @@ PROCEDURE queryL0
     stopERT_in IN NUMBER,          -- optional (-1 if not used)
     startSCT_in IN NUMBER,         -- optional (-1 if not used)
     stopSCT_in IN NUMBER,          -- optional (-1 if not used)
-    startAST_in IN NUMBER,         -- optional (-1 if not used)
-    stopAST_in IN NUMBER,          -- optional (-1 if not used)
+    startASCT_in IN NUMBER,         -- optional (-1 if not used)
+    stopASCT_in IN NUMBER,          -- optional (-1 if not used)
     doInclusiveQuery IN BOOLEAN,
     definitionColumn IN NUMBER)    -- Column to apply doInclusiveQuery on.
 IS
@@ -769,7 +769,7 @@ IS
     -- row structure returned by the query for times and hex string from the L0_Packets table.
     TYPE result_row_t IS RECORD( SCT NUMBER(16),
                                  ERT NUMBER(16),
-                                 AST NUMBER(16),
+                                 ASCT NUMBER(16),
                                  hexString VARCHAR(16));
 
     -- Temp variable for holding each row as it is decommed.
@@ -782,10 +782,10 @@ IS
     TYPE value_arr_t IS VARRAY(n_batch_rows) OF NUMBER;
     value_arr value_arr_t := value_arr_t();
 
-    -- arrays for SCT, ERT, and AST
+    -- arrays for SCT, ERT, and ASCT
     ert_arr value_arr_t := value_arr_t();
     sct_arr value_arr_t := value_arr_t();
-    ast_arr value_arr_t := value_arr_t();
+    ASCT_arr value_arr_t := value_arr_t();
 
     -- the cursor for the query for times and hex string from L0_Packets.
     c curType;
@@ -812,7 +812,7 @@ IS
     name_value name_value_t;
     decom_error EXCEPTION;
 
-    select_time_columns string_varray; -- Currently supports a maximum of 4 columns to select by. SCT, ERT, AST.
+    select_time_columns string_varray; -- Currently supports a maximum of 4 columns to select by. SCT, ERT, ASCT.
     select_time_columns_string VARCHAR2(200);
 
     where_clauses string_varray; 
@@ -827,7 +827,7 @@ BEGIN
     -- Get the table name
     tableName := onTheFlyDecomMissionSpecific.getTableName(0, decomMap.systemId);
 
-    -- Get the mapping of time columns onto SCT, ERT, and AST. This varies mission-to-mission. An SQL snippet is expected.  
+    -- Get the mapping of time columns onto SCT, ERT, and ASCT. This varies mission-to-mission. An SQL snippet is expected.  
     select_time_columns := onTheFlyDecomMissionSpecific.getTimeColumnsL0;
     select_time_columns_string := string_varray_to_csv(select_time_columns);
 
@@ -855,8 +855,8 @@ BEGIN
                                     ':stopERT_in'  => TO_CHAR(stopERT_in),
                                     ':startSCT_in' => TO_CHAR(startSCT_in),
                                     ':stopSCT_in'  => TO_CHAR(stopSCT_in),
-                                    ':startAST_in' => TO_CHAR(startAST_in),
-                                    ':stopAST_in'  => TO_CHAR(stopAST_in));
+                                    ':startASCT_in' => TO_CHAR(startASCT_in),
+                                    ':stopASCT_in'  => TO_CHAR(stopASCT_in));
         
         monitor_value := ' /*+ monitor */ ';
     END IF;
@@ -884,7 +884,7 @@ BEGIN
     -- The following determines if the end point of the time query is included or not.
     -- Only the last of a series of abutted queries uses inclusive, the others are exclusive.
     -- This prevent duplicate data. This is only applied for the axis that is being iterated over, 
-    -- which is passed through definitionColumn (0: SCT, 1: ERT, 2: AST).
+    -- which is passed through definitionColumn (0: SCT, 1: ERT, 2: ASCT).
     IF (doInclusiveQuery) THEN
         booleanOpString := '<=';
     ELSE
@@ -899,24 +899,24 @@ BEGIN
                 AND    (:stopSCT_in  = -1 OR sct ' || booleanOpString || ' :stopSCT_in)
                 AND    (:startERT_in = -1 OR ert >= :startERT_in)
                 AND    (:stopERT_in  = -1 OR ert <= :stopERT_in)
-                AND    (:startAST_in = -1 OR ast >= :startAST_in)
-                AND    (:stopAST_in  = -1 OR ast <= :stopAST_in)';
+                AND    (:startASCT_in = -1 OR ASCT >= :startASCT_in)
+                AND    (:stopASCT_in  = -1 OR ASCT <= :stopASCT_in)';
         WHEN 1 THEN
             exeString := exeString || ' WHERE  
                        (:startSCT_in = -1 OR sct >= :startSCT_in)
                 AND    (:stopSCT_in  = -1 OR sct <= :stopSCT_in)
                 AND    (:startERT_in = -1 OR ert >= :startERT_in)
                 AND    (:stopERT_in  = -1 OR ert ' || booleanOpString || ' :stopERT_in)
-                AND    (:startAST_in = -1 OR ast >= :startAST_in)
-                AND    (:stopAST_in  = -1 OR ast <= :stopAST_in)';
+                AND    (:startASCT_in = -1 OR ASCT >= :startASCT_in)
+                AND    (:stopASCT_in  = -1 OR ASCT <= :stopASCT_in)';
         WHEN 2 THEN
             exeString := exeString || ' WHERE  
                        (:startSCT_in = -1 OR sct >= :startSCT_in)
                 AND    (:stopSCT_in  = -1 OR sct <= :stopSCT_in)
                 AND    (:startERT_in = -1 OR ert >= :startERT_in)
                 AND    (:stopERT_in  = -1 OR ert <= :stopERT_in)
-                AND    (:startAST_in = -1 OR ast >= :startAST_in)
-                AND    (:stopAST_in  = -1 OR ast ' || booleanOpString || ' :stopAST_in)';
+                AND    (:startASCT_in = -1 OR ASCT >= :startASCT_in)
+                AND    (:stopASCT_in  = -1 OR ASCT ' || booleanOpString || ' :stopASCT_in)';
     END CASE;
 
     -- Log the composed query if debug level is high enough
@@ -928,7 +928,7 @@ BEGIN
     open c for exeString using nBytes, byteOffset, apid, byteOffset, nBytes, 
         startERT_in, startERT_in, stopERT_in, stopERT_in, 
         startSCT_in, startSCT_in, stopSCT_in, stopSCT_in,
-        startAST_in, startAST_in, stopAST_in, stopAST_in;
+        startASCT_in, startASCT_in, stopASCT_in, stopASCT_in;
 
     -- BULK COLLECT and FORALL greatly reduce the number of context switches which happen when data
     -- is passed between the Oracle PL/SQL engine and the SQL engine.  This improves performance.
@@ -939,7 +939,7 @@ BEGIN
     value_arr.EXTEND(n_batch_rows);
     ert_arr.EXTEND(n_batch_rows);
     sct_arr.EXTEND(n_batch_rows);
-    ast_arr.EXTEND(n_batch_rows);
+    ASCT_arr.EXTEND(n_batch_rows);
 
     LOOP
         -- Fetch a batch from the cursor.
@@ -960,7 +960,7 @@ BEGIN
                 value_arr(nValues) := valueAsNumber;
                 ert_arr(nValues)   := row.ERT;
                 sct_arr(nValues)   := row.SCT;
-                ast_arr(nValues)   := row.AST;
+                ASCT_arr(nValues)   := row.ASCT;
             ELSIF (valueAsNumber IS NULL) THEN
                 CONTINUE; -- Ignore any null values, which are a result of near-infinite values/invalid floating point values.
 	        ELSE
@@ -976,7 +976,7 @@ BEGIN
         --  and send them all across to the SQL engine with one context switch."
 
         FORALL indx IN 1 .. nValues
-            INSERT INTO onTheFlyDecom_results (SCT, ERT, AST, VALUE) VALUES (ert_arr(indx), sct_arr(indx), ast_arr(indx), value_arr(indx));
+            INSERT INTO onTheFlyDecom_results (SCT, ERT, ASCT, VALUE) VALUES (ert_arr(indx), sct_arr(indx), ASCT_arr(indx), value_arr(indx));
         
         nRows := nRows + nValues; -- Increment the row counter 
     END LOOP;
@@ -1033,8 +1033,8 @@ PROCEDURE queryL1
     stopERT_in IN NUMBER,        -- optional (-1 if not used)
     startSCT_in IN NUMBER,       -- optional (-1 if not used)
     stopSCT_in IN NUMBER,        -- optional (-1 if not used)
-    startAST_in IN NUMBER,       -- optional (-1 if not used)
-    stopAST_in IN NUMBER,        -- optional (-1 if not used)
+    startASCT_in IN NUMBER,       -- optional (-1 if not used)
+    stopASCT_in IN NUMBER,        -- optional (-1 if not used)
     TSLRowStartTime IN NUMBER,   -- optional (-1 if not used)
     TSLRowStopTime IN NUMBER,    -- optional (-1 if not used)
     dataType VARCHAR2,
@@ -1051,8 +1051,8 @@ IS
     queryStartSCT NUMBER;
     queryStopSCT NUMBER;
 
-    queryStartAST NUMBER;
-    queryStopAST NUMBER;
+    queryStartASCT NUMBER;
+    queryStopASCT NUMBER;
 
     countBefore NUMBER;
     countAfter NUMBER;
@@ -1086,7 +1086,7 @@ BEGIN
 
     -- Define the invariant part of the query.
 
-    exeString := 'INSERT INTO onTheFlyDecom_results (ERT, SCT, AST, Value) ' ||
+    exeString := 'INSERT INTO onTheFlyDecom_results (ERT, SCT, ASCT, Value) ' ||
                  'SELECT ' || monitor_value || select_time_columns_string || ', Value from ' || tableName ||
 		 ' WHERE TMID = :tlmId_in ' || 'and ';
 
@@ -1094,26 +1094,26 @@ BEGIN
     
     onTheFlyDecomMissionSpecific.addToL1Query(exeString, systemId_in);
 
-    -- TODO: Prototyping for EMA specifically. Only query by AST.
+    -- TODO: Prototyping for EMA specifically. Only query by ASCT.
 
     -- Ensure that the query is bounded to within the TSL record.
-	narrowStartStopTimes( startAST_in, stopAST_in, TSLRowStartTime, TSLRowStopTime,
-	    		      queryStartAST, queryStopAST);
+	narrowStartStopTimes( startASCT_in, stopASCT_in, TSLRowStartTime, TSLRowStopTime,
+	    		      queryStartASCT, queryStopASCT);
 	IF (doInclusiveQuery) THEN		      
-        exeString := exeString || 'AST between :queryStartAST and :queryStopAST';
+        exeString := exeString || 'ASCT between :queryStartASCT and :queryStopASCT';
 	ELSE
-        exeString := exeString || 'AST >= :queryStartAST and AST < :queryStopAST';
+        exeString := exeString || 'ASCT >= :queryStartASCT and ASCT < :queryStopASCT';
 	END IF;
 
     IF (gblDebugLevel >= 1) THEN
-        name_value(':queryStartAST') := TO_CHAR(queryStartAST);
-        name_value(':queryStopAST')  := TO_CHAR(queryStopAST);
+        name_value(':queryStartASCT') := TO_CHAR(queryStartASCT);
+        name_value(':queryStopASCT')  := TO_CHAR(queryStopASCT);
         debugString := replaceBindVars( exeString, name_value);
             logError( 'INFO ' || debugString);
     END IF;
 
     -- Insert the values.
-    EXECUTE IMMEDIATE exeString USING IN tlmId_in, queryStartAST, queryStopAST;
+    EXECUTE IMMEDIATE exeString USING IN tlmId_in, queryStartASCT, queryStopASCT;
 
 
     -- Add an ERT range and/or a SCT range.  Narrow the range so it doesn't exceed the range of the TSL row,
@@ -1242,8 +1242,8 @@ PROCEDURE selectNumericTlm
     stopERT_in IN NUMBER,
     startSCT_in IN NUMBER,
     stopSCT_in IN NUMBER,
-    startAST_in IN NUMBER,
-    stopAST_in IN NUMBER)
+    startASCT_in IN NUMBER,
+    stopASCT_in IN NUMBER)
 IS
     exeString VARCHAR2(500);    -- This string contains sql commands to be executed
     definitionStartTime NUMBER;
@@ -1282,7 +1282,7 @@ BEGIN
     status := onTheFlyDecomMissionSpecific.getDefinitionStartStopTimes( systemId_in,
     	                                                                startERT_in, stopERT_in,
 	                                                                    startSCT_in, stopSCT_in,
-                                                                        startAST_in, stopAST_in,
+                                                                        startASCT_in, stopASCT_in,
                                                                         definitionStartTime,
 									                                    definitionStopTime,
                                                                         definitionColumn);
@@ -1345,7 +1345,7 @@ BEGIN
                 RETURN;
             END IF;
 
-            queryL1( systemId_in, tlmId_in, startERT_in, stopERT_in, startSCT_in, stopSCT_in, startAST_in, stopAST_in,
+            queryL1( systemId_in, tlmId_in, startERT_in, stopERT_in, startSCT_in, stopSCT_in, startASCT_in, stopASCT_in,
 	             -1, -1, dataType, true);
 	        RETURN;
 
@@ -1496,7 +1496,7 @@ BEGIN
             -- Data analysis code downstream from this database retrieval layer is unlikely to either.
         
             IF (isInL1 = true) THEN
-		        queryL1( systemId_in, tlmId_in, startERT_in, stopERT_in, startSCT_in, stopSCT_in, startAST_in, stopAST_in,
+		        queryL1( systemId_in, tlmId_in, startERT_in, stopERT_in, startSCT_in, stopSCT_in, startASCT_in, stopASCT_in,
 		             TSLRowStartTime, TSLRowStopTime, dataType, isLastTSLRow);
 			    
                 CONTINUE;  -- to next TSL row
@@ -1566,13 +1566,13 @@ BEGIN
 
                 IF ((apidArray(1) = -1) OR ((apidArray(1) != -1) AND (TSLRowApid MEMBER OF apidArray))) THEN
                     -- Use definitionColumn to determine which time column to restrict by decom map and which ones to 
-                    -- 'loosely bound' the query (0: SCT, 1: ERT, 2: AST). 
+                    -- 'loosely bound' the query (0: SCT, 1: ERT, 2: ASCT). 
 
                     CASE definitionColumn
                         WHEN 0 THEN
-                            queryL0(TMDRows(j), TMDRowStartTime, TMDRowStopTime, startERT_in, stopERT_in, startAST_in, stopAST_in, doInclusiveQuery, definitionColumn);
+                            queryL0(TMDRows(j), TMDRowStartTime, TMDRowStopTime, startERT_in, stopERT_in, startASCT_in, stopASCT_in, doInclusiveQuery, definitionColumn);
                         WHEN 1 THEN
-                            queryL0(TMDRows(j), startSCT_in, stopSCT_in, TMDRowStartTime, TMDRowStopTime, startAST_in, stopAST_in, doInclusiveQuery, definitionColumn);
+                            queryL0(TMDRows(j), startSCT_in, stopSCT_in, TMDRowStartTime, TMDRowStopTime, startASCT_in, stopASCT_in, doInclusiveQuery, definitionColumn);
                         WHEN 2 THEN 
                             queryL0(TMDRows(j), startSCT_in, stopSCT_in, startERT_in, stopERT_in, TMDRowStartTime, TMDRowStopTime, doInclusiveQuery, definitionColumn);
                     END CASE;

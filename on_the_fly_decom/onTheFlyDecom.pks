@@ -24,8 +24,8 @@ AS
                                 stopERT_in IN NUMBER,
                                 startSCT_in IN NUMBER,
                                 stopSCT_in IN NUMBER,
-                                startAST_in IN NUMBER,
-                                stopAST_in IN NUMBER
+                                startASCT_in IN NUMBER,
+                                stopASCT_in IN NUMBER
                                 );
     PROCEDURE logError(msg VARCHAR2);
 

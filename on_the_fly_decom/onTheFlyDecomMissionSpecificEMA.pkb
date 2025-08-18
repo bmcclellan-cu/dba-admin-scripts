@@ -201,7 +201,7 @@ FUNCTION getTimeColumnsL0
 IS
 BEGIN
     -- TODO: Debug to test using IXPE
-    return ONTHEFLYDECOM.string_varray('SCT_VTCW AS SCT', 'ERT', 'ADJUSTED_TIME as AST');
+    return ONTHEFLYDECOM.string_varray('SCT_VTCW AS SCT', 'ERT', 'ASCT');
 END getTimeColumnsL0;
 
 /*************************************************************************************************
@@ -223,7 +223,7 @@ FUNCTION getTimeColumnsL1
     RETURN ONTHEFLYDECOM.string_varray
 IS
 BEGIN
-    return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'AST');
+    return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'ASCT');
 END getTimeColumnsL1;
 
 /*************************************************************************************************
@@ -397,7 +397,7 @@ Inputs:
 Outputs:
     definitionStart  - GPS microseconds
     definitionStop   - GPS microseconds
-    definitionColumn - Column being used to get the start and stop times (0: SCT, 1: ERT, 2: AST)
+    definitionColumn - Column being used to get the start and stop times (0: SCT, 1: ERT, 2: ASCT)
 
 Returns: 1=success, 0=failure
 
@@ -416,8 +416,8 @@ FUNCTION getDefinitionStartStopTimes(   systemId_in IN NUMBER,
                                         stopSCT_in  IN NUMBER,
                                         startERT_in IN NUMBER,
                                         stopERT_in  IN NUMBER,
-                                        startAST_in IN NUMBER,
-                                        stopAST_in  IN NUMBER,
+                                        startASCT_in IN NUMBER,
+                                        stopASCT_in  IN NUMBER,
                                     definitionStartTime OUT NUMBER,
                                     definitionStopTime OUT NUMBER,
                                     definitionColumn OUT NUMBER)
@@ -431,14 +431,14 @@ BEGIN
 
     -- If ERT or SCT are specified, error immediately.
     IF startERT_in >= 0 OR stopERT_in >= 0 OR startERT_in >= 0 OR stopERT_in >= 0 THEN
-        ONTHEFLYDECOM.logError('ERROR EMA only supports querying by AST.');
+        ONTHEFLYDECOM.logError('ERROR EMA only supports querying by ASCT.');
         RETURN 0;
     END IF;
 
-    IF (startAST_in >= 0 AND stopAST_in >= 0)  THEN
+    IF (startASCT_in >= 0 AND stopASCT_in >= 0)  THEN
         -- Input ERT times are valid, so use them.
-        definitionStartTime := startAST_in;
-        definitionStopTime  := stopAST_in;
+        definitionStartTime := startASCT_in;
+        definitionStopTime  := stopASCT_in;
         definitionColumn    := 2;
     ELSE
         RETURN 0;
