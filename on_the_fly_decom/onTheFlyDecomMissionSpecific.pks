@@ -14,6 +14,7 @@ Usage:
 *************************************************************************************************/
 CREATE OR REPLACE PACKAGE EMA_MISC.onTheFlyDecomMissionSpecific
 AS 
+    TYPE curType IS REF CURSOR;
 
     FUNCTION getVersion RETURN VARCHAR2;
     FUNCTION setOption(optionName VARCHAR2, optionValue VARCHAR2) RETURN NUMBER;
@@ -22,6 +23,16 @@ AS
     FUNCTION getTableName(type_in IN NUMBER, systemId_in IN NUMBER) RETURN VARCHAR2;
     FUNCTION getTimeColumnsL0 RETURN onTheFlyDecom.string_varray;
     FUNCTION getTimeColumnsL1 RETURN onTheFlyDecom.string_varray;
+
+    PROCEDURE getDecomMapCur(
+        systemId_in IN NUMBER, apid_in IN NUMBER, tlmId_in IN NUMBER, TMDQueryStartTime_in IN NUMBER, TMDQueryStopTime_in IN NUMBER,
+        cursor_out OUT curType
+    );
+    PROCEDURE getTSLCur(
+        systemId_in IN NUMBER, tlmId_in IN NUMBER, definitionStartTime_in IN NUMBER, definitionStopTime_in IN NUMBER,
+        cursor_out OUT curType
+    );
+
     PROCEDURE addToL0Query(exeString IN OUT VARCHAR2, systemId_in IN NUMBER);
     PROCEDURE addToL1Query(exeString IN OUT VARCHAR2, systemId_in IN NUMBER);
     FUNCTION getDefinitionStartStopTimes(
@@ -33,7 +44,8 @@ AS
         startAST_in IN NUMBER,
         stopAST_in IN NUMBER,
         definitionStartTime OUT NUMBER,
-        definitionStopTime OUT NUMBER
+        definitionStopTime OUT NUMBER,
+        definitionColumn OUT NUMBER
     ) RETURN NUMBER;
 
 END onTheFlyDecomMissionSpecific;
