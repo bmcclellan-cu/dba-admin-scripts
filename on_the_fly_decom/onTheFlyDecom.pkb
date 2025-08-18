@@ -871,7 +871,7 @@ BEGIN
     -- We found that the parallel flag has no noticeable impact on queries we expect to see, and as such has been removed.
     exeStringPart1 := 'select ' || monitor_value || select_time_columns_string ||
                       ', rawtohex(dbms_lob.substr(packet, :nBytes, :byteOffset)) ' ||
-                      'from ' || tableName || ' where apid=:apid and ';
+                      'from ' || tableName || ' where dmid=:apid and ';
     exeStringPart2 := 'length >= (:byteOffset-1 + :nBytes)';
 
     -- Add anything mission-specific to the query.

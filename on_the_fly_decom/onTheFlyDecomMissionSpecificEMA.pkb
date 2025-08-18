@@ -298,9 +298,9 @@ IS
     query_sql CLOB; -- Practically unlimited length
 BEGIN
     tmdecom_table_name := onTheFlyDecomMissionSpecific.getTableName(4, systemId_in);
-    query_sql := 'SELECT :systemId_in AS systemId, apid, startBit, length, dataType, definitionStart
+    query_sql := 'SELECT :systemId_in AS systemId, dmid as apid, startBit, length, dataType, definitionStart
         FROM ' || tmdecom_table_name || '
-        WHERE apid     = :apid_in
+        WHERE dmid     = :apid_in
           AND tlmId    = :tlmId_in
           AND definitionStart <= :tmdqstoptime
           AND definitionStart >= COALESCE(
@@ -359,7 +359,7 @@ BEGIN
         SELECT definitionStart,
                isInL0,
                isInL1,
-               apid
+               dmid as apid
         FROM ' || tsl_table_name || '
         WHERE tlmId = :tlmId_in
           AND definitionStart <= :definitionStopTime_in
