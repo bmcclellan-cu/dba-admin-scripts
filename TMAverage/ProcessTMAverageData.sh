@@ -64,6 +64,7 @@ done
 
 # Constant variables
 tmaverage_table="TMAVERAGE_SID1"
+tmaverage_stats_table="TMAVERAGE_STATS"
 tablespace_name="TMAVERAGE_SID1"
 
 # Set environment variables
@@ -78,6 +79,8 @@ else
     export PATH=$ORACLE_HOME/bin:$PATH
     export LD_LIBRARY_PATH=$ORACLE_HOME/lib
 fi
+
+export DB_EMAIL_LIST="Robert.Schmidt@lasp.colorado.edu"
 
 shift $(($OPTIND -1))
 
@@ -144,6 +147,7 @@ fi
 # Validate that username and password are valid. (NOTE: Currently pointing to personal repo, will update when PR is merged.)
 username=$(<"$SCRIPT_DIR/.username")
 password=$(<"$SCRIPT_DIR/.passwd")
+# TODO: Remove personal path.
 test_login=$("$HOME/Robert/anothercommon/oracle/TestOracleUserLogin.sh" "$username" "$password")
 if [ $? -ne 0 ]; then
     echo "$test_login"
@@ -216,7 +220,7 @@ else
     select_tables="'TELEMETRYITEMDEFINITION', 'TELEMETRYANALOGCONVERSIONS', 'TMANALOG_SID1'"
     select_tab_count=$((select_tab_count+3))
 fi
-insert_tables="'$tmaverage_table'"
+insert_tables="'$tmaverage_table', '$tmaverage_stats_table'"
 
 # Check for read access to ONTHEFLYDECOM tables
 if [[ -n "$otfd_opt" ]]; then
@@ -281,7 +285,7 @@ fi
 
 # Trim ALL whitespace, then check that all privileges are present
 insert_check=$(echo "$insert_check" | tr -d '[:space:]')
-if [[ "$insert_check" != "1" ]]; then
+if [[ "$insert_check" != "2" ]]; then
     echo "ERROR: User $username does not have INSERT permission for tables $insert_tables, or the tables do not exist."
     echo "Please run ConfigureTMAverageEnvironment.sh to configure user and confirm existence of the required tables. Exiting..."
     exit 1

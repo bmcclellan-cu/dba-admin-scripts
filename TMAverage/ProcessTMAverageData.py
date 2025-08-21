@@ -32,14 +32,17 @@ TMANALOG_DBS = {
     "ixpeprod": "TMANALOG_SID1",
 }
 
-# The table and schema to access for the TMAverage table. Should theoretically be derived from the mission name.
-TMAVERAGE_DBS = {
-    "aimprod": "AIM_L1A.TMAVERAGE_SID1",
-    "goldprod": "GOLD_L1A.TMAVERAGE_SID1",
-    "evep12c": "EVE_L1A.TMAVERAGE_SID1",
-    "tsisprod": "TSIS_L1A.TMAVERAGE_SID1",
-    "ixpeprod": "IXPE_L1A.TMAVERAGE_SID1",
+# The L1A schema for each supported DB. Should theoretically be derived from DB name.
+DB_SCHEMAS = {
+    "aimprod": "AIM_L1A",
+    "goldprod": "GOLD_L1A",
+    "evep12c": "EVE_L1A",
+    "tsisprod": "TSIS_L1A",
+    "ixpeprod": "IXPE_L1A",
 }
+
+TMAVERAGE_TABLE_NAME = "TMAVERAGE_SID1"
+TMAVERAGE_STATS_NAME = "TMAVERAGE_STATS"
 
 TELEMETRYITEMDEFINITION_DBS = {
     "aimprod": "AIM_CT_SC.TelemetryItemDefinition",
@@ -94,6 +97,71 @@ def get_value_from_file(file_path):
     except Exception as e:
         print(f"An error occurred while reading the password: {e}")
         return None
+
+def update_tmaverage_stats(
+        cursor: oracledb.Cursor,
+        database: str,
+        start_time: datetime.datetime,
+        time_duration: datetime.timedelta = None,
+        ingested: int = 0,
+        inserted: int = 0,
+        unique_constraint_num: int = 0,
+        errors: list[str] = [],
+):
+    """
+    Updates the TMAVERAGE_STATS table. This is ran once during script initialization, and once the script completes.
+    The second time it is ran, it updates the record created during the first execution.
+    """
+    logger = multiprocessing.get_logger()
+        
+    # Convert errors list to CLOB-compatible string
+    errors_clob = '\n'.join(errors) if errors else None
+    
+    # Convert timedelta to Oracle INTERVAL DAY TO SECOND format
+    interval_value = None
+    if time_duration is not None:
+        total_seconds = int(time_duration.total_seconds())
+        days = total_seconds // 86400
+        remaining_seconds = total_seconds % 86400
+        hours = remaining_seconds // 3600
+        remaining_seconds %= 3600
+        minutes = remaining_seconds // 60
+        seconds = remaining_seconds % 60
+        interval_value = f"{days} {hours:02d}:{minutes:02d}:{seconds:02d}"
+    
+    # Use MERGE statement to INSERT if not exists, UPDATE if exists
+    sql = f"""MERGE INTO {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} target
+             USING (SELECT :1 as DATABASE_NAME, :2 as STARTTIME, :3 as TIMERAN, 
+                           :4 as INGESTED, :5 as INSERTED, :6 as UNIQUE_CONSTRAINT_NUM, :7 as ERRORS FROM dual) source
+             ON (target.DATABASE_NAME = source.DATABASE_NAME AND target.STARTTIME = source.STARTTIME)
+             WHEN MATCHED THEN
+                 UPDATE SET 
+                     TIMERAN = source.TIMERAN,
+                     INGESTED = source.INGESTED,
+                     INSERTED = source.INSERTED,
+                     UNIQUE_CONSTRAINT_NUM = source.UNIQUE_CONSTRAINT_NUM,
+                     ERRORS = source.ERRORS
+             WHEN NOT MATCHED THEN
+                 INSERT (DATABASE_NAME, STARTTIME, TIMERAN, INGESTED, INSERTED, UNIQUE_CONSTRAINT_NUM, ERRORS)
+                 VALUES (source.DATABASE_NAME, source.STARTTIME, source.TIMERAN, 
+                        source.INGESTED, source.INSERTED, source.UNIQUE_CONSTRAINT_NUM, source.ERRORS)"""
+    
+    try:
+        cursor.execute(sql, [
+            database,
+            start_time,
+            interval_value,
+            ingested,
+            inserted,
+            unique_constraint_num,
+            errors_clob
+        ])
+        cursor.connection.commit()
+        logger.info(f"Successfully updated TMAVERAGE_STATS for database {database}")
+    except oracledb.DatabaseError as error:
+        logger.exception(f"Error updating TMAVERAGE_STATS: {error}")
+        cursor.connection.rollback()
+        raise error
 
 
 def setup_logger(log_file: str):
@@ -406,7 +474,7 @@ def insert_tmaverage_rows(database: str, tmaverage_values: list):
 
     cursor = db_connection.cursor()
 
-    sql = f"""INSERT INTO {TMAVERAGE_DBS[database]} 
+    sql = f"""INSERT INTO {DB_SCHEMAS[database]}.{TMAVERAGE_TABLE_NAME} 
         (tmid, SCT_VTCW, AVERAGE_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, VALUE_COUNT) 
         VALUES (:1, :2, :3, :4, :5, :6)"""
 
@@ -781,11 +849,11 @@ def main():
         # Error message is already printed by get_password_from_file
         exit(1)
 
-    # Validate database input, ensure that script has an entry in TMAVERAGE_DBS
-    if database not in TMAVERAGE_DBS.keys():
+    # Validate database input, ensure that script has an entry in DB_SCHEMAS
+    if database not in DB_SCHEMAS.keys():
         logger.critical(
             f"Selected database is not supported by script. Supported databases "
-            f"are: {str(tuple(TMAVERAGE_DBS.keys()))}"
+            f"are: {str(tuple(DB_SCHEMAS.keys()))}"
         )
         exit(1)
 
@@ -808,6 +876,14 @@ def main():
 
     logger.info(f"Script has started at {start_time}")
     cursor = connection.cursor()
+
+    # Initialize the tmaverage_stats entry.
+    update_tmaverage_stats(
+        cursor,
+        database=database,
+        start_time=start_time
+    )
+
 
     try:
         # If all tmids is specified, then query for them.
@@ -835,8 +911,7 @@ def main():
         exit(1)
 
     cursor.close()
-    connection.close()
-
+    
     # Allocate worker pool of specified parallel degree and setup the logger to log to the correct file.
     worker_pool = multiprocessing.Pool(
         parallel_degree,
@@ -847,6 +922,9 @@ def main():
     error_status = False
     total_ingested_rows = 0
     total_inserted_rows = 0
+
+    # Array of all errors that were encountered
+    all_errors = []
 
     # Break the task up by day (if multiple days are specified, process each day separately):
     for single_date in (start_date + datetime.timedelta(n) for n in range(num_of_days)):
@@ -865,7 +943,9 @@ def main():
         day_inserted_rows = 0
         day_error_status = False
         critical_failure = False
-        unique_constraint_error = False
+        unique_constraint_num = 0
+
+        cancelled = False
 
         num_results = len(tmids)
 
@@ -891,23 +971,28 @@ def main():
                 logger.info(f"Rows ingested before cancel: {total_inserted_rows}")
 
                 worker_pool.terminate()
-                exit(1)
+                cancelled = True
+                all_errors.append("Cancelled. Exiting...")
+                break
             except oracledb.IntegrityError as error:
                 if str(error).find("ORA-00001") != -1:
                     # This is not a critical failure, and script will continue processing. Log error to user and continue
-                    unique_constraint_error = True
+                    unique_constraint_num += 1
                 else:
                     error_status = True
                     logger.exception(
                         f"An exception occurred while processing data for TMID {tmid_input} for date {single_date}. Please see below output.",
                         stack_info=True,
                     )
+                    all_errors.append(traceback.format_exc())
             except:
                 error_status = True
                 logger.exception(
                     f"An exception occurred while processing data for TMID {tmid_input} for date {single_date}. Please see below output.",
                     stack_info=True,
                 )
+                all_errors.append(traceback.format_exc())
+
 
         if day_error_status:
             error_status = True
@@ -915,7 +1000,7 @@ def main():
                 f"One or more error(s) occurred during processing TMID {tmid_input} for date {single_date}. "
                 "Please check worker log files at /tmp/TMAverageLogs/ for more details. Continuing..."
             )
-        if unique_constraint_error:
+        if unique_constraint_num > 0:
             logger.error(
                 f"One or more unique constraint errors (ORA-00001) occurred while processing TMID {tmid_input} for date {single_date}. "
                 "Please check worker log files at /tmp/TMAverageLogs/ for more details. Continuing..."
@@ -924,6 +1009,10 @@ def main():
             logger.critical(
                 f"A critical error has occurred while processing data for {single_date}. Cancelling all processing..."
             )
+            all_errors.append("ERROR: Critical error detected. Check error logs for more details.")
+            break
+            
+        if cancelled:
             break
 
         logger.info(f"Processing for date {single_date} complete.")
@@ -937,6 +1026,17 @@ def main():
     worker_pool.join()
 
     end_time = datetime.datetime.now()
+
+    update_tmaverage_stats(
+        cursor=connection.cursor(),
+        database=database,
+        start_time=start_time,
+        time_duration=end_time - start_time,
+        ingested=total_ingested_rows,
+        inserted=total_inserted_rows,
+        unique_constraint_num=unique_constraint_num,
+        errors=all_errors,
+    )
 
     logger.info(
         f"Script completed at time {end_time}. Duration: {end_time - start_time}"
