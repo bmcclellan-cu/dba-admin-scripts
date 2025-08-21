@@ -80,8 +80,6 @@ else
     export LD_LIBRARY_PATH=$ORACLE_HOME/lib
 fi
 
-export DB_EMAIL_LIST="Robert.Schmidt@lasp.colorado.edu"
-
 shift $(($OPTIND -1))
 
 # Resolve the directory where this script is located
@@ -104,6 +102,8 @@ if [[ ! $parallel_degree =~ ^[0-9]+$ ]]; then
     echo "ERROR: Parallel degree must be a positive integer. Exiting..."
     exit 1
 fi
+
+echo "Validating Input..."
 
 export ORACLE_SID="$database"
 
@@ -148,7 +148,7 @@ fi
 username=$(<"$SCRIPT_DIR/.username")
 password=$(<"$SCRIPT_DIR/.passwd")
 # TODO: Remove personal path.
-test_login=$("$HOME/Robert/anothercommon/oracle/TestOracleUserLogin.sh" "$username" "$password")
+test_login=$("$HOME/oracle/TestOracleUserLogin.sh" "$username" "$password")
 if [ $? -ne 0 ]; then
     echo "$test_login"
     echo "An error occurred while running TestOracleUserLogin.sh. Exiting..."

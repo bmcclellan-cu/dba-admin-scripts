@@ -211,8 +211,8 @@ EOD
 
     CREATE TABLE $schema_name.$tmaverage_stats_name (
         DATABASE_NAME   VARCHAR2(128),
-        STARTTIME       TIMESTAMP PRIMARY KEY,
-        TIMERAN         INTERVAL DAY TO SECOND,
+        START_TIME      TIMESTAMP PRIMARY KEY,
+        TIME_RAN        INTERVAL DAY TO SECOND,
         INGESTED        NUMBER,
         INSERTED        NUMBER,
         UNIQUE_CONSTRAINT_NUM NUMBER,

@@ -60,6 +60,10 @@ TELEMETRYANALOGCONVERSIONS_DBS = {
     "ixpeprod": "TelemetryAnalogConversions",
 }
 
+ONTHEFLYDECOM_DBS = {
+    "ixpeprod": "IXPE_MISC.ONTHEFLYDECOM",
+}
+
 
 def get_value_from_file(file_path):
     """
@@ -131,19 +135,19 @@ def update_tmaverage_stats(
     
     # Use MERGE statement to INSERT if not exists, UPDATE if exists
     sql = f"""MERGE INTO {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} target
-             USING (SELECT :1 as DATABASE_NAME, :2 as STARTTIME, :3 as TIMERAN, 
+             USING (SELECT :1 as DATABASE_NAME, :2 as START_TIME, :3 as TIME_RAN, 
                            :4 as INGESTED, :5 as INSERTED, :6 as UNIQUE_CONSTRAINT_NUM, :7 as ERRORS FROM dual) source
-             ON (target.DATABASE_NAME = source.DATABASE_NAME AND target.STARTTIME = source.STARTTIME)
+             ON (target.DATABASE_NAME = source.DATABASE_NAME AND target.START_TIME = source.START_TIME)
              WHEN MATCHED THEN
                  UPDATE SET 
-                     TIMERAN = source.TIMERAN,
+                     TIME_RAN = source.TIME_RAN,
                      INGESTED = source.INGESTED,
                      INSERTED = source.INSERTED,
                      UNIQUE_CONSTRAINT_NUM = source.UNIQUE_CONSTRAINT_NUM,
                      ERRORS = source.ERRORS
              WHEN NOT MATCHED THEN
-                 INSERT (DATABASE_NAME, STARTTIME, TIMERAN, INGESTED, INSERTED, UNIQUE_CONSTRAINT_NUM, ERRORS)
-                 VALUES (source.DATABASE_NAME, source.STARTTIME, source.TIMERAN, 
+                 INSERT (DATABASE_NAME, START_TIME, TIME_RAN, INGESTED, INSERTED, UNIQUE_CONSTRAINT_NUM, ERRORS)
+                 VALUES (source.DATABASE_NAME, source.START_TIME, source.TIME_RAN, 
                         source.INGESTED, source.INSERTED, source.UNIQUE_CONSTRAINT_NUM, source.ERRORS)"""
     
     try:
@@ -351,7 +355,7 @@ def fetch_otfd_values_by_time_range(
     try:
         # Call PSQL function to retrieve data (SID (always 1), tmid, START_ERT (unused), END_ERT (unused), START_GPS, END_GPS))
         cursor.callproc(
-            "IXPE_MISC.ONTHEFLYDECOM.selectNumericTlm",
+            f"ONTHEFLYDECOM.selectNumericTlm",
             [1, tmid, -1, -1, start_time_gps, end_time_gps],
         )
         # Calling the function should lock the thread until it returns, at which point the results will be in ONTHEFLYDECOM_RESULTS
@@ -713,7 +717,6 @@ def process_values_by_tmid(
                 current_bucket_count,
             )
         )
-
     return (results_len, insert_tmaverage_rows(database, insertion_data))
 
 
