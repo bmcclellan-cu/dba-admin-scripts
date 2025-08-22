@@ -80,6 +80,8 @@ else
     export LD_LIBRARY_PATH=$ORACLE_HOME/lib
 fi
 
+export DB_EMAIL_LIST="Robert.Schmidt@lasp.colorado.edu"
+
 shift $(($OPTIND -1))
 
 # Resolve the directory where this script is located
@@ -148,7 +150,7 @@ fi
 username=$(<"$SCRIPT_DIR/.username")
 password=$(<"$SCRIPT_DIR/.passwd")
 # TODO: Remove personal path.
-test_login=$("$HOME/oracle/TestOracleUserLogin.sh" "$username" "$password")
+test_login=$("$HOME/common/oracle/TestOracleUserLogin.sh" "$username" "$password")
 if [ $? -ne 0 ]; then
     echo "$test_login"
     echo "An error occurred while running TestOracleUserLogin.sh. Exiting..."

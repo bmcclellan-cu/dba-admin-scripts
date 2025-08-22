@@ -14,6 +14,9 @@ from functools import partial
 import oracledb
 import numpy as np
 
+# Project imports
+from TMAverageHelpers import OTFDException
+
 # Global variable for the database connection (variable exists independently for each process and is persistent as long as the process exists.)
 db_connection: oracledb.Connection = None
 
@@ -107,10 +110,12 @@ def update_tmaverage_stats(
         database: str,
         start_time: datetime.datetime,
         time_duration: datetime.timedelta = None,
-        ingested: int = 0,
-        inserted: int = 0,
-        unique_constraint_num: int = 0,
-        errors: list[str] = [],
+        failed: bool = None,
+        cancelled: bool = None,
+        ingested: int = None,
+        inserted: int = None,
+        unique_constraint_num: int = None,
+        errors: list[str] = None,
 ):
     """
     Updates the TMAVERAGE_STATS table. This is ran once during script initialization, and once the script completes.
@@ -133,21 +138,26 @@ def update_tmaverage_stats(
         seconds = remaining_seconds % 60
         interval_value = f"{days} {hours:02d}:{minutes:02d}:{seconds:02d}"
     
+    failed = 1 if failed else 0
+    cancelled = 1 if cancelled else 0
+    
     # Use MERGE statement to INSERT if not exists, UPDATE if exists
     sql = f"""MERGE INTO {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} target
-             USING (SELECT :1 as DATABASE_NAME, :2 as START_TIME, :3 as TIME_RAN, 
-                           :4 as INGESTED, :5 as INSERTED, :6 as UNIQUE_CONSTRAINT_NUM, :7 as ERRORS FROM dual) source
+             USING (SELECT :1 as DATABASE_NAME, :2 as START_TIME, :3 as TIME_RAN, :4 as FAILED, :5 as CANCELLED,
+                           :6 as INGESTED, :7 as INSERTED, :8 as UNIQUE_CONSTRAINT_NUM, :9 as ERRORS FROM dual) source
              ON (target.DATABASE_NAME = source.DATABASE_NAME AND target.START_TIME = source.START_TIME)
              WHEN MATCHED THEN
                  UPDATE SET 
-                     TIME_RAN = source.TIME_RAN,
-                     INGESTED = source.INGESTED,
-                     INSERTED = source.INSERTED,
+                     TIME_RAN  = source.TIME_RAN,
+                     FAILED    = source.FAILED,
+                     CANCELLED = source.CANCELLED,
+                     INGESTED  = source.INGESTED,
+                     INSERTED  = source.INSERTED,
                      UNIQUE_CONSTRAINT_NUM = source.UNIQUE_CONSTRAINT_NUM,
-                     ERRORS = source.ERRORS
+                     ERRORS    = source.ERRORS
              WHEN NOT MATCHED THEN
-                 INSERT (DATABASE_NAME, START_TIME, TIME_RAN, INGESTED, INSERTED, UNIQUE_CONSTRAINT_NUM, ERRORS)
-                 VALUES (source.DATABASE_NAME, source.START_TIME, source.TIME_RAN, 
+                 INSERT (DATABASE_NAME, START_TIME, TIME_RAN, FAILED, CANCELLED, INGESTED, INSERTED, UNIQUE_CONSTRAINT_NUM, ERRORS)
+                 VALUES (source.DATABASE_NAME, source.START_TIME, source.TIME_RAN, source.FAILED, source.CANCELLED,
                         source.INGESTED, source.INSERTED, source.UNIQUE_CONSTRAINT_NUM, source.ERRORS)"""
     
     try:
@@ -155,6 +165,8 @@ def update_tmaverage_stats(
             database,
             start_time,
             interval_value,
+            failed,
+            cancelled,
             ingested,
             inserted,
             unique_constraint_num,
@@ -390,9 +402,14 @@ def fetch_otfd_values_by_time_range(
         )
         for row in otfd_error:
             logger.error(row)
-        raise Exception(
+
+        error = OTFDException(
             f"ONTHEFYDECOM_ERRORS Contains errors. See below for more details: {otfd_error}."
         )
+
+        error.error_rows=otfd_error
+
+        raise error
 
     # Gets length of the python array returned by oracle to pre-allocate the numpy array
     # this is assumed to be faster because numpy fully re-allocates the array upon append,
@@ -926,6 +943,9 @@ def main():
     total_ingested_rows = 0
     total_inserted_rows = 0
 
+    critical_failure = False
+    cancelled = False
+
     # Array of all errors that were encountered
     all_errors = []
 
@@ -944,9 +964,12 @@ def main():
 
         day_ingested_rows = 0
         day_inserted_rows = 0
+
         day_error_status = False
         critical_failure = False
+
         unique_constraint_num = 0
+        otfd_error_num = 0
 
         cancelled = False
 
@@ -988,6 +1011,9 @@ def main():
                         stack_info=True,
                     )
                     all_errors.append(traceback.format_exc())
+            except OTFDException as error:
+                all_errors.append(f"An OTFD error occurred. ONTHEFLYDECOM_ERRORS Rows: {error.error_rows}")
+                otfd_error_num += len(error.error_rows)
             except:
                 error_status = True
                 logger.exception(
@@ -996,6 +1022,8 @@ def main():
                 )
                 all_errors.append(traceback.format_exc())
 
+        if cancelled:
+            break
 
         if day_error_status:
             error_status = True
@@ -1008,16 +1036,20 @@ def main():
                 f"One or more unique constraint errors (ORA-00001) occurred while processing TMID {tmid_input} for date {single_date}. "
                 "Please check worker log files at /tmp/TMAverageLogs/ for more details. Continuing..."
             )
+        
+        if otfd_error_num > 0:
+            logger.error(
+                f"One or more OnTheFlyDecom errors occurred during processing TMID {tmid_input} for date {single_date}. Please check logs or "
+                "the TMAVERAGE_STATS for more details. Continuing..."
+                )
+
         if critical_failure:
             logger.critical(
                 f"A critical error has occurred while processing data for {single_date}. Cancelling all processing..."
             )
             all_errors.append("ERROR: Critical error detected. Check error logs for more details.")
             break
-            
-        if cancelled:
-            break
-
+                    
         logger.info(f"Processing for date {single_date} complete.")
         logger.info(f"Ingested {day_ingested_rows} rows.")
         logger.info(f"Inserted {day_inserted_rows} rows.")
@@ -1035,6 +1067,8 @@ def main():
         database=database,
         start_time=start_time,
         time_duration=end_time - start_time,
+        failed=critical_failure,
+        cencelled=cancelled,
         ingested=total_ingested_rows,
         inserted=total_inserted_rows,
         unique_constraint_num=unique_constraint_num,

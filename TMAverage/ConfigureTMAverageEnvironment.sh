@@ -213,9 +213,12 @@ EOD
         DATABASE_NAME   VARCHAR2(128),
         START_TIME      TIMESTAMP PRIMARY KEY,
         TIME_RAN        INTERVAL DAY TO SECOND,
+        FAILED          NUMBER(1),
+        CANCELLED       NUMBER(1),
         INGESTED        NUMBER,
         INSERTED        NUMBER,
         UNIQUE_CONSTRAINT_NUM NUMBER,
+        OTFD_ERROR_NUM  NUMBER,
         ERRORS          CLOB
     )
     TABLESPACE "$tablespace_name";
