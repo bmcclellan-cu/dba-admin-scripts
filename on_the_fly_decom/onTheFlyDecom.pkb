@@ -137,7 +137,7 @@ AS
 -- If debug level is above 0, the L0 and L1 queries will have the monitor flag enabled, allowing for query performance to be measured.
 -- Keep in mind that this does not apply for TMDecom/TelemetryStorageLocation queries, as those are unlikely to be performance bottlenecks
 -- and use inline SQL, which cannot have those flags injected.
-gblDebugLevel      NUMBER := 2;           /* 0=silent,  1=verbose, 2=more verbose */
+gblDebugLevel      NUMBER := 0;           /* 0=silent,  1=verbose, 2=more verbose */
 gblApids           VARCHAR2(128) := '-1'; /* comma-separated list of apids */
 gblDecomMapTimeGPS NUMBER := -1;          /* Overrides using start/stop times and TMdecom table for decom map time(s). */
 gblForceIsInL0     NUMBER := -1;          /* -1 = not in effect, 0 = isInL0=0, 1 = isInL0=1 */
@@ -215,6 +215,7 @@ BEGIN
 EXCEPTION
     WHEN others THEN
         DBMS_OUTPUT.PUT_LINE('Error in logError: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
+        DBMS_OUTPUT.PUT_LINE('Attempted message logged: ' || msg);
 
 END logError;
 
@@ -818,10 +819,6 @@ IS
     where_clauses string_varray; 
     where_clause_index NUMBER := 1;  -- VARRAY indexing starts at 1
 
-    -- TODO: Need to identify if the below 2 vars are necessary. 
-    -- insert_columns VARRAY(4); -- Should match columns on ONTHEFLYDECOM_RESULTS
-    -- insert_columns_string VARCHAR(100);
-
     monitor_value VARCHAR2(20); -- This string is set to inject the monitor flag into SQL queries made.
 BEGIN
     -- Get the table name
@@ -878,7 +875,8 @@ BEGIN
     onTheFlyDecomMissionSpecific.addToL0Query( exeStringPart1, decomMap.systemId);
 
     -- Wrap the query so that the where statement can use the aliased columns, rather than needing
-    -- more dynamic code. This should, theoretically, not impact performance, but needs to be tested (TODO).
+    -- more dynamic code. Some rudimentary testing suggests that this actually executes faster than
+    -- the alternative of having only the where clauses that are required without the wrap.
     exeString := 'SELECT * FROM (' || exeStringPart1 || ' ' || exeStringPart2 || ') inner_table';
 
     -- The following determines if the end point of the time query is included or not.
@@ -1037,22 +1035,20 @@ PROCEDURE queryL1
     stopASCT_in IN NUMBER,        -- optional (-1 if not used)
     TSLRowStartTime IN NUMBER,   -- optional (-1 if not used)
     TSLRowStopTime IN NUMBER,    -- optional (-1 if not used)
-    dataType VARCHAR2,
-    doInclusiveQuery BOOLEAN)
+    dataType IN VARCHAR2,
+    doInclusiveQuery IN BOOLEAN,
+    definitionColumn IN NUMBER)  -- Column to apply doInclusiveQuery on, as well as the column to narrow to TSL record.
 IS
     exeString VARCHAR2(500); -- This string contains sql commands to be executed
     debugString VARCHAR2(500);
     tableName VARCHAR2(200);
     name_value name_value_t;
 
-    queryStartERT NUMBER;
-    queryStopERT NUMBER;
+    booleanOpString VARCHAR(2);
 
-    queryStartSCT NUMBER;
-    queryStopSCT NUMBER;
-
-    queryStartASCT NUMBER;
-    queryStopASCT NUMBER;
+    -- Contain the bounds for the definition column.
+    queryStart NUMBER;
+    queryStop NUMBER; 
 
     countBefore NUMBER;
     countAfter NUMBER;
@@ -1088,98 +1084,60 @@ BEGIN
 
     exeString := 'INSERT INTO onTheFlyDecom_results (ERT, SCT, ASCT, Value) ' ||
                  'SELECT ' || monitor_value || select_time_columns_string || ', Value from ' || tableName ||
-		 ' WHERE TMID = :tlmId_in ' || 'and ';
+		         ' WHERE TMID = :tlmId_in';
 
     -- Add anything mission-specific to the query, such as testId or tlmFileName.
     
     onTheFlyDecomMissionSpecific.addToL1Query(exeString, systemId_in);
 
-    -- TODO: Prototyping for EMA specifically. Only query by ASCT.
+    IF doInclusiveQuery THEN
+        booleanOpString := '<=';
+    ELSE
+        booleanOpString := '<';
+    END IF;
 
-    -- Ensure that the query is bounded to within the TSL record.
-	narrowStartStopTimes( startASCT_in, stopASCT_in, TSLRowStartTime, TSLRowStopTime,
-	    		      queryStartASCT, queryStopASCT);
-	IF (doInclusiveQuery) THEN		      
-        exeString := exeString || 'ASCT between :queryStartASCT and :queryStopASCT';
-	ELSE
-        exeString := exeString || 'ASCT >= :queryStartASCT and ASCT < :queryStopASCT';
-	END IF;
+    -- Note: I'm testing forgoing bind variables for this part, as there are many possible inputs, and the which values need to be 
+    --       queried by will vary significantly.
+
+    -- Narrow by the column used for TSL fetch, and query by the rest if provided.
+    CASE definitionColumn
+        WHEN 0 THEN
+            narrowStartStopTimes(startSCT_in, stopSCT_in, TSLRowStartTime, TSLRowStopTime, queryStart, queryStop);
+            exeString := exeString || ' AND SCT_VTCW >= ' || queryStart ||' AND SCT_VTCW ' || booleanOpString || queryStop;
+            IF startERT_in != -1 THEN
+                exeString := exeString || ' AND ERT BETWEEN ' || startERT_in || ' AND ' || stopERT_in;
+            END IF;
+            IF startASCT_in != -1 THEN
+                exeString := exeString || ' AND ASCT BETWEEN ' || startASCT_in || ' AND ' || stopASCT_in;
+            END IF;
+        WHEN 1 THEN
+            narrowStartStopTimes(startERT_in, stopERT_in, TSLRowStartTime, TSLRowStopTime, queryStart, queryStop);
+            exeString := exeString || ' AND ERT >= ' || queryStart ||' AND ERT ' || booleanOpString || queryStop;
+            IF startSCT_in != -1 THEN
+                exeString := exeString || ' AND SCT_VTCW BETWEEN ' || startSCT_in || ' AND ' || stopSCT_in;
+            END IF;
+            IF startASCT_in != -1 THEN
+                exeString := exeString || ' AND ASCT BETWEEN ' || startASCT_in || ' AND ' || stopASCT_in;
+            END IF;
+        WHEN 2 THEN 
+            narrowStartStopTimes(startASCT_in, stopASCT_in, TSLRowStartTime, TSLRowStopTime, queryStart, queryStop);
+            exeString := exeString || ' AND ASCT >= ' || queryStart || ' AND ASCT ' || booleanOpString || queryStop;
+            IF startSCT_in != -1 THEN
+                exeString := exeString || ' AND SCT_VTCW BETWEEN ' || startSCT_in || ' AND ' || stopSCT_in;
+            END IF;
+            IF startERT_in != -1 THEN
+                exeString := exeString || ' AND ERT BETWEEN ' || startERT_in || ' AND ' || stopERT_in;
+            END IF;
+    END CASE;
 
     IF (gblDebugLevel >= 1) THEN
-        name_value(':queryStartASCT') := TO_CHAR(queryStartASCT);
-        name_value(':queryStopASCT')  := TO_CHAR(queryStopASCT);
-        debugString := replaceBindVars( exeString, name_value);
-            logError( 'INFO ' || debugString);
+        logError( 'INFO ' || exeString);
+        logError( 'INFO startASCT_in='||startASCT_in||', stopASCT_in'||stopASCT_in);
+        logError( 'INFO TSLRowStartTime='||TSLRowStartTime||', TSLRowStopTime='||TSLRowStopTime);
     END IF;
 
     -- Insert the values.
-    EXECUTE IMMEDIATE exeString USING IN tlmId_in, queryStartASCT, queryStopASCT;
-
-
-    -- Add an ERT range and/or a SCT range.  Narrow the range so it doesn't exceed the range of the TSL row,
-    -- otherwise could get duplicate rows in the results if there are multiple TSL rows.
-    
-    -- IF ((startERT_in != -1) AND (startSCT_in = -1)) THEN
-    --     -- User specified only an ERT range, so query with the ERT range, narrowed to within the TSL range
-	-- -- if the TSL range is valid.
-	-- narrowStartStopTimes( startERT_in, stopERT_in, TSLRowStartTime, TSLRowStopTime,
-	--     		      queryStartERT, queryStopERT);
-	-- IF (doInclusiveQuery) THEN		      
-    --         exeString := exeString || 'ERT between :queryStartERT and :queryStopERT';
-	-- ELSE
-    --         exeString := exeString || 'ERT >= :queryStartERT and ERT < :queryStopERT';
-	-- END IF;
-    --     IF (gblDebugLevel >= 1) THEN
-	--     name_value(':queryStartERT') := TO_CHAR(queryStartERT);
-	--     name_value(':queryStopERT')  := TO_CHAR(queryStopERT);
-	--     debugString := replaceBindVars( exeString, name_value);
-    --         logError( 'INFO ' || debugString);
-    --     END IF;
-    --     EXECUTE IMMEDIATE exeString USING IN tlmId_in, queryStartERT, queryStopERT;
-    -- END IF;
-
-    -- IF ((startERT_in = -1) AND (startSCT_in != -1)) THEN
-    --     -- User specified only an SCT range, so assume SCT and TSL (wall clock) times are commensurate
-    --     -- and query with the SCT range, narrowed to within the TSL range.
-	-- narrowStartStopTimes( startSCT_in, stopSCT_in, TSLRowStartTime, TSLRowStopTime,
-	-- 		      queryStartSCT, queryStopSCT);
-	-- IF (doInclusiveQuery) THEN		      
-    --         exeString := exeString || 'SCT_VTCW between :queryStartSCT and :queryStopSCT';
-	-- ELSE
-    --         exeString := exeString || 'SCT_VTCW >= :queryStartSCT and SCT_VTCW < :queryStopSCT';
-	-- END IF;
-    --     IF (gblDebugLevel >= 1) THEN
-	--     name_value(':queryStartSCT') := TO_CHAR(queryStartSCT);
-	--     name_value(':queryStopSCT')  := TO_CHAR(queryStopSCT);
-	--     debugString := replaceBindVars( exeString, name_value);
-    --         logError( 'INFO ' || debugString);
-    --     END IF;
-    --     EXECUTE IMMEDIATE exeString USING IN tlmId_in, queryStartSCT, queryStopSCT;
-    -- END IF;
-
-    -- IF ((startERT_in != -1) AND (startSCT_in != -1)) THEN
-    --     -- User specified both an ERT range and SCT range, so query with a ERT range
-    --     -- narrowed to within this TSL row, and with the full user-specified SCT range.
-	-- narrowStartStopTimes( startERT_in, stopERT_in, TSLRowStartTime, TSLRowStopTime,
-	-- 		      queryStartERT, queryStopERT);
-	-- IF (doInclusiveQuery) THEN		      
-    --         exeString := exeString || 'ERT between :queryStartERT and :queryStopERT ';
-	-- ELSE
-    --         exeString := exeString || 'ERT >= :queryStartERT and ERT < :queryStopERT ';
-	-- END IF;
-    --     exeString := exeString || 'and SCT_VTCW >= :queryStartSCT and SCT_VTCW <= :queryStopSCT';
-	-- queryStartSCT := startSCT_in;
-	-- queryStopSCT  := stopSCT_in;
-    --     IF (gblDebugLevel >= 1) THEN
-	--     name_value(':queryStartSCT') := TO_CHAR(queryStartSCT);
-	--     name_value(':queryStopSCT')  := TO_CHAR(queryStopSCT);
-	--     name_value(':queryStartERT') := TO_CHAR(queryStartERT);
-	--     name_value(':queryStopERT')  := TO_CHAR(queryStopERT);
-	--     debugString := replaceBindVars( exeString, name_value);
-    --         logError( 'INFO ' || debugString);
-    --     END IF;
-    --     EXECUTE IMMEDIATE exeString USING IN tlmId_in, queryStartERT, queryStopERT, queryStartSCT, queryStopSCT;
-    -- END IF;
+    EXECUTE IMMEDIATE exeString USING IN tlmId_in;
 
     IF (gblDebugLevel >= 1) THEN
         logError( 'INFO queryL1: inserted ' || sql%Rowcount || ' rows into onTheFlyDecom_results table.');
@@ -1262,10 +1220,14 @@ BEGIN
     -- STEP A: Initialization --------------------------------------------------------------------
 
     -- Clear the temp tables in which the results and errors are stored.
-    -- Don't use truncate, doesn't work;  only the last row inserted is still there upon return.
+    -- TODO: Determine if the below comment is correct. My testing indicates it may not be correct. Checking with Brian & Jon.
+    --       Don't use truncate, doesn't work;  only the last row inserted is still there upon return.
 
-    EXECUTE IMMEDIATE 'delete from onTheFlyDecom_results';
-    EXECUTE IMMEDIATE 'delete from onTheFlyDecom_errors';
+    -- TODO: De-hardcode the statement.
+    -- EXECUTE IMMEDIATE 'TRUNCATE TABLE EMA_MISC.onTheFlyDecom_results';
+    -- EXECUTE IMMEDIATE 'TRUNCATE TABLE EMA_MISC.ONTHEFLYDECOM_ERRORS';
+    EXECUTE IMMEDIATE 'DELETE FROM ONTHEFLYDECOM_RESULTS';
+    EXECUTE IMMEDIATE 'DELETE FROM ONTHEFLYDECOM_ERRORS';
     gblSequence := 1;
     
     -- In case we return early with an error, create a cursor to read the empty results table.
@@ -1346,7 +1308,7 @@ BEGIN
             END IF;
 
             queryL1( systemId_in, tlmId_in, startERT_in, stopERT_in, startSCT_in, stopSCT_in, startASCT_in, stopASCT_in,
-	             -1, -1, dataType, true);
+	             -1, -1, dataType, true, definitionColumn);
 	        RETURN;
 
         END IF;
@@ -1497,7 +1459,7 @@ BEGIN
         
             IF (isInL1 = true) THEN
 		        queryL1( systemId_in, tlmId_in, startERT_in, stopERT_in, startSCT_in, stopSCT_in, startASCT_in, stopASCT_in,
-		             TSLRowStartTime, TSLRowStopTime, dataType, isLastTSLRow);
+		             TSLRowStartTime, TSLRowStopTime, dataType, isLastTSLRow, definitionColumn);
 			    
                 CONTINUE;  -- to next TSL row
             END IF;  -- isInL1 = true
@@ -1530,12 +1492,11 @@ BEGIN
                 END IF;
                 doInclusiveQuery := (isLastTSLRow AND isLastTMDRow);
 
-                -- TODO: Identify if this commented-out code is necessary.
-		        /*
+		        IF (gblDebugLevel >= 2) THEN
                     logError('INFO isLastTSLRow = ' || (case when isLastTSLRow = true then 'true' else 'false' end) ||
 		             ', isLastTMDRow = ' || (case when isLastTMDRow = true then 'true' else 'false' end) ||
-			     ', doInclusiveQuery = ' || (case when doInclusiveQuery = true then 'true' else 'false' end));
-	            */
+			            ', doInclusiveQuery = ' || (case when doInclusiveQuery = true then 'true' else 'false' end));
+	            END IF;
 			     
                 -- Get start and stop times for this TMD row.  Adjust these times so they're within the range
                 -- of the TSL record, because we don't want to query outside the TSL record's range.
