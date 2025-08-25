@@ -13,7 +13,7 @@
 # 
 # Author: Robert Schmidt
 # Created on Jun 6, 2025
-# Last modified on Jul 21st, 2025 - RS
+# Last modified on August 25th, 2025 - RS
 ##########################################################################
 usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafile ] (optional, create TMAverage tablespace and table.) ] [ -v (optional, create venv in tmaverage script directory ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ username (optional) ] [ password (optional) ]"
 example1="Example: ./ConfigureTMAverageEnvironment.sh -t /ssd_internal/Robert/AIMPROD_TMAVERAGE/tmaverage_table.dbf"
