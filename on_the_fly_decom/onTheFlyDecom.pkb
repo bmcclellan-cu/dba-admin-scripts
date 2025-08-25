@@ -866,56 +866,33 @@ BEGIN
     --                from L0_Packets_SID1 where apid=120 and SCT_VTCW >= 1396656018000000 and
     --                SCT_VTCW <= 1397520018000000 length >= 85 order by ERT, SCT_VTCW
     -- We found that the parallel flag has no noticeable impact on queries we expect to see, and as such has been removed.
-    exeStringPart1 := 'select ' || monitor_value || select_time_columns_string ||
-                      ', rawtohex(dbms_lob.substr(packet, :nBytes, :byteOffset)) ' ||
-                      'from ' || tableName || ' where dmid=:apid and ';
-    exeStringPart2 := 'length >= (:byteOffset-1 + :nBytes)';
-
-    -- Add anything mission-specific to the query.
-    onTheFlyDecomMissionSpecific.addToL0Query( exeStringPart1, decomMap.systemId);
-
-    -- Wrap the query so that the where statement can use the aliased columns, rather than needing
-    -- more dynamic code. Some rudimentary testing suggests that this actually executes faster than
-    -- the alternative of having only the where clauses that are required without the wrap.
-    exeString := 'SELECT * FROM (' || exeStringPart1 || ' ' || exeStringPart2 || ') inner_table';
 
     -- The following determines if the end point of the time query is included or not.
     -- Only the last of a series of abutted queries uses inclusive, the others are exclusive.
     -- This prevent duplicate data. This is only applied for the axis that is being iterated over, 
-    -- which is passed through definitionColumn (0: SCT, 1: ERT, 2: ASCT).
+    -- which is passed through definitionColumn (0: SCT, 1: ERT, 2: ASCT) (TODO: Currently hardcoded for EMA).
     IF (doInclusiveQuery) THEN
         booleanOpString := '<=';
     ELSE
         booleanOpString := '<';
     END IF;
 
-    -- Create a WHERE clause that handles -1 inputs as non-filters with the appropriate inclusivity.
-    CASE definitionColumn
-        WHEN 0 THEN
-            exeString := exeString || ' WHERE  
-                       (:startSCT_in = -1 OR sct >= :startSCT_in)
-                AND    (:stopSCT_in  = -1 OR sct ' || booleanOpString || ' :stopSCT_in)
-                AND    (:startERT_in = -1 OR ert >= :startERT_in)
-                AND    (:stopERT_in  = -1 OR ert <= :stopERT_in)
-                AND    (:startASCT_in = -1 OR ASCT >= :startASCT_in)
-                AND    (:stopASCT_in  = -1 OR ASCT <= :stopASCT_in)';
-        WHEN 1 THEN
-            exeString := exeString || ' WHERE  
-                       (:startSCT_in = -1 OR sct >= :startSCT_in)
-                AND    (:stopSCT_in  = -1 OR sct <= :stopSCT_in)
-                AND    (:startERT_in = -1 OR ert >= :startERT_in)
-                AND    (:stopERT_in  = -1 OR ert ' || booleanOpString || ' :stopERT_in)
-                AND    (:startASCT_in = -1 OR ASCT >= :startASCT_in)
-                AND    (:stopASCT_in  = -1 OR ASCT <= :stopASCT_in)';
-        WHEN 2 THEN
-            exeString := exeString || ' WHERE  
-                       (:startSCT_in = -1 OR sct >= :startSCT_in)
-                AND    (:stopSCT_in  = -1 OR sct <= :stopSCT_in)
-                AND    (:startERT_in = -1 OR ert >= :startERT_in)
-                AND    (:stopERT_in  = -1 OR ert <= :stopERT_in)
-                AND    (:startASCT_in = -1 OR ASCT >= :startASCT_in)
-                AND    (:stopASCT_in  = -1 OR ASCT ' || booleanOpString || ' :stopASCT_in)';
-    END CASE;
+    exeStringPart1 := 'select ' || monitor_value || select_time_columns_string ||
+                      ', rawtohex(dbms_lob.substr(packet, :nBytes, :byteOffset)) ' ||
+                      'from ' || tableName || ' where dmid=:apid and ';
+    exeStringPart2 := 'length >= (:byteOffset-1 + :nBytes)';
+
+    exeStringPart2 := exeStringPart2 || ' AND ASCT >= :startASCT_in AND ASCT ' || booleanOpString || ' :stopASCT_in';
+
+    -- Add anything mission-specific to the query.
+    onTheFlyDecomMissionSpecific.addToL0Query( exeStringPart1, decomMap.systemId);
+
+    exeString := exeStringPart1 || exeStringPart2;
+
+    -- If this version of OTFD will be made compatible with IXPE, EMA, etc., it might be useful to wrap the base query as follows. This would 
+    -- allow for standard column names using aliases while still being able to reference the aliases in the where clause. This appears to have 
+    -- little impact on performance.
+    -- exeString := 'SELECT * FROM (' || exeString || ') inner_table WHERE ASCT >= :startASCT_in AND ASCT ' || booleanOpString || ' :stopASCT_in';
 
     -- Log the composed query if debug level is high enough
     IF (gblDebugLevel >= 1) THEN        
@@ -923,11 +900,10 @@ BEGIN
         logError('INFO debugString=' || exeString);
     END IF;
 
+    -- TODO: Currently hardcoded for EMA.
     open c for exeString using nBytes, byteOffset, apid, byteOffset, nBytes, 
-        startERT_in, startERT_in, stopERT_in, stopERT_in, 
-        startSCT_in, startSCT_in, stopSCT_in, stopSCT_in,
-        startASCT_in, startASCT_in, stopASCT_in, stopASCT_in;
-
+        startASCT_in, stopASCT_in;
+    
     -- BULK COLLECT and FORALL greatly reduce the number of context switches which happen when data
     -- is passed between the Oracle PL/SQL engine and the SQL engine.  This improves performance.
     -- BULK COLLECT has a row limit of 'n_batch_rows' for each bulk collect fetch and insert.
