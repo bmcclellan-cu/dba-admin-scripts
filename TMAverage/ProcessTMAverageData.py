@@ -1068,7 +1068,7 @@ def main():
         start_time=start_time,
         time_duration=end_time - start_time,
         failed=critical_failure,
-        cencelled=cancelled,
+        cancelled=cancelled,
         ingested=total_ingested_rows,
         inserted=total_inserted_rows,
         unique_constraint_num=unique_constraint_num,
