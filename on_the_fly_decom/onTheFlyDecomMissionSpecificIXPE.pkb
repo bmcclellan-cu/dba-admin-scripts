@@ -172,129 +172,26 @@ BEGIN
 
 END getTableName;
 
-/*************************************************************************************************
-Function:   getWhereColumnsL0
 
-Purpose:    This function returns the corresponding column names for each input to selectNumericTlm.
-            These are expected to match up to exactly 1 value in getTimeColumnsL0. Invalid values 
-            returned from this function will result in SQL errors during L0 queries.
-            
-Input:      index_in 
+
+/*************************************************************************************************
+Function:   getL0PacketsSCTColName
+
+Purpose:    This function returns the name of the SCT column in the L0_Packets table.
+
+Input:      None
 
 Returns:    The column name as a VARCHAR2
 
 *************************************************************************************************/
-FUNCTION getWhereColumnsL0( index_in IN NUMBER) 
-        RETURN VARCHAR2
-IS
-    invalidIndex EXCEPTION;
-BEGIN
-    IF (index_in = 1) THEN
-        return 'ERT';
-    ELSIF (index_in = 2) THEN
-        return 'SCT_VTCW';
-    ELSE
-        raise invalidIndex;
-    END IF;
-
-END getWhereColumnsL0;
-
-
-/*************************************************************************************************
-Function:   getWhereColumnsL1
-
-Purpose:    This function returns the corresponding column names for each input to selectNumericTlm.
-            These are expected to match up to exactly 1 value in getTimeColumnsL1. Invalid values 
-            returned from this function will result in SQL errors during L1 queries.
-            
-Input:      index_in 
-
-Returns:    The column name as a VARCHAR2
-
-*************************************************************************************************/
-FUNCTION getWhereColumnsL1( index_in IN NUMBER) 
-        RETURN VARCHAR2
-IS
-    invalidIndex EXCEPTION;
-BEGIN
-    IF (index_in = 1) THEN
-        return 'ERT';
-    ELSIF (index_in = 2) THEN
-        return 'SCT_VTCW';
-    ELSE
-        raise invalidIndex;
-    END IF;
-
-END getWhereColumnsL1;
-
-
-/*************************************************************************************************
-Function:   getTimeColumnsL0
-
-Purpose:    This function returns an array of the columns to query for in L0 SELECT queries. 
-            These are expected to match up to the values in getInsertColumns, where the output from 
-            this function would be <time_col1, time_col2, time_col3>, and the output from getInsertColumns 
-            would be <insert_time_col1, insert_time_col2, insert_time_col3, value>. These values do not need 
-            to be identical, but the value that is represented should be the same (SCT_VTCW -> SCT).
-            If these values do not match, the returned data may have incorrectly labeled data.
-
-            
-Input:      None
-
-Returns:    A VARRAY of the time columns, maximum of 3.
-
-*************************************************************************************************/
-FUNCTION getTimeColumnsL0
-        RETURN VARCHAR2
+FUNCTION getL0PacketsSCTColName
+         RETURN VARCHAR2
 IS
 BEGIN
-    return 'SCT_VTCW AS SCT, ERT, NULL AS AST'
-END getTimeColumnsL0;
+    RETURN 'SCT_VTCW';
 
+END getL0PacketsSCTColName;
 
-
-/*************************************************************************************************
-Function:   getTimeColumnsL1
-
-Purpose:    This function returns an array of the columns to query for in L1 SELECT queries. 
-            These are expected to match up to the values in getInsertColumns, where the output from 
-            this function would be <time_col1, time_col2, time_col3>, and the output from getInsertColumns 
-            would be <insert_time_col1, insert_time_col2, insert_time_col3, value>. These values do not need 
-            to be identical, but the value that is represented should be the same (SCT_VTCW -> SCT).
-            If these values do not match, the returned data may have incorrectly labeled data.
-
-            
-Input:      None
-
-Returns:    A VARRAY of the time columns, maximum of 3.
-
-*************************************************************************************************/
-FUNCTION getTimeColumnsL1
-    RETURN string_varray
-IS
-BEGIN
-    return string_varray('ERT', 'SCT_VTCW');
-END getTimeColumnsL1;
-
-
-/*************************************************************************************************
-Function:   getInsertColumns
-
-Purpose:    This function returns an array of the columns to insert into ONTHEFLYDECOM_RESULTS. 
-            These are expected to match up to values in getTimeColumns, with specifics documented 
-            in that function.
-            
-Input:      None
-
-Returns:    A VARRAY of the time columns
-
-*************************************************************************************************/
-FUNCTION getInsertColumns
-    RETURN string_varray
-IS
-BEGIN
-    return string_varray('ERT', 'SCT', 'VALUE');
-END getInsertColumns;
 
 
 /*************************************************************************************************
@@ -385,10 +282,10 @@ Notes:
 
 *************************************************************************************************/
 FUNCTION getDefinitionStartStopTimes( systemId_in IN NUMBER,
-                                      startTime1_in IN NUMBER,
-                                      stopTime1_in  IN NUMBER,
-			              startTime2_in IN NUMBER,
-			              stopTime2_in  IN NUMBER,
+                                      startERT_in IN NUMBER,
+                                      stopERT_in  IN NUMBER,
+			              startSCT_in IN NUMBER,
+			              stopSCT_in  IN NUMBER,
 	                              definitionStartTime OUT NUMBER,
 				      definitionStopTime OUT NUMBER)
 				      RETURN NUMBER
@@ -397,29 +294,29 @@ BEGIN
     -- Initialize outputs in case return with error.
     definitionStartTime := -1;
     definitionStopTime := -1;
-
-    -- Note: For IXPE, start and stop time 1 is always ERT, and start and stop time 2 is always SCT.
     
     -- If an ERT range was specified, use it as the time range for the queries.
     -- Otherwise assume SCT can be used for the time range when querying these tables.
     -- This presumes SCT and ERT are the same, or close enough.
 
-    IF (startTime1_in >= 0) THEN
+    IF (startERT_in >= 0) THEN
         -- Input ERT times are valid, so use them.
-        definitionStartTime := startTime1_in;
-        definitionStopTime  := stopTime1_in;
-    ELSIF (startTime2_in >= 0) THEN
+        definitionStartTime := startERT_in;
+        definitionStopTime  := stopERT_in;
+    ELSIF (startSCT_in >= 0) THEN
         -- No ERT times were input, so set the TSL and TMD times to SCT times,
         -- and hope they're comparable to TSF and TMD times (and ERT).  In flight,
         -- SCT is the same as ERT, i.e. not jammed in the future like during IandT.
-        definitionStartTime := startTime2_in;
-        definitionStopTime  := stopTime2_in;
+        definitionStartTime := startSCT_in;
+        definitionStopTime  := stopSCT_in;
     ELSE
         RETURN 0;
     END IF;
     RETURN 1;
 
 END getDefinitionStartStopTimes;
+
+
 
 END onTheFlyDecomMissionSpecific;
 /

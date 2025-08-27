@@ -298,12 +298,10 @@ Returns: 1=success, 0=failure
 FUNCTION getDefinitionStartStopTimes( systemId_in IN NUMBER,
                                       startERT_in IN NUMBER,
                                       stopERT_in  IN NUMBER,
-                                      startSCT_in IN NUMBER,
-                                      stopSCT_in  IN NUMBER,
-                                      startADJ_in IN NUMBER,
-                                      stopADJ_in IN NUMBER,
-	                                  definitionStartTime OUT NUMBER,
-				                      definitionStopTime OUT NUMBER)
+			              startSCT_in IN NUMBER,
+			              stopSCT_in  IN NUMBER,
+	                              definitionStartTime OUT NUMBER,
+				      definitionStopTime OUT NUMBER)
 				      RETURN NUMBER
 IS
 BEGIN
