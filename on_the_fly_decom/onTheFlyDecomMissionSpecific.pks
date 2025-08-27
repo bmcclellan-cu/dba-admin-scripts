@@ -7,14 +7,12 @@ Usage:
   1. In sqlplus:
      @<full_path>/onTheFlyDecomMissionSpecific.pks  -- compile the package spec
 
-     @<full_path>/onTheFlyDecomEMM.pkb              -- compile the package body
-     or:
-     @<full_path>/onTheFlyDecomIXPE.pkb             -- compile the package body
-                 
+     @<full_path>/onTheFlyDecomMissionSpecificEMA.pkb     -- compile the package body  
+                   
 *************************************************************************************************/
 CREATE OR REPLACE PACKAGE EMA_MISC.onTheFlyDecomMissionSpecific
 AS 
-    TYPE curType IS REF CURSOR;
+    TYPE curType IS REF CURSOR; -- Weakly typed cursor
 
     FUNCTION getVersion RETURN VARCHAR2;
     FUNCTION setOption(optionName VARCHAR2, optionValue VARCHAR2) RETURN NUMBER;

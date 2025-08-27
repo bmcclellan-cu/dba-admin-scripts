@@ -13,14 +13,13 @@ Revisions:
   mm/dd/yy who  description
   10/19/23 SM   Initial version.
   07/22/25 RS   Updated logging + fixed bug.
-  
+  08/27/25 RS   Updated for EMA
 
-
--- TODO: Update Methods list (Will probably change before merge)
 Methods:
   logError             - The error logging function writes to the onTheFlyDecom_errors table.
   setOption            - End-user application calls to set options, both generic and mission-specific.
   clearOption          - End-user application calls to revert an option to its default value.
+  string_varray_to_csv - Converts a varray of up to 3 strings into CSV.
   replaceBindVars      - Replaces ":bind_var" in a query with the value.  For debugging queries.
   decomFromHexString   - Returns a NUMBER from a hex string, given offset, length and dataType.
   CSV2NestedTable      - Converts a comma separated string of apids to a PL/SQL table of integer apids.
@@ -122,9 +121,7 @@ Notes:
        In this case the SCT times used together with TSL and TMD times is not an issue.
 *************************************************************************************************/
 
-
--- TODO: Temp change for testing.
-CREATE OR REPLACE PACKAGE BODY EMA_MISC.onTheFlyDecom
+CREATE OR REPLACE PACKAGE BODY onTheFlyDecom
 AS
 
 -- These options, and additional mission-specific options, are settable by calling the setOption
@@ -328,8 +325,6 @@ BEGIN
         logError('ERROR setOption: others exception: optionName=' || optionName || ', optionValue=' || optionValue);
 
 END setOption;
-
-
 
 /*************************************************************************************************
 Procedure:  clearOption
@@ -1196,10 +1191,11 @@ BEGIN
     -- STEP A: Initialization --------------------------------------------------------------------
 
     -- Clear the temp tables in which the results and errors are stored.
-    -- TODO: Determine if the below comment is correct. My testing indicates it may not be correct. Checking with Brian & Jon.
+    -- TODO: Determine if the below comment is correct. My testing indicates it may not be correct.
+    --       Using TRUNCATE should be significantly faster than using DELETE FROM.
+    -- Previous comment:
     --       Don't use truncate, doesn't work;  only the last row inserted is still there upon return.
 
-    -- TODO: De-hardcode the statement.
     -- EXECUTE IMMEDIATE 'TRUNCATE TABLE EMA_MISC.onTheFlyDecom_results';
     -- EXECUTE IMMEDIATE 'TRUNCATE TABLE EMA_MISC.ONTHEFLYDECOM_ERRORS';
     EXECUTE IMMEDIATE 'DELETE FROM ONTHEFLYDECOM_RESULTS';
@@ -1214,9 +1210,6 @@ BEGIN
     -- For EMM it may be the ERT range of a test, if no ERT range was input, but a testId was input.
     -- It may also be a SCT range, for flight data where SCT is commensurate with ERT.
 
-
-    -- TODO: Currently, getDefinitionStartStopTimes acts as input validation. Maybe a more elegant way to do 
-    --       this.
     status := onTheFlyDecomMissionSpecific.getDefinitionStartStopTimes( systemId_in,
     	                                                                startERT_in, stopERT_in,
 	                                                                    startSCT_in, stopSCT_in,

@@ -7,8 +7,7 @@ Purpose:    Defines which methods in the body are callable from the application 
 CREATE OR REPLACE PACKAGE EMA_MISC.onTheFlyDecom
 AS 
     -- Note: string_varray is used both in the mission-specific code and the generic code, so it is only defined in the package 
-    -- here and referenced as ONTHEFLYDECOM.string_varray in the mission-specific code due to compilation issues other-
-    -- wise.
+    -- here and referenced as ONTHEFLYDECOM.string_varray in the mission-specific code due to compilation issues.
     TYPE string_varray IS VARRAY(3) OF VARCHAR2(200);
 
     PROCEDURE getVersion; 

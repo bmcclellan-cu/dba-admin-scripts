@@ -1,11 +1,11 @@
 /*************************************************************************************************
 File:       onTheFlyDecomMissionSpecificIXPE.pkb (package body for package: onTheFlyDecomMissionSpecific
 
-Purpose:    IXPE-specific code for on-the-fly decom, called by the core package.
+Purpose:    EMA-specific code for on-the-fly decom, called by the core package.
   
 Revisions:
   mm/dd/yy who  description
-  10/19/23 SM   Initial version.
+  08/27/25 RS   Initial Version
   
 Usage: 
   1. In sqlplus:
@@ -18,17 +18,17 @@ Notes:
      PROCEDURE setOption
      PROCEDURE clearOption
      FUNCTION  getTableName
-     FUNCTION  getL0PacketsSCTColName
+     FUNCTION  getTimeColumnsL0
+     FUNCTION  getTimeColumnsL1
      PROCEDURE addToL0Query
      PROCEDURE addToL1Query
+     PROCEDURE getDecomMapCur
+     PROCEDURE getTSLCur
      PROCEDURE getDefinitionStartStopTimes
      
   2. Mission Specific Global Variables:
      These are optional inputs which can be set by calling setOption or clearOption.
-     gblTlmFileName:
-       This is a string, the default is "" (empty string).
-       IXPE only; the IXPE code will support this, but not testId.
-
+     
   3. Compiler Errors:
      - A login.sql file can cause compiler errors.
      - If the ampersand character is present in a comment, in sqlplus will get this prompt
@@ -36,7 +36,6 @@ Notes:
        Enter value for t:  (where t is the letter after the ampersand)
 
 *************************************************************************************************/
-
 
 
 CREATE OR REPLACE PACKAGE BODY EMA_MISC.onTheFlyDecomMissionSpecific
@@ -51,8 +50,6 @@ AS
 gblTlmFileName   VARCHAR2(128) := '';
 
 -- TODO: Add global flag for RT/PBK data.
-
-
 
 /*************************************************************************************************
 Function:  getVersion
@@ -384,8 +381,6 @@ END getTSLCur;
 FUNCTION: getDefinitionStartStopTimes
 
 Purpose:  Gets start/stop times for use in queries to the TelemetryStorageLocation and TMDecom tables.
-          The IXPE version of this function can be used for most missions.  Only EMM has a different
-	  version of this function, because it has testId.
 
 Inputs:
     systemId_in  - E.g. 1 = FLIGHT, 2 = TEST
@@ -393,6 +388,8 @@ Inputs:
     stopERT_in   - Ending Earth Received Time in GPS microseconds. -1 if not used.
     startSCT_in  - Starting spacecraft time in GPS microseconds. -1 if not used.
     stopSCT_in   - Ending spacecraft time in GPS microseconds. -1 if not used.
+    startASCT_in - Start Adjusted Time in GPS microseconds. -1 if not used.
+    stopASCT_in  - End Adjusted Time in GPS microseconds. -1 if not used.
 
 Outputs:
     definitionStart  - GPS microseconds
