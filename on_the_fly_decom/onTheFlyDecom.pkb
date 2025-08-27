@@ -267,7 +267,7 @@ IS
     missionSpecificVersion VARCHAR2(128);
 BEGIN
     missionSpecificVersion := onTheFlyDecomMissionSpecific.getVersion();
-    logError( 'INFO multimission version: 0.1');
+    logError( 'INFO multimission version: 0.1 (Experimental EMA)');
     logError( 'INFO mission-specific version: ' || missionSpecificVersion);
 END getVersion;
 
