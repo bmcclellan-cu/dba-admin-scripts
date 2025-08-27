@@ -872,6 +872,7 @@ BEGIN
         booleanOpString := '<';
     END IF;
 
+    -- TODO: DMID hardcoded for EMA.
     exeStringPart1 := 'select ' || monitor_value || select_time_columns_string ||
                       ', rawtohex(dbms_lob.substr(packet, :nBytes, :byteOffset)) ' ||
                       'from ' || tableName || ' where dmid=:apid and ';
