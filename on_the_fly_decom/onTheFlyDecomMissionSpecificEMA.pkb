@@ -1,5 +1,5 @@
 /*************************************************************************************************
-File:       onTheFlyDecomMissionSpecificIXPE.pkb (package body for package: onTheFlyDecomMissionSpecific
+File:       onTheFlyDecomMissionSpecificEMA.pkb (package body for package: onTheFlyDecomMissionSpecific
 
 Purpose:    EMA-specific code for on-the-fly decom, called by the core package.
   
@@ -10,7 +10,7 @@ Revisions:
 Usage: 
   1. In sqlplus:
      @<full_path>/onTheFlyDecomMissionSpecific.pks      -- compile the package spec
-     @<full_path>/onTheFlyDecomMissionSpecificIXPE.pkb  -- compile the package body
+     @<full_path>/onTheFlyDecomMissionSpecificEMA.pkb  -- compile the package body
 
 Notes:
   1. Contents (In order of appearance)          
@@ -61,7 +61,7 @@ FUNCTION getVersion
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'IXPE 0.1';
+    return 'EMA 0.1';
 END getVersion;
 
 /*************************************************************************************************
@@ -80,13 +80,7 @@ FUNCTION setOption( optionName VARCHAR2,
 IS
     upperCaseOptionName VARCHAR2(128) := '';
 BEGIN
-    upperCaseOptionName := UPPER( optionName);
-    IF (upperCaseOptionName = 'TLMFILENAME') THEN  -- IXPE only
-        gblTlmFileName := optionValue;
-    ELSE
-        RETURN 0;
-    END IF;
-    RETURN 1;
+    RETURN 0;
 END setOption;
 
 
@@ -105,15 +99,7 @@ FUNCTION clearOption( optionName VARCHAR2)
 IS
     upperCaseOptionName VARCHAR2(128) := '';
 BEGIN
-    upperCaseOptionName := UPPER( optionName);
-    IF (upperCaseOptionName = 'TLMFILENAME') THEN  -- IXPE only
-        gblTlmFileName := '';
-    ELSIF (upperCaseOptionName = 'ALL') THEN
-        gblTlmFileName := '';
-    ELSE
-        RETURN 0;
-    END IF;
-    RETURN 1;
+    RETURN 0;
 END clearOption;
 
 
@@ -128,7 +114,7 @@ FUNCTION getOptionsHelp
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'IXPE options are: TLMFILENAME: <filename>';
+    return '';
 END getOptionsHelp;
 
 /*************************************************************************************************
@@ -197,7 +183,6 @@ FUNCTION getTimeColumnsL0
     RETURN ONTHEFLYDECOM.string_varray
 IS
 BEGIN
-    -- TODO: Debug to test using IXPE
     return ONTHEFLYDECOM.string_varray('SCT_VTCW AS SCT', 'ERT', 'ASCT');
 END getTimeColumnsL0;
 
