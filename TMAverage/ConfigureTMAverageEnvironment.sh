@@ -170,67 +170,77 @@ if [ $table_opt -ne 0 ]; then
         exit 1
     fi
 
-    # Create TMAverage table
-    echo "Creating table $schema_name.$tmaverage_table_name in tablespace $tablespace_name..."
-    create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+    if [[ "$check_table_exists" == *"No"* ]]; then
+        # Create TMAverage table
+        echo "Creating table $schema_name.$tmaverage_table_name in tablespace $tablespace_name..."
+        create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+            set heading off
+            set feedback off
+            whenever oserror exit 1
+            whenever sqlerror exit 1
+
+            CREATE TABLE "$schema_name"."$tmaverage_table_name"
+            (
+                TMID NUMBER(7,0) NOT NULL ENABLE,
+                SCT_VTCW NUMBER(16,0) NOT NULL ENABLE,
+                AVERAGE_VALUE FLOAT(126) NOT NULL ENABLE,
+                MINIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
+                MAXIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
+                VALUE_COUNT NUMBER(7,0) NOT NULL ENABLE,
+                CONSTRAINT PK_TMAVERAGE_SID1 PRIMARY KEY (TMID, SCT_VTCW) ENABLE
+            )
+            ORGANIZATION INDEX PCTFREE 0 LOGGING
+            TABLESPACE "$tablespace_name";
+
+EOD
+        )
+        if [ $? -ne 0 ]; then
+            echo "$create_table"
+            echo "An error occurred while creating table $tmaverage_table_name. Exiting..."
+            exit 1
+        fi
+    else
+        echo "Table $schema_name.$tmaverage_table_name already exists. Continuing..."
+    fi
+
+    # Check if TMAverage table already exists
+    check_table_exists=$("$HOME/common/oracle/CheckIfTableExists.sh" "$schema_name" "$tmaverage_stats_name")
+    if [ $? -ne 0 ]; then
+        echo "$check_table_exists"
+        echo "An error occurred while running CheckIfTableExists.sh Existing..."
+        exit 1
+    fi
+
+    if [[ "$check_table_exists" == *"No"* ]]; then
+        echo "Creating table $schema_name.$tmaverage_stats_name in tablespace $tablespace_name..."
+        create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
         set heading off
         set feedback off
         whenever oserror exit 1
         whenever sqlerror exit 1
 
-        CREATE TABLE "$schema_name"."$tmaverage_table_name"
-        (
-            TMID NUMBER(7,0) NOT NULL ENABLE,
-            SCT_VTCW NUMBER(16,0) NOT NULL ENABLE,
-            AVERAGE_VALUE FLOAT(126) NOT NULL ENABLE,
-            MINIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
-            MAXIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
-            VALUE_COUNT NUMBER(7,0) NOT NULL ENABLE,
-            CONSTRAINT PK_TMAVERAGE_SID1 PRIMARY KEY (TMID, SCT_VTCW) ENABLE
+        CREATE TABLE $schema_name.$tmaverage_stats_name (
+            DATABASE_NAME   VARCHAR2(128),
+            START_TIME      TIMESTAMP PRIMARY KEY,
+            TIME_RAN        INTERVAL DAY TO SECOND,
+            FAILED          NUMBER(1),
+            CANCELLED       NUMBER(1),
+            INGESTED        NUMBER,
+            INSERTED        NUMBER,
+            UNIQUE_CONSTRAINT_NUM NUMBER,
+            OTFD_ERROR_NUM  NUMBER,
+            ERRORS          CLOB
         )
-        ORGANIZATION INDEX PCTFREE 0 LOGGING
         TABLESPACE "$tablespace_name";
-
 EOD
-    )
-    status_code=$?
-    if [ $status_code -ne 0 ] && [[ "$create_table" == *"ORA-00955"* ]]; then
-        echo "Table already exists, continuing..."
-    elif [ $status_code -ne 0 ]; then
-        echo "$create_table"
-        echo "An error occurred while creating table $tmaverage_table_name. Exiting..."
-        exit 1
-    fi
-
-    echo "Creating table $schema_name.$tmaverage_stats_name in tablespace $tablespace_name..."
-    create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
-    set heading off
-    set feedback off
-    whenever oserror exit 1
-    whenever sqlerror exit 1
-
-    CREATE TABLE $schema_name.$tmaverage_stats_name (
-        DATABASE_NAME   VARCHAR2(128),
-        START_TIME      TIMESTAMP PRIMARY KEY,
-        TIME_RAN        INTERVAL DAY TO SECOND,
-        FAILED          NUMBER(1),
-        CANCELLED       NUMBER(1),
-        INGESTED        NUMBER,
-        INSERTED        NUMBER,
-        UNIQUE_CONSTRAINT_NUM NUMBER,
-        OTFD_ERROR_NUM  NUMBER,
-        ERRORS          CLOB
-    )
-    TABLESPACE "$tablespace_name";
-EOD
-    )
-    status_code=$?
-    if [ $status_code -ne 0 ] && [[ "$create_table" == *"ORA-00955"* ]]; then
-        echo "Table already exists, continuing..."
-    elif [ $status_code -ne 0 ]; then
-        echo "$create_table"
-        echo "An error occurred while creating table $tmaverage_table_name. Exiting..."
-        exit 1
+        )
+        if [ $? -ne 0 ]; then
+            echo "$create_table"
+            echo "An error occurred while creating table $tmaverage_stats_name. Exiting..."
+            exit 1
+        fi
+    else
+        echo "Table $schema_name.$tmaverage_stats_name already exists. Continuing..."
     fi
 fi
 
