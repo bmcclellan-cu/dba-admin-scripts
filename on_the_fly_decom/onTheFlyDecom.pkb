@@ -121,7 +121,7 @@ Notes:
        In this case the SCT times used together with TSL and TMD times is not an issue.
 *************************************************************************************************/
 
-CREATE OR REPLACE PACKAGE BODY onTheFlyDecom
+CREATE OR REPLACE PACKAGE BODY EMA_MISC.onTheFlyDecom
 AS
 
 -- These options, and additional mission-specific options, are settable by calling the setOption

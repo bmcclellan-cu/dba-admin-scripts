@@ -47,9 +47,13 @@ AS
 -- for different missions, as may the options which selectNumericTlm supports.
 -- Each mission has its own instance of this code, although it may be identical for missions
 -- with the same options.  We do not support a generalized code base which supports all options.
-gblTlmFileName   VARCHAR2(128) := '';
 
--- TODO: Add global flag for RT/PBK data.
+gblVCs     NUMBER := 3;          /* NUMBER interpreted as a bit field, specifying realtime and/or playback
+                                     data retrieval:
+                                     1 Indicates only realtime data is desired.
+                                     2 Indicates only playback data is desired.
+                                     Any other value will get both realtime and playback data. */
+
 
 /*************************************************************************************************
 Function:  getVersion
@@ -80,7 +84,13 @@ FUNCTION setOption( optionName VARCHAR2,
 IS
     upperCaseOptionName VARCHAR2(128) := '';
 BEGIN
-    RETURN 0;
+    upperCaseOptionName := UPPER( optionName);
+    IF (upperCaseOptionName = 'VCS') THEN
+        gblVCs := TO_NUMBER( optionValue);
+    ELSE
+        RETURN 0;
+    END IF;
+    RETURN 1;
 END setOption;
 
 
@@ -99,7 +109,14 @@ FUNCTION clearOption( optionName VARCHAR2)
 IS
     upperCaseOptionName VARCHAR2(128) := '';
 BEGIN
-    RETURN 0;
+    IF (upperCaseOptionName = 'VCS') THEN
+        gblVCs := -1;
+    ELSIF (upperCaseOptionName = 'ALL') THEN
+        gblVCs := -1;
+    ELSE
+        RETURN 0;
+    END IF;
+    RETURN 1;
 END clearOption;
 
 
@@ -114,7 +131,7 @@ FUNCTION getOptionsHelp
          RETURN VARCHAR2
 IS
 BEGIN
-    return '';
+    return 'EMA options are: VCS: 1=realtime, 2=playback, 3=both';
 END getOptionsHelp;
 
 /*************************************************************************************************
@@ -140,13 +157,19 @@ IS
     tableNameExtension VARCHAR2(10) := '';
     invalidType EXCEPTION;
 BEGIN
+    IF gblVCs = 1 THEN
+        tableNameExtension := '_RT';
+    ELSIF gblVCs = 2 THEN
+        tableNameExtension := '_PBK';
+    END IF;
+
     -- Get base tablename by type.
     IF (type_in = 0) THEN
-        tableName := 'L0_Packets';
+        tableName := 'L0_Packets' || tableNameExtension;
     ELSIF (type_in = 1) THEN
-        tableName := 'TManalog';
+        tableName := 'TManalog' || tableNameExtension;
     ELSIF (type_in = 2) THEN
-        tableName := 'TMdiscrete';
+        tableName := 'TMdiscrete' || tableNameExtension;
     ELSIF (type_in = 3) THEN
         tableName := 'TelemetryStorageLocation';
     ELSIF (type_in = 4) THEN
@@ -157,8 +180,6 @@ BEGIN
 
     -- Add schema-SID prefix
     tableName := 'EMA_SCHEMA' || LPAD(TO_CHAR(systemId_in), 2) || '.' || tableName;
-
-    -- TODO: Add _RT/_PBK suffix.
 
     RETURN tableName;
 END getTableName;
