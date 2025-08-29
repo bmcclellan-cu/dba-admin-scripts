@@ -166,7 +166,7 @@ if [ $table_opt -ne 0 ]; then
     check_table_exists=$("$HOME/common/oracle/CheckIfTableExists.sh" "$schema_name" "$tmaverage_table_name")
     if [ $? -ne 0 ]; then
         echo "$check_table_exists"
-        echo "An error occurred while running CheckIfTableExists.sh Existing..."
+        echo "An error occurred while running CheckIfTableExists.sh Exiting..."
         exit 1
     fi
 
@@ -203,11 +203,11 @@ EOD
         echo "Table $schema_name.$tmaverage_table_name already exists. Continuing..."
     fi
 
-    # Check if TMAverage table already exists
+    # Check if TMAverage_stats table already exists
     check_table_exists=$("$HOME/common/oracle/CheckIfTableExists.sh" "$schema_name" "$tmaverage_stats_name")
     if [ $? -ne 0 ]; then
         echo "$check_table_exists"
-        echo "An error occurred while running CheckIfTableExists.sh Existing..."
+        echo "An error occurred while running CheckIfTableExists.sh Exiting..."
         exit 1
     fi
 
