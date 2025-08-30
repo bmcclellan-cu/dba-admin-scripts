@@ -164,9 +164,17 @@ Notes:
 *************************************************************************************************/
 PROCEDURE logError(msg VARCHAR2)
 IS
-    tmpOccurrences NUMBER;
+    messageRow VARCHAR2(500);
+    rowLength  NUMBER := 500;
+    rowStart     NUMBER := 0;
 BEGIN
-    INSERT INTO onTheFlyDecom_errors (sequence, message, occurrences) VALUES (gblSequence, msg, 1);
+    LOOP
+        EXIT WHEN rowStart >= LENGTH(msg);
+
+        messageRow := SUBSTR(msg, rowStart, rowLength);
+        rowStart := rowStart + rowLength;
+        INSERT INTO ONTHEFLYDECOM_ERRORS (sequence, message, occurrences) VALUES (gblSequence, messageRow, 1);
+    END LOOP;
     gblSequence := gblSequence + 1;
 EXCEPTION
     WHEN others THEN
