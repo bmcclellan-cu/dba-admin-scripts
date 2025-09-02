@@ -511,7 +511,7 @@ def insert_tmaverage_rows(database: str, tmaverage_values: list):
     else:
         raise Exception(
             f"Error: Mismatch between expected rows inserted and successful insertions. "
-            "{cursor.rowcount}/{expected_rows_inserted} successfully inserted."
+            f"{cursor.rowcount}/{expected_rows_inserted} successfully inserted."
         )
 
 
