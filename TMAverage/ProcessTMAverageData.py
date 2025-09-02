@@ -366,13 +366,13 @@ def fetch_otfd_values_by_time_range(
 
     if len(otfd_error) != 0:
         logger.error(
-            "ONTHEFYDECOM_ERRORS contains errors. See below output for more details. Skipping..."
+            "ONTHEFLYDECOM_ERRORS contains errors. See below output for more details. Skipping..."
         )
         for row in otfd_error:
             logger.error(row)
 
         error = OTFDException(
-            f"ONTHEFYDECOM_ERRORS Contains errors. See below for more details: {otfd_error}."
+            f"ONTHEFLYDECOM_ERRORS Contains errors. See below for more details: {otfd_error}."
         )
 
         error.error_rows=otfd_error
@@ -885,7 +885,7 @@ def main():
                 exclusion_clause = f" AND TLMID NOT IN ('{exclusion_list}')"
 
             tmids = cursor.execute(
-                f"SELECT UNIQUE TLMID from {TELEMETRYITEMDEFINITION_DBS[database]} WHERE dataType='U' OR dataType='I' OR dataType='F'{exclusion_clause}"
+                f"SELECT DISTINCT TLMID from {TELEMETRYITEMDEFINITION_DBS[database]} WHERE dataType='U' OR dataType='I' OR dataType='F'{exclusion_clause}"
             ).fetchall()
             tmids = [tmid[0] for tmid in tmids]
             tmids.sort()
