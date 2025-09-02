@@ -94,6 +94,7 @@ fi
 
 if [[ "$otfd_opt" -ne 0 && "$user_opt" -eq 0 ]]; then
     echo "Invalid, the -o option requires the -u option. Exiting..."
+    exit 1
 fi
 
 # Checking $ORACLE_SID
