@@ -13,7 +13,7 @@
 # 
 # Author: Robert Schmidt
 # Created on Jun 6, 2025
-# Last modified on Jul 21st, 2025 - RS
+# Last modified on August 25th, 2025 - RS
 ##########################################################################
 usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafile ] (optional, create TMAverage tablespace and table.) ] [ -v (optional, create venv in tmaverage script directory ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ username (optional) ] [ password (optional) ]"
 example1="Example: ./ConfigureTMAverageEnvironment.sh -t /ssd_internal/Robert/AIMPROD_TMAVERAGE/tmaverage_table.dbf"
@@ -60,7 +60,9 @@ password=""
 
 # Set static values. These are used so that exceptions can be easily managed (aim).
 tablespace_name="TMAVERAGE_SID1"
-table_name="TMAVERAGE_SID1"
+tmaverage_table_name="TMAVERAGE_SID1"
+tmaverage_stats_name="TMAVERAGE_STATS"
+
 tmanalog_table_name="TMANALOG_SID1"
 
 # Resolve the directory where this script is located
@@ -92,6 +94,7 @@ fi
 
 if [[ "$otfd_opt" -ne 0 && "$user_opt" -eq 0 ]]; then
     echo "Invalid, the -o option requires the -u option. Exiting..."
+    exit 1
 fi
 
 # Checking $ORACLE_SID
@@ -161,43 +164,84 @@ if [ $table_opt -ne 0 ]; then
     fi
 
     # Check if TMAverage table already exists
-    check_table_exists=$("$HOME/common/oracle/CheckIfTableExists.sh" "$schema_name" "$table_name")
+    check_table_exists=$("$HOME/common/oracle/CheckIfTableExists.sh" "$schema_name" "$tmaverage_table_name")
     if [ $? -ne 0 ]; then
         echo "$check_table_exists"
-        echo "An error occurred while running CheckIfTableExists.sh Existing..."
+        echo "An error occurred while running CheckIfTableExists.sh Exiting..."
         exit 1
     fi
 
-    # Create TMAverage table
-    echo "Creating table $schema_name.$table_name in tablespace $tablespace_name..."
-    create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+    if [[ "$check_table_exists" == *"No"* ]]; then
+        # Create TMAverage table
+        echo "Creating table $schema_name.$tmaverage_table_name in tablespace $tablespace_name..."
+        create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+            set heading off
+            set feedback off
+            whenever oserror exit 1
+            whenever sqlerror exit 1
+
+            CREATE TABLE "$schema_name"."$tmaverage_table_name"
+            (
+                TMID NUMBER(7,0) NOT NULL ENABLE,
+                SCT_VTCW NUMBER(16,0) NOT NULL ENABLE,
+                AVERAGE_VALUE FLOAT(126) NOT NULL ENABLE,
+                MINIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
+                MAXIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
+                VALUE_COUNT NUMBER(7,0) NOT NULL ENABLE,
+                CONSTRAINT PK_TMAVERAGE_SID1 PRIMARY KEY (TMID, SCT_VTCW) ENABLE
+            )
+            ORGANIZATION INDEX PCTFREE 0 LOGGING
+            TABLESPACE "$tablespace_name";
+
+EOD
+        )
+        if [ $? -ne 0 ]; then
+            echo "$create_table"
+            echo "An error occurred while creating table $tmaverage_table_name. Exiting..."
+            exit 1
+        fi
+    else
+        echo "Table $schema_name.$tmaverage_table_name already exists. Continuing..."
+    fi
+
+    # Check if TMAverage_stats table already exists
+    check_table_exists=$("$HOME/common/oracle/CheckIfTableExists.sh" "$schema_name" "$tmaverage_stats_name")
+    if [ $? -ne 0 ]; then
+        echo "$check_table_exists"
+        echo "An error occurred while running CheckIfTableExists.sh Exiting..."
+        exit 1
+    fi
+
+    if [[ "$check_table_exists" == *"No"* ]]; then
+        echo "Creating table $schema_name.$tmaverage_stats_name in tablespace $tablespace_name..."
+        create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
         set heading off
         set feedback off
         whenever oserror exit 1
         whenever sqlerror exit 1
 
-        CREATE TABLE "$schema_name"."$table_name"
-        (
-            TMID NUMBER(7,0) NOT NULL ENABLE,
-            SCT_VTCW NUMBER(16,0) NOT NULL ENABLE,
-            AVERAGE_VALUE FLOAT(126) NOT NULL ENABLE,
-            MINIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
-            MAXIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
-            VALUE_COUNT NUMBER(7,0) NOT NULL ENABLE,
-            CONSTRAINT PK_TMAVERAGE_SID1 PRIMARY KEY (TMID, SCT_VTCW) ENABLE
+        CREATE TABLE $schema_name.$tmaverage_stats_name (
+            DATABASE_NAME   VARCHAR2(128),
+            START_TIME      TIMESTAMP PRIMARY KEY,
+            TIME_RAN        INTERVAL DAY TO SECOND,
+            FAILED          NUMBER(1),
+            CANCELLED       NUMBER(1),
+            INGESTED        NUMBER,
+            INSERTED        NUMBER,
+            UNIQUE_CONSTRAINT_NUM NUMBER,
+            OTFD_ERROR_NUM  NUMBER,
+            ERRORS          CLOB
         )
-        ORGANIZATION INDEX PCTFREE 0 LOGGING
         TABLESPACE "$tablespace_name";
-
 EOD
-    )
-    status_code=$?
-    if [ $status_code -ne 0 ] && [[ "$create_table" == *"ORA-00955"* ]]; then
-        echo "Table already exists, continuing..."
-    elif [ $status_code -ne 0 ]; then
-        echo "$create_table"
-        echo "An error occurred while creating table $table_name. Exiting..."
-        exit 1
+        )
+        if [ $? -ne 0 ]; then
+            echo "$create_table"
+            echo "An error occurred while creating table $tmaverage_stats_name. Exiting..."
+            exit 1
+        fi
+    else
+        echo "Table $schema_name.$tmaverage_stats_name already exists. Continuing..."
     fi
 fi
 
@@ -239,15 +283,18 @@ EOD
         exit 1
     fi
 
+    table1="${schema_name}.${tmaverage_table_name}"
+    table2="${schema_name}.${tmaverage_stats_name}"
+
     echo "Granting required permissions to user $username:"
-    read_write_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$schema_name.$table_name" table ALL "$username" Y)
+    read_write_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$table1,$table2" table ALL "$username" Y)
     if [ $? -ne 0 ]; then
         echo "$read_write_permissions"
-        echo "An error occurred while granting read-write permissions to table $schema_name.$table_name on $username. Exiting..."
+        echo "An error occurred while granting read-write permissions to table $schema_name.$tmaverage_table_name on $username. Exiting..."
         exit 1
     fi
 
-    table1="${project_name}_L1A.$tmanalog_table_name"
+    table1="${schema_name}.$tmanalog_table_name"
     table2="${ct_schema_name}.TelemetryItemDefinition"
     table3="${ct_schema_name}.TelemetryAnalogConversions"
 

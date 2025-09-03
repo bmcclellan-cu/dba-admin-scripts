@@ -14,6 +14,17 @@ from functools import partial
 import oracledb
 import numpy as np
 
+# Project imports
+from TMAverageHelpers import (
+    OTFDException, 
+    TMANALOG_DBS, 
+    DB_SCHEMAS, 
+    TMAVERAGE_TABLE_NAME, 
+    TMAVERAGE_STATS_NAME, 
+    TELEMETRYITEMDEFINITION_DBS, 
+    TELEMETRYANALOGCONVERSIONS_DBS
+)
+
 # Global variable for the database connection (variable exists independently for each process and is persistent as long as the process exists.)
 db_connection: oracledb.Connection = None
 
@@ -21,42 +32,6 @@ db_connection: oracledb.Connection = None
 # the thread will be in a failed state, and not even attempt to do any processing. The same occurs if the script is not able to access
 # the necessary tables (indicating permission or database access issues).
 failed = True
-
-# Dictionary of databases this script is designed for and the appropriate table to access. If script is run on an unsupported database,
-# it will fail.
-TMANALOG_DBS = {
-    "goldprod": "TMANALOG_SID1",
-    "evep12c": "TMANALOG",
-    "aimprod": "AIM_L1A.TMANALOG_TABLE",
-    "tsisprod": "TMANALOG_SID1",
-    "ixpeprod": "TMANALOG_SID1",
-}
-
-# The table and schema to access for the TMAverage table. Should theoretically be derived from the mission name.
-TMAVERAGE_DBS = {
-    "aimprod": "AIM_L1A.TMAVERAGE_SID1",
-    "goldprod": "GOLD_L1A.TMAVERAGE_SID1",
-    "evep12c": "EVE_L1A.TMAVERAGE_SID1",
-    "tsisprod": "TSIS_L1A.TMAVERAGE_SID1",
-    "ixpeprod": "IXPE_L1A.TMAVERAGE_SID1",
-}
-
-TELEMETRYITEMDEFINITION_DBS = {
-    "aimprod": "AIM_CT_SC.TelemetryItemDefinition",
-    "goldprod": "TelemetryItemDefinition",
-    "evep12c": "TelemetryItemDefinition",
-    "tsisprod": "TelemetryItemDefinition",
-    "ixpeprod": "TelemetryItemDefinition",
-}
-
-TELEMETRYANALOGCONVERSIONS_DBS = {
-    "aimprod": "AIM_CT_SC.TelemetryAnalogConversions",
-    "goldprod": "TelemetryAnalogConversions",
-    "evep12c": "TelemetryAnalogConversions",
-    "tsisprod": "TelemetryAnalogConversions",
-    "ixpeprod": "TelemetryAnalogConversions",
-}
-
 
 def get_value_from_file(file_path):
     """
@@ -94,6 +69,83 @@ def get_value_from_file(file_path):
     except Exception as e:
         print(f"An error occurred while reading the password: {e}")
         return None
+
+def update_tmaverage_stats(
+        cursor: oracledb.Cursor,
+        database: str,
+        start_time: datetime.datetime,
+        time_duration: datetime.timedelta = None,
+        failed: bool = None,
+        cancelled: bool = None,
+        ingested: int = None,
+        inserted: int = None,
+        unique_constraint_num: int = None,
+        otfd_error_num: int = None,
+        errors: list[str] = None,
+):
+    """
+    Updates the TMAVERAGE_STATS table. This is ran once during script initialization, and once the script completes.
+    The second time it is ran, it updates the record created during the first execution.
+    """
+    logger = multiprocessing.get_logger()
+        
+    # Convert errors list to CLOB-compatible string
+    errors_clob = '\n'.join(errors) if errors else None
+    
+    # Convert timedelta to Oracle INTERVAL DAY TO SECOND format
+    interval_value = None
+    if time_duration is not None:
+        total_seconds = int(time_duration.total_seconds())
+        days = total_seconds // 86400
+        remaining_seconds = total_seconds % 86400
+        hours = remaining_seconds // 3600
+        remaining_seconds %= 3600
+        minutes = remaining_seconds // 60
+        seconds = remaining_seconds % 60
+        interval_value = f"{days} {hours:02d}:{minutes:02d}:{seconds:02d}"
+    
+    failed = 1 if failed else 0
+    cancelled = 1 if cancelled else 0
+    
+    # Use MERGE statement to INSERT if not exists, UPDATE if exists
+    sql = f"""MERGE INTO {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} target
+             USING (SELECT :1 as DATABASE_NAME, :2 as START_TIME, :3 as TIME_RAN, :4 as FAILED, :5 as CANCELLED,
+                           :6 as INGESTED, :7 as INSERTED, :8 as UNIQUE_CONSTRAINT_NUM, :9 as OTFD_ERROR_NUM, :10 as ERRORS FROM dual) source
+             ON (target.DATABASE_NAME = source.DATABASE_NAME AND target.START_TIME = source.START_TIME)
+             WHEN MATCHED THEN
+                 UPDATE SET 
+                     TIME_RAN  = source.TIME_RAN,
+                     FAILED    = source.FAILED,
+                     CANCELLED = source.CANCELLED,
+                     INGESTED  = source.INGESTED,
+                     INSERTED  = source.INSERTED,
+                     UNIQUE_CONSTRAINT_NUM = source.UNIQUE_CONSTRAINT_NUM,
+                     OTFD_ERROR_NUM = source.OTFD_ERROR_NUM,
+                     ERRORS    = source.ERRORS
+             WHEN NOT MATCHED THEN
+                 INSERT (DATABASE_NAME, START_TIME, TIME_RAN, FAILED, CANCELLED, INGESTED, INSERTED, UNIQUE_CONSTRAINT_NUM, OTFD_ERROR_NUM, ERRORS)
+                 VALUES (source.DATABASE_NAME, source.START_TIME, source.TIME_RAN, source.FAILED, source.CANCELLED,
+                        source.INGESTED, source.INSERTED, source.UNIQUE_CONSTRAINT_NUM, source.OTFD_ERROR_NUM, source.ERRORS)"""
+    
+    try:
+        cursor.execute(sql, [
+            database,
+            start_time,
+            interval_value,
+            failed,
+            cancelled,
+            ingested,
+            inserted,
+            unique_constraint_num,
+            otfd_error_num,
+            errors_clob
+        ])
+        cursor.connection.commit()
+        logger.info(f"Successfully updated TMAVERAGE_STATS for database {database}")
+    except oracledb.DatabaseError as error:
+        logger.exception(f"Error updating TMAVERAGE_STATS: {error}")
+        cursor.connection.rollback()
+        raise error
 
 
 def setup_logger(log_file: str):
@@ -283,7 +335,7 @@ def fetch_otfd_values_by_time_range(
     try:
         # Call PSQL function to retrieve data (SID (always 1), tmid, START_ERT (unused), END_ERT (unused), START_GPS, END_GPS))
         cursor.callproc(
-            "IXPE_MISC.ONTHEFLYDECOM.selectNumericTlm",
+            f"ONTHEFLYDECOM.selectNumericTlm",
             [1, tmid, -1, -1, start_time_gps, end_time_gps],
         )
         # Calling the function should lock the thread until it returns, at which point the results will be in ONTHEFLYDECOM_RESULTS
@@ -314,13 +366,18 @@ def fetch_otfd_values_by_time_range(
 
     if len(otfd_error) != 0:
         logger.error(
-            "ONTHEFYDECOM_ERRORS contains errors. See below output for more details. Skipping..."
+            "ONTHEFLYDECOM_ERRORS contains errors. See below output for more details. Skipping..."
         )
         for row in otfd_error:
             logger.error(row)
-        raise Exception(
-            f"ONTHEFYDECOM_ERRORS Contains errors. See below for more details: {otfd_error}."
+
+        error = OTFDException(
+            f"ONTHEFLYDECOM_ERRORS Contains errors. See below for more details: {otfd_error}."
         )
+
+        error.error_rows=otfd_error
+
+        raise error
 
     # Gets length of the python array returned by oracle to pre-allocate the numpy array
     # this is assumed to be faster because numpy fully re-allocates the array upon append,
@@ -406,7 +463,7 @@ def insert_tmaverage_rows(database: str, tmaverage_values: list):
 
     cursor = db_connection.cursor()
 
-    sql = f"""INSERT INTO {TMAVERAGE_DBS[database]} 
+    sql = f"""INSERT INTO {DB_SCHEMAS[database]}.{TMAVERAGE_TABLE_NAME} 
         (tmid, SCT_VTCW, AVERAGE_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, VALUE_COUNT) 
         VALUES (:1, :2, :3, :4, :5, :6)"""
 
@@ -454,7 +511,7 @@ def insert_tmaverage_rows(database: str, tmaverage_values: list):
     else:
         raise Exception(
             f"Error: Mismatch between expected rows inserted and successful insertions. "
-            "{cursor.rowcount}/{expected_rows_inserted} successfully inserted."
+            f"{cursor.rowcount}/{expected_rows_inserted} successfully inserted."
         )
 
 
@@ -645,7 +702,6 @@ def process_values_by_tmid(
                 current_bucket_count,
             )
         )
-
     return (results_len, insert_tmaverage_rows(database, insertion_data))
 
 
@@ -684,7 +740,7 @@ def main():
         "start_date", type=str, help="(Inclusive), beginning of range to process."
     )
     parser.add_argument(
-        "end_date", type=str, help="(Exclusive), end of range to process."
+        "end_date", type=str, help="(Inclusive), end of range to process."
     )
     parser.add_argument(
         "parallel_degree",
@@ -781,11 +837,11 @@ def main():
         # Error message is already printed by get_password_from_file
         exit(1)
 
-    # Validate database input, ensure that script has an entry in TMAVERAGE_DBS
-    if database not in TMAVERAGE_DBS.keys():
+    # Validate database input, ensure that script has an entry in DB_SCHEMAS
+    if database not in DB_SCHEMAS.keys():
         logger.critical(
             f"Selected database is not supported by script. Supported databases "
-            f"are: {str(tuple(TMAVERAGE_DBS.keys()))}"
+            f"are: {str(tuple(DB_SCHEMAS.keys()))}"
         )
         exit(1)
 
@@ -809,6 +865,14 @@ def main():
     logger.info(f"Script has started at {start_time}")
     cursor = connection.cursor()
 
+    # Initialize the tmaverage_stats entry.
+    update_tmaverage_stats(
+        cursor,
+        database=database,
+        start_time=start_time
+    )
+
+
     try:
         # If all tmids is specified, then query for them.
         if tmids == "ALL":
@@ -821,7 +885,7 @@ def main():
                 exclusion_clause = f" AND TLMID NOT IN ('{exclusion_list}')"
 
             tmids = cursor.execute(
-                f"SELECT UNIQUE TLMID from {TELEMETRYITEMDEFINITION_DBS[database]} WHERE dataType='U' OR dataType='I' OR dataType='F'{exclusion_clause}"
+                f"SELECT DISTINCT TLMID from {TELEMETRYITEMDEFINITION_DBS[database]} WHERE dataType='U' OR dataType='I' OR dataType='F'{exclusion_clause}"
             ).fetchall()
             tmids = [tmid[0] for tmid in tmids]
             tmids.sort()
@@ -835,8 +899,7 @@ def main():
         exit(1)
 
     cursor.close()
-    connection.close()
-
+    
     # Allocate worker pool of specified parallel degree and setup the logger to log to the correct file.
     worker_pool = multiprocessing.Pool(
         parallel_degree,
@@ -847,6 +910,12 @@ def main():
     error_status = False
     total_ingested_rows = 0
     total_inserted_rows = 0
+
+    critical_failure = False
+    cancelled = False
+
+    # Array of all errors that were encountered
+    all_errors = []
 
     # Break the task up by day (if multiple days are specified, process each day separately):
     for single_date in (start_date + datetime.timedelta(n) for n in range(num_of_days)):
@@ -863,9 +932,14 @@ def main():
 
         day_ingested_rows = 0
         day_inserted_rows = 0
+
         day_error_status = False
         critical_failure = False
-        unique_constraint_error = False
+
+        unique_constraint_num = 0
+        otfd_error_num = 0
+
+        cancelled = False
 
         num_results = len(tmids)
 
@@ -891,23 +965,33 @@ def main():
                 logger.info(f"Rows ingested before cancel: {total_inserted_rows}")
 
                 worker_pool.terminate()
-                exit(1)
+                cancelled = True
+                all_errors.append("Cancelled. Exiting...")
+                break
             except oracledb.IntegrityError as error:
                 if str(error).find("ORA-00001") != -1:
                     # This is not a critical failure, and script will continue processing. Log error to user and continue
-                    unique_constraint_error = True
+                    unique_constraint_num += 1
                 else:
                     error_status = True
                     logger.exception(
                         f"An exception occurred while processing data for TMID {tmid_input} for date {single_date}. Please see below output.",
                         stack_info=True,
                     )
+                    all_errors.append(traceback.format_exc())
+            except OTFDException as error:
+                all_errors.append(f"An OTFD error occurred. ONTHEFLYDECOM_ERRORS Rows: {error.error_rows}")
+                otfd_error_num += len(error.error_rows)
             except:
                 error_status = True
                 logger.exception(
                     f"An exception occurred while processing data for TMID {tmid_input} for date {single_date}. Please see below output.",
                     stack_info=True,
                 )
+                all_errors.append(traceback.format_exc())
+
+        if cancelled:
+            break
 
         if day_error_status:
             error_status = True
@@ -915,17 +999,25 @@ def main():
                 f"One or more error(s) occurred during processing TMID {tmid_input} for date {single_date}. "
                 "Please check worker log files at /tmp/TMAverageLogs/ for more details. Continuing..."
             )
-        if unique_constraint_error:
+        if unique_constraint_num > 0:
             logger.error(
                 f"One or more unique constraint errors (ORA-00001) occurred while processing TMID {tmid_input} for date {single_date}. "
                 "Please check worker log files at /tmp/TMAverageLogs/ for more details. Continuing..."
             )
+        
+        if otfd_error_num > 0:
+            logger.error(
+                f"One or more OnTheFlyDecom errors occurred during processing TMID {tmid_input} for date {single_date}. Please check logs or "
+                "the TMAVERAGE_STATS for more details. Continuing..."
+                )
+
         if critical_failure:
             logger.critical(
                 f"A critical error has occurred while processing data for {single_date}. Cancelling all processing..."
             )
+            all_errors.append("ERROR: Critical error detected. Check error logs for more details.")
             break
-
+                    
         logger.info(f"Processing for date {single_date} complete.")
         logger.info(f"Ingested {day_ingested_rows} rows.")
         logger.info(f"Inserted {day_inserted_rows} rows.")
@@ -937,6 +1029,20 @@ def main():
     worker_pool.join()
 
     end_time = datetime.datetime.now()
+
+    update_tmaverage_stats(
+        cursor=connection.cursor(),
+        database=database,
+        start_time=start_time,
+        time_duration=end_time - start_time,
+        failed=critical_failure,
+        cancelled=cancelled,
+        ingested=total_ingested_rows,
+        inserted=total_inserted_rows,
+        unique_constraint_num=unique_constraint_num,
+        otfd_error_num=otfd_error_num,
+        errors=all_errors,
+    )
 
     logger.info(
         f"Script completed at time {end_time}. Duration: {end_time - start_time}"

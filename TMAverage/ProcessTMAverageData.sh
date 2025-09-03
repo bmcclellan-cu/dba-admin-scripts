@@ -16,7 +16,7 @@
 # Author: Robert Schmidt
 # 
 # Created on: July 21st, 2025
-# Modified on: July 29th, 2025 - RS
+# Modified on: August 25th, 2025 - RS
 ###############################################################
 usage="Usage: ./ProcessTMAverageData.sh [ -o (optional, use OTFD) ] [ -e [ filename ] (absolute path filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL | filename] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
 example1="Example: ./ProcessTMAverageData.sh goldprod ALL 14 7 8"
@@ -64,6 +64,7 @@ done
 
 # Constant variables
 tmaverage_table="TMAVERAGE_SID1"
+tmaverage_stats_table="TMAVERAGE_STATS"
 tablespace_name="TMAVERAGE_SID1"
 
 # Set environment variables
@@ -101,6 +102,8 @@ if [[ ! $parallel_degree =~ ^[0-9]+$ ]]; then
     echo "ERROR: Parallel degree must be a positive integer. Exiting..."
     exit 1
 fi
+
+echo "Validating Input..."
 
 export ORACLE_SID="$database"
 
@@ -144,7 +147,7 @@ fi
 # Validate that username and password are valid. (NOTE: Currently pointing to personal repo, will update when PR is merged.)
 username=$(<"$SCRIPT_DIR/.username")
 password=$(<"$SCRIPT_DIR/.passwd")
-test_login=$("$HOME/Robert/anothercommon/oracle/TestOracleUserLogin.sh" "$username" "$password")
+test_login=$("$HOME/common/oracle/TestOracleUserLogin.sh" "$username" "$password")
 if [ $? -ne 0 ]; then
     echo "$test_login"
     echo "An error occurred while running TestOracleUserLogin.sh. Exiting..."
@@ -216,7 +219,7 @@ else
     select_tables="'TELEMETRYITEMDEFINITION', 'TELEMETRYANALOGCONVERSIONS', 'TMANALOG_SID1'"
     select_tab_count=$((select_tab_count+3))
 fi
-insert_tables="'$tmaverage_table'"
+insert_tables="'$tmaverage_table', '$tmaverage_stats_table'"
 
 # Check for read access to ONTHEFLYDECOM tables
 if [[ -n "$otfd_opt" ]]; then
@@ -281,7 +284,7 @@ fi
 
 # Trim ALL whitespace, then check that all privileges are present
 insert_check=$(echo "$insert_check" | tr -d '[:space:]')
-if [[ "$insert_check" != "1" ]]; then
+if [[ "$insert_check" != "2" ]]; then
     echo "ERROR: User $username does not have INSERT permission for tables $insert_tables, or the tables do not exist."
     echo "Please run ConfigureTMAverageEnvironment.sh to configure user and confirm existence of the required tables. Exiting..."
     exit 1
