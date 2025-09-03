@@ -684,7 +684,7 @@ def main():
         "start_date", type=str, help="(Inclusive), beginning of range to process."
     )
     parser.add_argument(
-        "end_date", type=str, help="(Exclusive), end of range to process."
+        "end_date", type=str, help="(Inclusive), end of range to process."
     )
     parser.add_argument(
         "parallel_degree",
