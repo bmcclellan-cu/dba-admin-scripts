@@ -18,15 +18,16 @@
 # Created on: July 21st, 2025
 # Modified on: August 25th, 2025 - RS
 ###############################################################
-usage="Usage: ./ProcessTMAverageData.sh [ -o (optional, use OTFD) ] [ -e [ filename ] (absolute path filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL | filename] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
+usage="Usage: ./ProcessTMAverageData.sh [ -r (optional, only email on error) ] [ -o (optional, use OTFD) ] [ -e [ filename ] (absolute path filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL | filename] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
 example1="Example: ./ProcessTMAverageData.sh goldprod ALL 14 7 8"
 example2="         ./ProcessTMAverageData.sh -d goldprod ALL 12-JAN-23 14-JAN-23"
 
 otfd_opt=""
 date_opt=0
+error_only_email_opt=0
 exclude_opt=""
 # Process input options
-while getopts ":hode:" option; do
+while getopts ":horde:" option; do
     case $option in
     h)
         echo "$usage"
@@ -36,6 +37,9 @@ while getopts ":hode:" option; do
         ;;
     o)
         otfd_opt="-o"
+        ;;
+    r)
+        error_only_email_opt=1
         ;;
     d)
         date_opt=1
@@ -62,6 +66,8 @@ while getopts ":hode:" option; do
     esac
 done
 
+shift $(($OPTIND -1))
+
 # Constant variables
 tmaverage_table="TMAVERAGE_SID1"
 tmaverage_stats_table="TMAVERAGE_STATS"
@@ -79,8 +85,6 @@ else
     export PATH=$ORACLE_HOME/bin:$PATH
     export LD_LIBRARY_PATH=$ORACLE_HOME/lib
 fi
-
-shift $(($OPTIND -1))
 
 # Resolve the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -127,8 +131,12 @@ exec > >(tee -a "$LOGFILE") 2>&1
 # Setup trap to send an email whenever the script exits.
 exit_handler(){
     if [[ $? -eq 0 ]]; then
-        echo "ProcessTMAverageData.sh ran successfully... Sending email to $DB_EMAIL_LIST."
-        mailx -s "$HOSTNAME - $database - ProcessTMAverageData.sh Ran Successfully" "$DB_EMAIL_LIST" < "$LOGFILE"
+        if [ $error_only_email_opt -eq 0 ]; then
+            echo "ProcessTMAverageData.sh ran successfully... Sending email to $DB_EMAIL_LIST."
+            mailx -s "$HOSTNAME - $database - ProcessTMAverageData.sh Ran Successfully" "$DB_EMAIL_LIST" < "$LOGFILE"
+        else
+            echo "ProcessTMAverageData.sh ran successfully... Skipping sending email."
+        fi
         exit 0
     else
         echo "ProcessTMAverageData.sh ran with errors... Sending email to $DB_EMAIL_LIST."
