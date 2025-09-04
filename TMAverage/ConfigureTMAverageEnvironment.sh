@@ -15,7 +15,7 @@
 # Created on Jun 6, 2025
 # Last modified on August 25th, 2025 - RS
 ##########################################################################
-usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafile ] (optional, create TMAverage tablespace and table.) ] [ -v (optional, create venv in tmaverage script directory ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ username (optional) ] [ password (optional) ]"
+usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafile ] (optional, create TMAverage_SID1 tablespace) ] [ -b (optional, create TMAverage tables) ] [ -v (optional, create venv in tmaverage script directory ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ username (optional) ] [ password (optional) ]"
 example1="Example: ./ConfigureTMAverageEnvironment.sh -t /ssd_internal/Robert/AIMPROD_TMAVERAGE/tmaverage_table.dbf"
 example2="         ./ConfigureTMAverageEnvironment.sh -u -o -v PROCESSTMIDTEST testPWD"
 
@@ -25,7 +25,7 @@ otfd_opt=0
 venv_opt=0
 table_opt=0
 datafile_path=""
-while getopts ":huovt:" option; do
+while getopts ":hubovt:" option; do
     case $option in
     h)
         echo "$usage"
@@ -43,8 +43,14 @@ while getopts ":huovt:" option; do
         venv_opt=1
         ;;
     t)
-        table_opt=1
         datafile_path=$OPTARG
+        if [ -f "$datafile_path" ]; then
+            echo "Error: Datafile path may not contain a pre-existing path. Exiting..."
+            exit 1
+        fi
+        ;;
+    b)
+        table_opt=1
         ;;
     \?)
         echo "Error: Invalid option"
@@ -97,6 +103,12 @@ if [[ "$otfd_opt" -ne 0 && "$user_opt" -eq 0 ]]; then
     exit 1
 fi
 
+# If user did not specify anything for script to do, display a warning.
+if [ $user_opt -eq 0 ] && [ $otfd_opt -eq 0 ] && [ $venv_opt -eq 0 ] && [ $table_opt -eq 0 ] && [ -z "$datafile_path" ]; then
+    echo "Error: Must specify at least 1 action for script to take. Please enter at least 1 flag (-u, -o, -v, -t, -b). Exiting..."
+    exit 1
+fi
+
 # Checking $ORACLE_SID
 sid_check=$("$HOME"/common/oracle/VerifyAllParam.sh -I)
 if [ -n "$sid_check" ]; then
@@ -104,7 +116,7 @@ if [ -n "$sid_check" ]; then
         echo "Error: \$ORACLE_SID not set..."
         exit 1
     fi
-    echo "Error: provided \$ORACLE_SID is not open. Exiting..."
+    echo "Error: Provided \$ORACLE_SID is not open. Exiting..."
     exit 1
 fi
 
@@ -137,6 +149,23 @@ fi
 
 schema_name="${project_name^^}_L1A"
 
+
+
+# Create tablespace if path is specified
+if [ -n "$datafile_path" ]; then
+    # Create tablespace for TMAverage
+    echo "Creating tablespace $tablespace_name..."
+    create_tablespace=$("$HOME/common/oracle/CreateNewTablespace.sh" "$tablespace_name" "$datafile_path")
+    status_code=$?
+    if [ $status_code -ne 0 ] && [[ "$create_tablespace" == *"already exists in the current database"* ]]; then
+        echo "Tablespace $tablespace_name already exists. Continuing..."
+    elif [ $status_code -ne 0 ]; then
+        echo "$create_tablespace"
+        echo "An error occurred while running CreateNewTablespace.sh. Exiting..."
+        exit 1
+    fi
+fi
+
 # Create the TMAverage table if desired.
 if [ $table_opt -ne 0 ]; then
     # Check that L1A schema exists.
@@ -148,18 +177,6 @@ if [ $table_opt -ne 0 ]; then
     fi
     if [[ "$l1a_schema_check" != "Yes" ]]; then
         echo "Schema ${schema_name} does not exist. Exiting..."
-        exit 1
-    fi
-
-    # Create tablespace for TMAverage
-    echo "Creating tablespace $tablespace_name..."
-    create_tablespace=$("$HOME/common/oracle/CreateNewTablespace.sh" "$tablespace_name" "$datafile_path")
-    status_code=$?
-    if [ $status_code -ne 0 ] && [[ "$create_tablespace" == *"already exists in the current database"* ]]; then
-        echo "Tablespace $tablespace_name already exists. Continuing..."
-    elif [ $status_code -ne 0 ]; then
-        echo "$create_tablespace"
-        echo "An error occurred while running CreateNewTablespace.sh. Exiting..."
         exit 1
     fi
 
