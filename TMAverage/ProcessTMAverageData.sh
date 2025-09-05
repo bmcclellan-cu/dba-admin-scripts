@@ -15,8 +15,8 @@
 # 
 # Author: Robert Schmidt
 # 
-# Created: July 21st, 2025
-# Last Modified: September 4th, 2025 - RS
+# Created on: July 21st, 2025
+# Modified on: August 25th, 2025 - RS
 ###############################################################
 usage="Usage: ./ProcessTMAverageData.sh [ -r (optional, only email on error) ] [ -o (optional, use OTFD) ] [ -e [ filename ] (absolute path filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL | filename] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
 example1="Example: ./ProcessTMAverageData.sh goldprod ALL 14 7 8"
