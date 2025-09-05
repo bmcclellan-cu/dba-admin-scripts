@@ -174,8 +174,8 @@ BEGIN
         messageRow := SUBSTR(msg, rowStart, rowLength);
         rowStart := rowStart + rowLength;
         INSERT INTO ONTHEFLYDECOM_ERRORS (sequence, message, occurrences) VALUES (gblSequence, messageRow, 1);
+        gblSequence := gblSequence + 1;
     END LOOP;
-    gblSequence := gblSequence + 1;
 EXCEPTION
     WHEN others THEN
         DBMS_OUTPUT.PUT_LINE('Error in logError: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
