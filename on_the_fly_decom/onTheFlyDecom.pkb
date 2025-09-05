@@ -724,7 +724,7 @@ Purpose:    Does on-the-fly decom for one telemetry item over a time-range, with
 	            desired telemetry item.
             2.  Decommutates the hex data into a numeric type, using the offset, length and data type
 	            from the decom record.
-	        3.  Formats a row using SCT, ERT, AST and Value, and writes it to the global temporary table.
+	        3.  Formats a row using SCT, ERT, ASCT and Value, and writes it to the global temporary table.
 Inputs:
    
     decomMap     - PL/SQL table based record containing one row from the TMDecom table.
@@ -732,7 +732,10 @@ Inputs:
     stopERT_in   - Stopping earth received time in GPS microseconds.  -1 if not used.
     startSCT_in  - Starting spacecraft in GPS microseconds.    -1 if not used.
     stopSCT_in   - Stopping spacecraft in GPS microseconds.    -1 if not used.
+    startASCT_in - Starting adjusted spacecraft time in GPS microseconds.  -1 if not used.
+    stopASCT_in  - Stopping adjusted spacecraft time in GPS microseconds.  -1 if not used.
     doInclusiveQuery - true = include stop time, false = don't include stop time
+    definitionColumn - Column that is being scanned along with decom maps. (0: SCT, 1: ERT, 2: ASCT)
 *************************************************************************************************/
 PROCEDURE queryL0
     (decomMap IN tmdecom_row_t,
@@ -985,10 +988,13 @@ Inputs:    These are mostly the same inputs as selectNumericTlm.
     stopERT_in        - NUMBER Stopping earth received time in GPS microseconds.  
     startSCT_in       - NUMBER Starting spacecraft time in GPS microseconds.   
     stopSCT_in        - NUMBER Stopping spacecraft time in GPS microseconds.   
+    startASCT_in - Starting adjusted spacecraft time in GPS microseconds.  -1 if not used.
+    stopASCT_in  - Stopping adjusted spacecraft time in GPS microseconds.  -1 if not used.
     TSLRowStartTime   - NUMBER TelemetryStorageLocation start time
     TSLRowStopTime    - NUMBER TelemetryStorageLocation stop time
     dataType          - VARCHAR
     doInclusiveQuery  - BOOLEAN
+    definitionColumn - Column that is being scanned along with decom maps. (0: SCT, 1: ERT, 2: ASCT)
     
     When called from within the TSL loop, TSLRowStart/StopTimes are passed in, and dealt with
     by the logic.  When there is no TSL loop (no TSL row), set TSLRowStart/StopTimes to -1's.
@@ -1134,6 +1140,8 @@ Inputs:
     stopERT_in    - NUMBER GPS timestamp for end of query. Specific column is mission-defined. Typically ERT.
     startSCT_in   - NUMBER GPS timestamp for start of query. Specific column is mission-defined. Typically SCT.  
     stopSCT_in    - NUMBER GPS timestamp for end of query. Specific column is mission-defined. Typically SCT.  
+    startASCT_in - Starting adjusted spacecraft time in GPS microseconds.  -1 if not used.
+    stopASCT_in  - Stopping adjusted spacecraft time in GPS microseconds.  -1 if not used.
 
 Outputs: 
     Returns a string of the format: 
