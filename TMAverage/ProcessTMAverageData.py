@@ -88,24 +88,10 @@ def update_tmaverage_stats(
     The second time it is ran, it updates the record created during the first execution.
     """
     logger = multiprocessing.get_logger()
-
-    print(database, start_time, time_duration, failed, cancelled, ingested, inserted, unique_constraint_num, otfd_error_num, errors) # DEBUG
         
     # Convert errors list to CLOB-compatible string
     errors_clob = '\n'.join(errors) if errors else None
-    
-    # Convert timedelta to Oracle INTERVAL DAY TO SECOND format
-    interval_value = None
-    if time_duration is not None:
-        total_seconds = int(time_duration.total_seconds())
-        days = total_seconds // 86400
-        remaining_seconds = total_seconds % 86400
-        hours = remaining_seconds // 3600
-        remaining_seconds %= 3600
-        minutes = remaining_seconds // 60
-        seconds = remaining_seconds % 60
-        interval_value = f"{days} {hours:02d}:{minutes:02d}:{seconds:02d}"
-    
+        
     failed = 1 if failed else 0
     cancelled = 1 if cancelled else 0
 
@@ -116,13 +102,13 @@ def update_tmaverage_stats(
     (:database, :start_time, :time_ran, :failed, :cancelled, :ingested, :inserted, :unique_constraint_num, :otfd_error_num, :errors)"""
 
     update_sql = f"""UPDATE {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} SET 
-        TIME_RAN    = :timeran, 
+        TIME_RAN    = :time_ran, 
         FAILED      = :failed,
         CANCELLED   = :cancelled,
-        INGESTED    = :ingested
-        INSERTED    = :inserted
-        UNIQUE_CONSTRAINT_NUM = :unique_constraint_num
-        OTFD_ERROR_NUM = :otfd_error_num
+        INGESTED    = :ingested,
+        INSERTED    = :inserted,
+        UNIQUE_CONSTRAINT_NUM = :unique_constraint_num,
+        OTFD_ERROR_NUM = :otfd_error_num,
         ERRORS      = :errors
         WHERE DATABASE_NAME=:database AND START_TIME=:start_time
     """
@@ -136,59 +122,36 @@ def update_tmaverage_stats(
         if entry_count == 0: # No TMAVERAGE_STATS entry, so insert one
             cursor.execute(insert_sql,
                 database=database,
-                start_time=start_time  # TODO: This needs to be updated
+                start_time=start_time,
+                time_ran=time_duration,
+                failed=failed,
+                cancelled=cancelled,
+                ingested=ingested,
+                inserted=inserted,
+                unique_constraint_num=unique_constraint_num,
+                otfd_error_num=otfd_error_num,
+                errors=errors_clob
             )
             cursor.connection.commit()
         else: # TMAVERAGE_STATS entry exists, so update.
-            
-
-
+            cursor.execute(update_sql,
+                database=database,
+                start_time=start_time,
+                time_ran=time_duration,
+                failed=failed,
+                cancelled=cancelled,
+                ingested=ingested,
+                inserted=inserted,
+                unique_constraint_num=unique_constraint_num,
+                otfd_error_num=otfd_error_num,
+                errors=errors_clob
+            )
+            cursor.connection.commit()
 
     except oracledb.DatabaseError as error:
         logger.exception(f"Error updating TMAVERAGE_STATS: {error}")
         cursor.connection.rollback()
         raise error
-
-    # Use MERGE statement to INSERT if not exists, UPDATE if exists
-    sql = f"""MERGE INTO {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} target
-             USING (SELECT :1 as DATABASE_NAME, :2 as START_TIME, :3 as TIME_RAN, :4 as FAILED, :5 as CANCELLED,
-                           :6 as INGESTED, :7 as INSERTED, :8 as UNIQUE_CONSTRAINT_NUM, :9 as OTFD_ERROR_NUM, :10 as ERRORS FROM dual) source
-             ON (target.DATABASE_NAME = source.DATABASE_NAME AND target.START_TIME = source.START_TIME)
-             WHEN MATCHED THEN
-                 UPDATE SET 
-                     TIME_RAN  = source.TIME_RAN,
-                     FAILED    = source.FAILED,
-                     CANCELLED = source.CANCELLED,
-                     INGESTED  = source.INGESTED,
-                     INSERTED  = source.INSERTED,
-                     UNIQUE_CONSTRAINT_NUM = source.UNIQUE_CONSTRAINT_NUM,
-                     OTFD_ERROR_NUM = source.OTFD_ERROR_NUM,
-                     ERRORS    = source.ERRORS
-             WHEN NOT MATCHED THEN
-                 INSERT (DATABASE_NAME, START_TIME, TIME_RAN, FAILED, CANCELLED, INGESTED, INSERTED, UNIQUE_CONSTRAINT_NUM, OTFD_ERROR_NUM, ERRORS)
-                 VALUES (source.DATABASE_NAME, source.START_TIME, source.TIME_RAN, source.FAILED, source.CANCELLED,
-                        source.INGESTED, source.INSERTED, source.UNIQUE_CONSTRAINT_NUM, source.OTFD_ERROR_NUM, source.ERRORS)"""
-    
-    try:
-        cursor.execute(sql, [
-            database,
-            start_time,
-            interval_value,
-            failed,
-            cancelled,
-            ingested,
-            inserted,
-            unique_constraint_num,
-            otfd_error_num,
-            errors_clob
-        ])
-        cursor.connection.commit()
-        logger.info(f"Successfully updated TMAVERAGE_STATS for database {database}")
-    except oracledb.DatabaseError as error:
-        logger.exception(f"Error updating TMAVERAGE_STATS: {error}")
-        cursor.connection.rollback()
-        raise error
-
 
 def setup_logger(log_file: str):
     """
@@ -656,9 +619,6 @@ def process_values_by_tmid(
     global db_connection
     global failed
     logger = multiprocessing.get_logger()
-    error = OTFDException("asdfasdf")
-    error.error_rows = ["This is a test"]
-    raise error
 
     if failed:
         logger.critical(
