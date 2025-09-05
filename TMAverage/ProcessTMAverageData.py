@@ -108,7 +108,47 @@ def update_tmaverage_stats(
     
     failed = 1 if failed else 0
     cancelled = 1 if cancelled else 0
-    
+
+    select_sql = f"""SELECT COUNT(*) FROM {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} WHERE DATABASE_NAME=:database AND START_TIME=:start_time"""
+
+    insert_sql = f"""INSERT INTO {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} 
+    (DATABASE_NAME, START_TIME, TIME_RAN, FAILED, CANCELLED, INGESTED, INSERTED, UNIQUE_CONSTRAINT_NUM, OTFD_ERROR_NUM, ERRORS) VALUES 
+    (:database, :start_time, :time_ran, :failed, :cancelled, :ingested, :inserted, :unique_constraint_num, :otfd_error_num, :errors)"""
+
+    update_sql = f"""UPDATE {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} SET 
+        TIME_RAN    = :timeran, 
+        FAILED      = :failed,
+        CANCELLED   = :cancelled,
+        INGESTED    = :ingested
+        INSERTED    = :inserted
+        UNIQUE_CONSTRAINT_NUM = :unique_constraint_num
+        OTFD_ERROR_NUM = :otfd_error_num
+        ERRORS      = :errors
+        WHERE DATABASE_NAME=:database AND START_TIME=:start_time
+    """
+
+    try:
+        entry_count = cursor.execute(select_sql, 
+            database=database,
+            start_time=start_time,
+        ).fetchone()[0]
+
+        if entry_count == 0: # No TMAVERAGE_STATS entry, so insert one
+            cursor.execute(insert_sql,
+                database=database,
+                start_time=start_time  # TODO: This needs to be updated
+            )
+            cursor.connection.commit()
+        else: # TMAVERAGE_STATS entry exists, so update.
+            
+
+
+
+    except oracledb.DatabaseError as error:
+        logger.exception(f"Error updating TMAVERAGE_STATS: {error}")
+        cursor.connection.rollback()
+        raise error
+
     # Use MERGE statement to INSERT if not exists, UPDATE if exists
     sql = f"""MERGE INTO {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} target
              USING (SELECT :1 as DATABASE_NAME, :2 as START_TIME, :3 as TIME_RAN, :4 as FAILED, :5 as CANCELLED,
