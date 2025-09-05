@@ -1059,6 +1059,7 @@ def main():
         cancelled=cancelled,
         ingested=total_ingested_rows,
         inserted=total_inserted_rows,
+        # Every insert is guaranteed to insert 288 rows (5m * 288 = 1 day), so multiply failed bulk inserts by 288.
         unique_constraint_num=unique_constraint_num*288,
         otfd_error_num=otfd_error_num,
         errors=all_errors,
