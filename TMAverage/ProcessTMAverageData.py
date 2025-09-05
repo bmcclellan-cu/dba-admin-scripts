@@ -88,6 +88,8 @@ def update_tmaverage_stats(
     The second time it is ran, it updates the record created during the first execution.
     """
     logger = multiprocessing.get_logger()
+
+    print(database, start_time, time_duration, failed, cancelled, ingested, inserted, unique_constraint_num, otfd_error_num, errors) # DEBUG
         
     # Convert errors list to CLOB-compatible string
     errors_clob = '\n'.join(errors) if errors else None
@@ -478,7 +480,7 @@ def insert_tmaverage_rows(database: str, tmaverage_values: list):
                 f"ORA-00001: Unique Constraint Violated during insert. Insert has been automatically rolled back."
                 "This is likely due to the script parameters overlapping with pre-existing data. Please double-check"
                 "the data in TMAverage. Continuing..."
-            )
+            ) 
             raise error
         else:
             logger.exception("An unknown exception occurred.")
@@ -614,6 +616,9 @@ def process_values_by_tmid(
     global db_connection
     global failed
     logger = multiprocessing.get_logger()
+    error = OTFDException("asdfasdf")
+    error.error_rows = ["This is a test"]
+    raise error
 
     if failed:
         logger.critical(
@@ -702,7 +707,14 @@ def process_values_by_tmid(
                 current_bucket_count,
             )
         )
-    return (results_len, insert_tmaverage_rows(database, insertion_data))
+    try:
+        inserted = insert_tmaverage_rows(database, insertion_data)
+    except Exception as e:
+        # This adds the number of rows that were ingested to any insert error, so that
+        # the main process can still report how many rows were ingested.
+        e.ingested_num = results_len
+        raise e
+    return (results_len, inserted)
 
 
 def main():
@@ -972,6 +984,8 @@ def main():
                 if str(error).find("ORA-00001") != -1:
                     # This is not a critical failure, and script will continue processing. Log error to user and continue
                     unique_constraint_num += 1
+                    if hasattr(error, "ingested_num"):
+                        day_ingested_rows += error.ingested_num
                 else:
                     error_status = True
                     logger.exception(
@@ -990,6 +1004,10 @@ def main():
                 )
                 all_errors.append(traceback.format_exc())
 
+                if hasattr(error, "ingested_num"):
+                    day_ingested_rows += error.ingested_num
+
+
         if cancelled:
             break
 
@@ -1000,12 +1018,14 @@ def main():
                 "Please check worker log files at /tmp/TMAverageLogs/ for more details. Continuing..."
             )
         if unique_constraint_num > 0:
+            error_status = True
             logger.error(
                 f"One or more unique constraint errors (ORA-00001) occurred while processing TMID {tmid_input} for date {single_date}. "
                 "Please check worker log files at /tmp/TMAverageLogs/ for more details. Continuing..."
             )
         
         if otfd_error_num > 0:
+            error_status = True
             logger.error(
                 f"One or more OnTheFlyDecom errors occurred during processing TMID {tmid_input} for date {single_date}. Please check logs or "
                 "the TMAVERAGE_STATS for more details. Continuing..."
@@ -1039,7 +1059,7 @@ def main():
         cancelled=cancelled,
         ingested=total_ingested_rows,
         inserted=total_inserted_rows,
-        unique_constraint_num=unique_constraint_num,
+        unique_constraint_num=unique_constraint_num*288,
         otfd_error_num=otfd_error_num,
         errors=all_errors,
     )

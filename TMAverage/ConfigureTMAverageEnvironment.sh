@@ -44,10 +44,6 @@ while getopts ":hubovt:" option; do
         ;;
     t)
         datafile_path=$OPTARG
-        if [ -f "$datafile_path" ]; then
-            echo "Error: Datafile path may not contain a pre-existing path. Exiting..."
-            exit 1
-        fi
         ;;
     b)
         table_opt=1
@@ -153,21 +149,47 @@ schema_name="${project_name^^}_L1A"
 
 # Create tablespace if path is specified
 if [ -n "$datafile_path" ]; then
-    # Create tablespace for TMAverage
-    echo "Creating tablespace $tablespace_name..."
-    create_tablespace=$("$HOME/common/oracle/CreateNewTablespace.sh" "$tablespace_name" "$datafile_path")
-    status_code=$?
-    if [ $status_code -ne 0 ] && [[ "$create_tablespace" == *"already exists in the current database"* ]]; then
-        echo "Tablespace $tablespace_name already exists. Continuing..."
-    elif [ $status_code -ne 0 ]; then
-        echo "$create_tablespace"
-        echo "An error occurred while running CreateNewTablespace.sh. Exiting..."
+    # Check that tablespace exists.
+    tablespace_check=$("$HOME/common/oracle/CheckIfTablespaceExists.sh" "$tablespace_name")
+    if [ $? -ne 0 ]; then
+        echo "$tablespace_check"
+        echo "An error occurred while running CheckIfTablespaceExists.sh. Exiting..."
         exit 1
+    fi
+    if [ "$tablespace_check" == "No" ]; then
+        echo "Creating tablespace $tablespace_name..."
+        if [ -f "$datafile_path" ]; then
+            echo "Error: Datafile path may not contain a pre-existing path. Exiting..."
+            exit 1
+        fi
+        create_tablespace=$("$HOME/common/oracle/CreateNewTablespace.sh" "$tablespace_name" "$datafile_path")
+        status_code=$?
+        if [ $status_code -ne 0 ] && [[ "$create_tablespace" == *"already exists in the current database"* ]]; then
+            echo "Tablespace $tablespace_name already exists. Continuing..."
+        elif [ $status_code -ne 0 ]; then
+            echo "$create_tablespace"
+            echo "An error occurred while running CreateNewTablespace.sh. Exiting..."
+            exit 1
+        fi
+    else
+        echo "Tablespace $tablespace_name already exists. Continuing..."
     fi
 fi
 
 # Create the TMAverage table if desired.
 if [ $table_opt -ne 0 ]; then
+    # Check that tablespace exists.
+    tablespace_check=$("$HOME/common/oracle/CheckIfTablespaceExists.sh" "$tablespace_name")
+    if [ $? -ne 0 ]; then
+        echo "$tablespace_check"
+        echo "An error occurred while running CheckIfTablespaceExists.sh. Exiting..."
+        exit 1
+    fi
+    if [ "$tablespace_check" != "Yes" ]; then
+        echo "Tablespace $tablespace_name does not exist. Please run script with -t flag to create. Exiting..."
+        exit 1
+    fi
+
     # Check that L1A schema exists.
     l1a_schema_check=$("$HOME/common/oracle/CheckIfSchemaExists.sh" "$schema_name")
     if [ $? -ne 0 ]; then
