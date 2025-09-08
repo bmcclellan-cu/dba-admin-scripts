@@ -153,8 +153,8 @@ gblSequence NUMBER := 1;  /* sequence column (row counter) in onTheFlyDecom_erro
 Procedure:  logError
 
 Purpose:    Inserts a new row with a message to the onTheFlyDecom_errors temporary table, incrementing
-            a global counter indicating the order of events. The collateErrors function is used to 
-            compact the errors such that identical error messages are not repeated.
+            a global counter indicating the order of events. The collateErrors function is used by 
+            selectNumericTlm to compact the errors such that identical error messages are not repeated.
 
 Input:      message - VARCHAR2 The error message to log.
                       It should start with "ERROR ", "WARNING " or "INFO ".
@@ -166,7 +166,7 @@ PROCEDURE logError(msg VARCHAR2)
 IS
     messageRow VARCHAR2(500);
     rowLength  NUMBER := 500;
-    rowStart     NUMBER := 0;
+    rowStart     NUMBER := 1;
 BEGIN
     LOOP
         EXIT WHEN rowStart >= LENGTH(msg);
