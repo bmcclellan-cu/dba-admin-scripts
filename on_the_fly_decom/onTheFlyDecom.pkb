@@ -144,8 +144,9 @@ TYPE curType IS REF CURSOR; -- weakly typed cursor
 
 -- Make a type for input to replaceBindVars.
 TYPE name_value_t IS TABLE OF VARCHAR2(64) INDEX BY VARCHAR2(64);
-
-gblSequence NUMBER := 1;  /* sequence column (row counter) in onTheFlyDecom_errors */
+/* sequence column (row counter) in onTheFlyDecom_errors. 
+Represents a single unique message. Duplicate sequence entries indicate a split message*/
+gblSequence NUMBER := 1;  
 
 
 
@@ -174,8 +175,8 @@ BEGIN
         messageRow := SUBSTR(msg, rowStart, rowLength);
         rowStart := rowStart + rowLength;
         INSERT INTO ONTHEFLYDECOM_ERRORS (sequence, message, occurrences) VALUES (gblSequence, messageRow, 1);
-        gblSequence := gblSequence + 1;
     END LOOP;
+    gblSequence := gblSequence + 1;
 EXCEPTION
     WHEN others THEN
         DBMS_OUTPUT.PUT_LINE('Error in logError: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
