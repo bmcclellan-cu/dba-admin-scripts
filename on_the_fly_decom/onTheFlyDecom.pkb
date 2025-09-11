@@ -784,7 +784,7 @@ IS
     -- arrays for SCT, ERT, and ASCT
     ert_arr value_arr_t := value_arr_t();
     sct_arr value_arr_t := value_arr_t();
-    ASCT_arr value_arr_t := value_arr_t();
+    asct_arr value_arr_t := value_arr_t();
 
     -- the cursor for the query for times and hex string from L0_Packets.
     c curType;
@@ -895,8 +895,6 @@ BEGIN
                       'from ' || tableName || ' where ' || decom_identifier || '=:apid and ';
     exeStringPart2 := 'length >= (:byteOffset-1 + :nBytes)';
 
-    logError('DefinitionColumn: ' || definitionColumn);
-
     -- I am forgoing bind variables currently due to the number of possible configurations. (TODO: Check performance)
     -- Note that the values in select_time_columns are expected in order SCT, ERT, ASCT
     CASE definitionColumn
@@ -958,7 +956,7 @@ BEGIN
     value_arr.EXTEND(n_batch_rows);
     ert_arr.EXTEND(n_batch_rows);
     sct_arr.EXTEND(n_batch_rows);
-    ASCT_arr.EXTEND(n_batch_rows);
+    asct_arr.EXTEND(n_batch_rows);
 
     LOOP
         -- Fetch a batch from the cursor.
@@ -979,7 +977,7 @@ BEGIN
                 value_arr(nValues) := valueAsNumber;
                 ert_arr(nValues)   := row.ERT;
                 sct_arr(nValues)   := row.SCT;
-                ASCT_arr(nValues)   := row.ASCT;
+                asct_arr(nValues)   := row.ASCT;
             ELSIF (valueAsNumber IS NULL) THEN
                 CONTINUE; -- Ignore any null values, which are a result of near-infinite values/invalid floating point values.
 	        ELSE
@@ -995,7 +993,7 @@ BEGIN
         --  and send them all across to the SQL engine with one context switch."
 
         FORALL indx IN 1 .. nValues
-            INSERT INTO onTheFlyDecom_results (SCT, ERT, ASCT, VALUE) VALUES (ert_arr(indx), sct_arr(indx), ASCT_arr(indx), value_arr(indx));
+            INSERT INTO onTheFlyDecom_results (SCT, ERT, ASCT, VALUE) VALUES (sct_arr(indx), ert_arr(indx), asct_arr(indx), value_arr(indx));
         
         nRows := nRows + nValues; -- Increment the row counter 
     END LOOP;
@@ -1113,7 +1111,7 @@ BEGIN
     asct_time_column := select_time_columns(3);    
 
     -- Define the invariant part of the query.
-    exeString := 'INSERT INTO onTheFlyDecom_results (ERT, SCT, ASCT, Value) ' ||
+    exeString := 'INSERT INTO onTheFlyDecom_results (SCT, ERT, ASCT, Value) ' ||
                  'SELECT ' || monitor_value || select_time_columns_string || ', Value from ' || tableName ||
 		         ' WHERE TMID = :tlmId_in';
 
@@ -1599,7 +1597,7 @@ BEGIN
             collateErrors();
             RETURN;
         WHEN definition_error THEN
-            logError('ERROR selectNumericTlm: Invalid definition range. Please pass valid parameters.');
+            logError('ERROR selectNumericTlm: Definition Error. Input parameters invalid.');
             collateErrors();
             RETURN;
         -- WHEN others THEN
