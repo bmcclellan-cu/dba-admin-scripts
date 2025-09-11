@@ -121,7 +121,7 @@ Notes:
        In this case the SCT times used together with TSL and TMD times is not an issue.
 *************************************************************************************************/
 
-CREATE OR REPLACE PACKAGE BODY IXPE_MISC.onTheFlyDecom
+CREATE OR REPLACE PACKAGE BODY onTheFlyDecom
 AS
 
 -- These options, and additional mission-specific options, are settable by calling the setOption
@@ -828,7 +828,9 @@ BEGIN
     -- Get the table name
     tableName := onTheFlyDecomMissionSpecific.getTableName(0, decomMap.systemId);
 
-    -- Get the mapping of time columns onto SCT, ERT, and ASCT. This varies mission-to-mission. An SQL snippet is expected.  
+    -- Get the mapping of time columns onto SCT, ERT, and ASCT. This varies mission-to-mission, as column names may vary 
+    -- or not exist at all. If a column is not queryable, a 'null AS column_name' is expected, and querying by that column 
+    -- will fail before this point.
     select_time_columns := onTheFlyDecomMissionSpecific.getTimeColumnsL0;
     select_time_columns_string := string_varray_to_csv(select_time_columns);
 
@@ -838,7 +840,6 @@ BEGIN
 
     -- Determine if dmid or apid are being used to identify the packets
     decom_identifier := ONTHEFLYDECOMMISSIONSPECIFIC.getDecomIdentifier;
-
 
     apid      := decomMap.apid;
     startBit  := decomMap.startBit;
@@ -879,24 +880,25 @@ BEGIN
     --                SCT_VTCW <= 1397520018000000 length >= 85 order by ERT, SCT_VTCW
     -- We found that the parallel flag has no noticeable impact on queries we expect to see, and as such has been removed.
 
+
     -- The following determines if the end point of the time query is included or not.
     -- Only the last of a series of abutted queries uses inclusive, the others are exclusive.
     -- This prevent duplicate data. This is only applied for the axis that is being iterated over, 
-    -- which is passed through definitionColumn (0: SCT, 1: ERT, 2: ASCT)
+    -- which is passed through definitionColumn (0: SCT, 1: ERT, 2: ASCT).
     IF (doInclusiveQuery) THEN
         booleanOpString := '<=';
     ELSE
         booleanOpString := '<';
     END IF;
 
-
     exeStringPart1 := 'select ' || monitor_value || select_time_columns_string ||
                       ', rawtohex(dbms_lob.substr(packet, :nBytes, :byteOffset)) ' ||
                       'from ' || tableName || ' where ' || decom_identifier || '=:apid and ';
     exeStringPart2 := 'length >= (:byteOffset-1 + :nBytes)';
 
-    -- I am forgoing bind variables currently due to the number of possible configurations. (TODO: Check performance)
-    -- Note that the values in select_time_columns are expected in order SCT, ERT, ASCT
+    -- I am forgoing bind variables currently due to how many permutations of queries are possible 
+    -- (6 different queries, and 3 possible definitionColumn values), which makes using bind variables effectively 
+    -- difficult. After testing with TMAverage, performance is not impacted by this change.
     CASE definitionColumn
         WHEN 0 THEN
             exeStringPart2 := exeStringPart2 || ' AND ' || sct_time_column || ' >= ' || startSCT_in ||' AND ' || sct_time_column || booleanOpString || stopSCT_in;
@@ -923,11 +925,6 @@ BEGIN
                 exeStringPart2 := exeStringPart2 || ' AND ' || ert_time_column || ' BETWEEN ' || startERT_in || ' AND ' || stopERT_in;
             END IF;
     END CASE;
-
-
-    -- TODO: Hardcoded for EMA
-    -- exeStringPart2 := exeStringPart2 || ' AND ASCT >= :startASCT_in AND ASCT ' || booleanOpString || ' :stopASCT_in';
-
 
     -- Add anything mission-specific to the query.
     onTheFlyDecomMissionSpecific.addToL0Query( exeStringPart1, decomMap.systemId);

@@ -6,6 +6,7 @@ Purpose:    IXPE-specific code for on-the-fly decom, called by the core package.
 Revisions:
   mm/dd/yy who  description
   10/19/23 SM   Initial version.
+  09/11/25 RS   Updated for EMA main package updates
   
 Usage: 
   1. In sqlplus:
@@ -18,9 +19,13 @@ Notes:
      PROCEDURE setOption
      PROCEDURE clearOption
      FUNCTION  getTableName
-     FUNCTION  getL0PacketsSCTColName
+     FUNCTION  getTimeColumnsL0
+     FUNCTION  getTimeColumnsL1
+     FUNCTION  getDecomIdentifier
      PROCEDURE addToL0Query
      PROCEDURE addToL1Query
+     PROCEDURE getDecomMapCur
+     PROCEDURE getTSLCur
      PROCEDURE getDefinitionStartStopTimes
      
   2. Mission Specific Global Variables:
@@ -39,7 +44,7 @@ Notes:
 
 
 
-CREATE OR REPLACE PACKAGE BODY IXPE_MISC.onTheFlyDecomMissionSpecific
+CREATE OR REPLACE PACKAGE BODY onTheFlyDecomMissionSpecific
 AS
 
 -- These options are settable by calling the setOption or clearOption procedure.
@@ -49,8 +54,6 @@ AS
 -- Each mission has its own instance of this code, although it may be identical for missions
 -- with the same options.  We do not support a generalized code base which supports all options.
 gblTlmFileName   VARCHAR2(128) := '';
-
-
 
 /*************************************************************************************************
 Function:  getVersion
@@ -171,7 +174,6 @@ BEGIN
         tableName := 'TelemetryStorageLocation';
     ELSIF (type_in = 4) THEN
         tableName := 'TMDecom';
-
     ELSE
         RAISE invalidType;
     END IF;
@@ -202,6 +204,8 @@ BEGIN
     return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'null AS ASCT');
 END getTimeColumnsL0;
 
+
+
 /*************************************************************************************************
 Function:   getTimeColumnsL1
 
@@ -221,12 +225,28 @@ BEGIN
 END getTimeColumnsL1;
 
 
+
+/************************************************************************************************* 
+Procedure:  getDecomIdentifier
+
+Purpose:    Returns either 'apid' or 'dmid' based on what field is being used to determine the 
+            decom map. This is only different for EMA, which uses 'dmid'.
+
+*************************************************************************************************/
+FUNCTION getDecomIdentifier
+    RETURN VARCHAR2
+IS
+BEGIN
+    RETURN 'apid';
+END;
+
+
+
 /*************************************************************************************************
 Procedure:   addToL0Query
 
 Purpose:    Adds any mission-specific SQL to the 'where' clause of the L0 data query.
-            This proc must exist, even if it does nothing.
-	    Called by queryL0.
+            This proc must exist, even if it does nothing. Called by queryL0.
 
 Input:      exeString   - VARCHAR2(500)
             systemId_in - NUMBER SID or schemaId, depending on mission.
@@ -248,6 +268,33 @@ BEGIN
         exeString := exeString || 'fileId=' || TO_CHAR(fileId) || ' and ';
     END IF;
 END addToL0Query;
+
+
+
+/*************************************************************************************************
+Procedure:   addToL1Query
+
+Purpose:    Adds any mission-specific SQL to the 'where' clause of the L1 data query.
+            This proc must exist, even if it does nothing. Called by queryL1.
+
+Input:      query       - VARCHAR2(500)
+            systemId_in - NUMBER SID or schemaId, depending on mission.
+
+Output:     query       - May or may not have been updated.
+*************************************************************************************************/
+PROCEDURE addToL1Query( exeString IN OUT VARCHAR2,
+                        systemId_in IN NUMBER)
+IS
+    fileId NUMBER := -1;
+BEGIN
+    IF (LENGTH(gblTlmFileName) > 0) THEN
+        EXECUTE IMMEDIATE 'SELECT fileId from TelemetrySourceFiles WHERE filename=''' ||
+     	                  gblTlmFileName || '''' INTO fileId;
+        exeString := exeString || 'SCT_VTCW in (select SCT_VTCW from L0_Packets_SID' ||
+	             TO_CHAR(systemId_in) || ' where fileId=' || TO_CHAR(fileId) || ') and ';
+    END IF;
+END addToL1Query;
+
 
 
 /*************************************************************************************************
@@ -303,6 +350,8 @@ BEGIN
               tlmId_in,                   -- :tlmId_in2 (subquery)
               TMDQueryStartTime_in;           
 END getDecomMapCur;
+
+
 
 /*************************************************************************************************
 PROCEDURE: getTSLCur
@@ -363,38 +412,13 @@ BEGIN
 END getTSLCur;
 
 
-/*************************************************************************************************
-Procedure:   addToL1Query
-
-Purpose:    Adds any mission-specific SQL to the 'where' clause of the L1 data query.
-            This proc must exist, even if it does nothing.
-	    Called by queryL1.
-
-Input:      query       - VARCHAR2(500)
-            systemId_in - NUMBER SID or schemaId, depending on mission.
-
-Output:     query       - May or may not have been updated.
-*************************************************************************************************/
-PROCEDURE addToL1Query( exeString IN OUT VARCHAR2,
-                        systemId_in IN NUMBER)
-IS
-    fileId NUMBER := -1;
-BEGIN
-    IF (LENGTH(gblTlmFileName) > 0) THEN
-        EXECUTE IMMEDIATE 'SELECT fileId from TelemetrySourceFiles WHERE filename=''' ||
-     	                  gblTlmFileName || '''' INTO fileId;
-        exeString := exeString || 'SCT_VTCW in (select SCT_VTCW from L0_Packets_SID' ||
-	             TO_CHAR(systemId_in) || ' where fileId=' || TO_CHAR(fileId) || ') and ';
-    END IF;
-END addToL1Query;
-
 
 /*************************************************************************************************
 FUNCTION: getDefinitionStartStopTimes
 
 Purpose:  Gets start/stop times for use in queries to the TelemetryStorageLocation and TMDecom tables.
-          The IXPE version of this function can be used for most missions.  Only EMM has a different
-	  version of this function, because it has testId.
+          This does not narrow the query being made, but rather chooses which parameter to use to fetch
+          the relevant records for decommutation.
 
 Inputs:
     systemId_in  - E.g. 1 = FLIGHT, 2 = TEST
@@ -402,21 +426,25 @@ Inputs:
     stopERT_in   - Ending Earth Received Time in GPS microseconds. -1 if not used.
     startSCT_in  - Starting spacecraft time in GPS microseconds. -1 if not used.
     stopSCT_in   - Ending spacecraft time in GPS microseconds. -1 if not used.
+    startASCT_in - Start Adjusted Time in GPS microseconds. -1 if not used.
+    stopASCT_in  - End Adjusted Time in GPS microseconds. -1 if not used.
 
 Outputs:
-    definitionStart - GPS microseconds
-    definitionStop  - GPS microseconds
+    definitionStart  - GPS microseconds
+    definitionStop   - GPS microseconds
+    definitionColumn - Column being used to get the start and stop times (0: SCT, 1: ERT, 2: ASCT)
 
 Returns: 1=success, 0=failure
 
 Notes:
+  - IXPE does not support ASCT, so any attempt to query by that column gets prevented here as a
+    form of input validation. 
   - SCT and/or ERT is always specified when filename is specified:
     IXPE retrieve_eng always requires SCT and/or ERT, even when source_filename is specified.
     Therefore we do not need code to select min_ert/max_ert of the TelemetrySourceFiles record.
     Using min_sct/max_sct would be problematic because even current data has near-zero time-stamps
     for min_sct, which if used as definition start/stop times, could cause a large number of
     decom maps to be used, i.e. from 1980/006 GPS epoch..current time the entire history 
-
 
 *************************************************************************************************/
 FUNCTION getDefinitionStartStopTimes(   systemId_in IN NUMBER,
@@ -465,16 +493,7 @@ BEGIN
         RETURN 0;
     END IF;
     RETURN 1;
-
 END getDefinitionStartStopTimes;
-
-FUNCTION getDecomIdentifier
-    RETURN VARCHAR2
-IS
-BEGIN
-    RETURN 'apid';
-END;
-
 
 END onTheFlyDecomMissionSpecific;
 /

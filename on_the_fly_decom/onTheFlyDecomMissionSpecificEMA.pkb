@@ -20,6 +20,7 @@ Notes:
      FUNCTION  getTableName
      FUNCTION  getTimeColumnsL0
      FUNCTION  getTimeColumnsL1
+     FUNCTION  getDecomIdentifier
      PROCEDURE addToL0Query
      PROCEDURE addToL1Query
      PROCEDURE getDecomMapCur
@@ -38,7 +39,7 @@ Notes:
 *************************************************************************************************/
 
 
-CREATE OR REPLACE PACKAGE BODY EMA_MISC.onTheFlyDecomMissionSpecific
+CREATE OR REPLACE PACKAGE BODY onTheFlyDecomMissionSpecific
 AS
 
 -- These options are settable by calling the setOption or clearOption procedure.
@@ -223,12 +224,25 @@ BEGIN
     return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'ASCT');
 END getTimeColumnsL1;
 
+/************************************************************************************************* 
+Procedure:  getDecomIdentifier
+
+Purpose:    Returns either 'apid' or 'dmid' based on what field is being used to determine the 
+            decom map. This is only different for EMA, which uses 'dmid'.
+
+*************************************************************************************************/
+FUNCTION getDecomIdentifier
+    RETURN VARCHAR2
+IS
+BEGIN
+    RETURN 'dmid';
+END;
+
 /*************************************************************************************************
 Procedure:   addToL0Query
 
 Purpose:    Adds any mission-specific SQL to the 'where' clause of the L0 data query.
-            This proc must exist, even if it does nothing.
-	    Called by queryL0.
+            This proc must exist, even if it does nothing. Called by queryL0.
 
 Input:      exeString   - VARCHAR2(500)
             systemId_in - NUMBER SID or schemaId, depending on mission.
@@ -240,15 +254,14 @@ PROCEDURE addToL0Query( exeString IN OUT VARCHAR2,
 IS
     fileId NUMBER := -1;
 BEGIN
-    NULL; -- TODO: Implement for EMA.
+    NULL;
 END addToL0Query;
 
 /*************************************************************************************************
 Procedure:   addToL1Query
 
 Purpose:    Adds any mission-specific SQL to the 'where' clause of the L1 data query.
-            This proc must exist, even if it does nothing.
-	    Called by queryL1.
+            This proc must exist, even if it does nothing. Called by queryL1.
 
 Input:      query       - VARCHAR2(500)
             systemId_in - NUMBER SID or schemaId, depending on mission.
@@ -260,7 +273,7 @@ PROCEDURE addToL1Query( exeString IN OUT VARCHAR2,
 IS
     fileId NUMBER := -1;
 BEGIN
-    NULL; -- TODO: Implement for EMA.
+    NULL;
 END addToL1Query;
 
 /*************************************************************************************************
@@ -377,6 +390,8 @@ END getTSLCur;
 FUNCTION: getDefinitionStartStopTimes
 
 Purpose:  Gets start/stop times for use in queries to the TelemetryStorageLocation and TMDecom tables.
+          This does not narrow the query being made, but rather chooses which parameter to use to fetch
+          the relevant records for decommutation.
 
 Inputs:
     systemId_in  - E.g. 1 = FLIGHT, 2 = TEST
@@ -393,15 +408,6 @@ Outputs:
     definitionColumn - Column being used to get the start and stop times (0: SCT, 1: ERT, 2: ASCT)
 
 Returns: 1=success, 0=failure
-
-Notes:
-  - SCT and/or ERT is always specified when filename is specified:
-    IXPE retrieve_eng always requires SCT and/or ERT, even when source_filename is specified.
-    Therefore we do not need code to select min_ert/max_ert of the TelemetrySourceFiles record.
-    Using min_sct/max_sct would be problematic because even current data has near-zero time-stamps
-    for min_sct, which if used as definition start/stop times, could cause a large number of
-    decom maps to be used, i.e. from 1980/006 GPS epoch..current time the entire history 
-
 
 *************************************************************************************************/
 FUNCTION getDefinitionStartStopTimes(   systemId_in IN NUMBER,
@@ -440,13 +446,6 @@ BEGIN
     RETURN 1;
 
 END getDefinitionStartStopTimes;
-
-FUNCTION getDecomIdentifier
-    RETURN VARCHAR2
-IS
-BEGIN
-    RETURN 'dmid';
-END;
 
 END onTheFlyDecomMissionSpecific;
 /
