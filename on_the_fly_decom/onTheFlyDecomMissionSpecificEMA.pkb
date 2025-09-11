@@ -143,6 +143,8 @@ Input:      type_in     - NUMBER Determines how the VCs will be converted into t
                              0 Indicates some instance of the L0_Packets table is desired.
                              1 Indicates some instance of the TManalog table is desired.
                              2 Indicates some instance of the TMdiscrete table is desired.
+                             3 Indicates some instance of TelemetryStorageLocation is desired.
+                             4 Indicates some instance of TMDecom is desired.
             systemId_in - NUMBER SID or schemaId, depending on mission.
 
 Returns:    A table name as a VARCHAR2
@@ -187,14 +189,10 @@ END getTableName;
 /*************************************************************************************************
 Function:   getTimeColumnsL0
 
-Purpose:    This function returns an array of the columns to query for in L0 SELECT queries. 
-            These are expected to match up to the values in getInsertColumns, where the output from 
-            this function would be <time_col1, time_col2, time_col3>, and the output from getInsertColumns 
-            would be <insert_time_col1, insert_time_col2, insert_time_col3, value>. These values do not need 
-            to be identical, but the value that is represented should be the same (SCT_VTCW -> SCT).
-            If these values do not match, the returned data may have incorrectly labeled data.
+Purpose:    This function returns an array of the columns names used to query in L0_Packets. These
+            are expected in the order (0: SCT, 1: ERT, 2: ASCT). They are used both for the query and
+            the where clause.
 
-            
 Input:      None
 
 Returns:    A VARRAY of the time columns, maximum of 3.
@@ -204,20 +202,16 @@ FUNCTION getTimeColumnsL0
     RETURN ONTHEFLYDECOM.string_varray
 IS
 BEGIN
-    return ONTHEFLYDECOM.string_varray('SCT_VTCW AS SCT', 'ERT', 'ASCT');
+    return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'ASCT');
 END getTimeColumnsL0;
 
 /*************************************************************************************************
 Function:   getTimeColumnsL1
 
-Purpose:    This function returns an array of the columns to query for in L1 SELECT queries. 
-            These are expected to match up to the values in getInsertColumns, where the output from 
-            this function would be <time_col1, time_col2, time_col3>, and the output from getInsertColumns 
-            would be <insert_time_col1, insert_time_col2, insert_time_col3, value>. These values do not need 
-            to be identical, but the value that is represented should be the same (SCT_VTCW -> SCT).
-            If these values do not match, the returned data may have incorrectly labeled data.
-
-            
+Purpose:    This function returns an array of the columns names used to query L1 tables. These
+            are expected in the order (0: SCT, 1: ERT, 2: ASCT). They are used both for the query and
+            the where clause.
+ 
 Input:      None
 
 Returns:    A VARRAY of the time columns, maximum of 3.
@@ -314,8 +308,6 @@ BEGIN
                 ), 0)
         ORDER BY definitionStart';
 
-    DBMS_OUTPUT.PUT_LINE('getDecomMapCur: ' || TO_CHAR(query_sql));
-
     OPEN cursor_out FOR query_sql
         USING systemId_in,                -- :systemId_in
               apid_in,                    -- :apid_in
@@ -374,8 +366,6 @@ BEGIN
                 ), 0)
         ORDER BY definitionStart, apid';
 
-    DBMS_OUTPUT.PUT_LINE('getTSLCur: ' || TO_CHAR(query_sql));
-
     OPEN cursor_out FOR query_sql
         USING tlmId_in,         -- :tlmId_in (outer query)
               definitionStopTime_in, -- :definitionStopTime_in
@@ -421,9 +411,10 @@ FUNCTION getDefinitionStartStopTimes(   systemId_in IN NUMBER,
                                         stopERT_in  IN NUMBER,
                                         startASCT_in IN NUMBER,
                                         stopASCT_in  IN NUMBER,
-                                    definitionStartTime OUT NUMBER,
-                                    definitionStopTime OUT NUMBER,
-                                    definitionColumn OUT NUMBER)
+
+                                        definitionStartTime OUT NUMBER,
+                                        definitionStopTime OUT NUMBER,
+                                        definitionColumn OUT NUMBER)
 				      RETURN NUMBER
 IS
 BEGIN
@@ -449,6 +440,13 @@ BEGIN
     RETURN 1;
 
 END getDefinitionStartStopTimes;
+
+FUNCTION getDecomIdentifier
+    RETURN VARCHAR2
+IS
+BEGIN
+    RETURN 'dmid';
+END;
 
 END onTheFlyDecomMissionSpecific;
 /

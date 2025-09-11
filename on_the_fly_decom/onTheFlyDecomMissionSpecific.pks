@@ -10,7 +10,7 @@ Usage:
      @<full_path>/onTheFlyDecomMissionSpecificEMA.pkb     -- compile the package body  
                    
 *************************************************************************************************/
-CREATE OR REPLACE PACKAGE EMA_MISC.onTheFlyDecomMissionSpecific
+CREATE OR REPLACE PACKAGE IXPE_MISC.onTheFlyDecomMissionSpecific
 AS 
     TYPE curType IS REF CURSOR; -- Weakly typed cursor
 
@@ -21,6 +21,8 @@ AS
     FUNCTION getTableName(type_in IN NUMBER, systemId_in IN NUMBER) RETURN VARCHAR2;
     FUNCTION getTimeColumnsL0 RETURN onTheFlyDecom.string_varray;
     FUNCTION getTimeColumnsL1 RETURN onTheFlyDecom.string_varray;
+
+    FUNCTION getDecomIdentifier RETURN VARCHAR2;
 
     PROCEDURE getDecomMapCur(
         systemId_in IN NUMBER, apid_in IN NUMBER, tlmId_in IN NUMBER, TMDQueryStartTime_in IN NUMBER, TMDQueryStopTime_in IN NUMBER,

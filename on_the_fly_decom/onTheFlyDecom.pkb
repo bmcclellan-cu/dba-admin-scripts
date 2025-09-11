@@ -121,7 +121,7 @@ Notes:
        In this case the SCT times used together with TSL and TMD times is not an issue.
 *************************************************************************************************/
 
-CREATE OR REPLACE PACKAGE BODY EMA_MISC.onTheFlyDecom
+CREATE OR REPLACE PACKAGE BODY IXPE_MISC.onTheFlyDecom
 AS
 
 -- These options, and additional mission-specific options, are settable by calling the setOption
@@ -739,10 +739,10 @@ Inputs:
 *************************************************************************************************/
 PROCEDURE queryL0
     (decomMap IN tmdecom_row_t,
-    startERT_in IN NUMBER,         -- optional (-1 if not used)
-    stopERT_in IN NUMBER,          -- optional (-1 if not used)
     startSCT_in IN NUMBER,         -- optional (-1 if not used)
     stopSCT_in IN NUMBER,          -- optional (-1 if not used)
+    startERT_in IN NUMBER,         -- optional (-1 if not used)
+    stopERT_in IN NUMBER,          -- optional (-1 if not used)
     startASCT_in IN NUMBER,         -- optional (-1 if not used)
     stopASCT_in IN NUMBER,          -- optional (-1 if not used)
     doInclusiveQuery IN BOOLEAN,
@@ -811,8 +811,14 @@ IS
     name_value name_value_t;
     decom_error EXCEPTION;
 
+    decom_identifier VARCHAR2(10); -- Designates whether APID or DMID is being used for queries
+
     select_time_columns string_varray; -- Currently supports a maximum of 4 columns to select by. SCT, ERT, ASCT.
     select_time_columns_string VARCHAR2(200);
+
+    sct_time_column VARCHAR2(20);
+    ert_time_column VARCHAR2(20);
+    asct_time_column VARCHAR2(20);
 
     where_clauses string_varray; 
     where_clause_index NUMBER := 1;  -- VARRAY indexing starts at 1
@@ -825,6 +831,14 @@ BEGIN
     -- Get the mapping of time columns onto SCT, ERT, and ASCT. This varies mission-to-mission. An SQL snippet is expected.  
     select_time_columns := onTheFlyDecomMissionSpecific.getTimeColumnsL0;
     select_time_columns_string := string_varray_to_csv(select_time_columns);
+
+    sct_time_column := select_time_columns(1);
+    ert_time_column := select_time_columns(2);
+    asct_time_column := select_time_columns(3);
+
+    -- Determine if dmid or apid are being used to identify the packets
+    decom_identifier := ONTHEFLYDECOMMISSIONSPECIFIC.getDecomIdentifier;
+
 
     apid      := decomMap.apid;
     startBit  := decomMap.startBit;
@@ -868,20 +882,54 @@ BEGIN
     -- The following determines if the end point of the time query is included or not.
     -- Only the last of a series of abutted queries uses inclusive, the others are exclusive.
     -- This prevent duplicate data. This is only applied for the axis that is being iterated over, 
-    -- which is passed through definitionColumn (0: SCT, 1: ERT, 2: ASCT) (TODO: Currently hardcoded for EMA).
+    -- which is passed through definitionColumn (0: SCT, 1: ERT, 2: ASCT)
     IF (doInclusiveQuery) THEN
         booleanOpString := '<=';
     ELSE
         booleanOpString := '<';
     END IF;
 
-    -- TODO: DMID hardcoded for EMA.
+
     exeStringPart1 := 'select ' || monitor_value || select_time_columns_string ||
                       ', rawtohex(dbms_lob.substr(packet, :nBytes, :byteOffset)) ' ||
-                      'from ' || tableName || ' where dmid=:apid and ';
+                      'from ' || tableName || ' where ' || decom_identifier || '=:apid and ';
     exeStringPart2 := 'length >= (:byteOffset-1 + :nBytes)';
 
-    exeStringPart2 := exeStringPart2 || ' AND ASCT >= :startASCT_in AND ASCT ' || booleanOpString || ' :stopASCT_in';
+    logError('DefinitionColumn: ' || definitionColumn);
+
+    -- I am forgoing bind variables currently due to the number of possible configurations. (TODO: Check performance)
+    -- Note that the values in select_time_columns are expected in order SCT, ERT, ASCT
+    CASE definitionColumn
+        WHEN 0 THEN
+            exeStringPart2 := exeStringPart2 || ' AND ' || sct_time_column || ' >= ' || startSCT_in ||' AND ' || sct_time_column || booleanOpString || stopSCT_in;
+            IF startERT_in != -1 THEN
+                exeStringPart2 := exeStringPart2 || ' AND ' || ert_time_column || ' BETWEEN ' || startERT_in || ' AND ' || stopERT_in;
+            END IF;
+            IF startASCT_in != -1 THEN
+                exeStringPart2 := exeStringPart2 || ' AND ' || asct_time_column || ' BETWEEN ' || startASCT_in || ' AND ' || stopASCT_in;
+            END IF;
+        WHEN 1 THEN
+            exeStringPart2 := exeStringPart2 || ' AND ' || ert_time_column || ' >= ' || startERT_in ||' AND ' || ert_time_column || booleanOpString || stopERT_in;
+            IF startSCT_in != -1 THEN
+                exeStringPart2 := exeStringPart2 || ' AND ' || sct_time_column || ' BETWEEN ' || startSCT_in || ' AND ' || stopSCT_in;
+            END IF;
+            IF startASCT_in != -1 THEN
+                exeStringPart2 := exeStringPart2 || ' AND ' || asct_time_column || ' BETWEEN ' || startASCT_in || ' AND ' || stopASCT_in;
+            END IF;
+        WHEN 2 THEN 
+            exeStringPart2 := exeStringPart2 || ' AND ' || asct_time_column || ' >= ' || startASCT_in || ' AND ' || asct_time_column || booleanOpString || stopASCT_in;
+            IF startSCT_in != -1 THEN
+                exeStringPart2 := exeStringPart2 || ' AND ' || sct_time_column || ' BETWEEN ' || startSCT_in || ' AND ' || stopSCT_in;
+            END IF;
+            IF startERT_in != -1 THEN
+                exeStringPart2 := exeStringPart2 || ' AND ' || ert_time_column || ' BETWEEN ' || startERT_in || ' AND ' || stopERT_in;
+            END IF;
+    END CASE;
+
+
+    -- TODO: Hardcoded for EMA
+    -- exeStringPart2 := exeStringPart2 || ' AND ASCT >= :startASCT_in AND ASCT ' || booleanOpString || ' :stopASCT_in';
+
 
     -- Add anything mission-specific to the query.
     onTheFlyDecomMissionSpecific.addToL0Query( exeStringPart1, decomMap.systemId);
@@ -895,13 +943,11 @@ BEGIN
 
     -- Log the composed query if debug level is high enough
     IF (gblDebugLevel >= 1) THEN        
-        debugString := replaceBindVars( exeString, name_value);
+        -- debugString := replaceBindVars( exeString, name_value);
         logError('INFO debugString=' || exeString);
     END IF;
 
-    -- TODO: Currently hardcoded for EMA.
-    open c for exeString using nBytes, byteOffset, apid, byteOffset, nBytes, 
-        startASCT_in, stopASCT_in;
+    open c for exeString using nBytes, byteOffset, apid, byteOffset, nBytes;
     
     -- BULK COLLECT and FORALL greatly reduce the number of context switches which happen when data
     -- is passed between the Oracle PL/SQL engine and the SQL engine.  This improves performance.
@@ -1034,6 +1080,10 @@ IS
     select_time_columns string_varray;
     select_time_columns_string VARCHAR2(200);
 
+    sct_time_column VARCHAR2(20);
+    ert_time_column VARCHAR2(20);
+    asct_time_column VARCHAR2(20);
+
     monitor_value VARCHAR2(20); 
 BEGIN
     IF (datatype != 'D') THEN
@@ -1056,10 +1106,13 @@ BEGIN
     END IF;		
 
     select_time_columns := onTheFlyDecomMissionSpecific.getTimeColumnsL1;
-    select_time_columns_string := string_varray_to_csv(select_time_columns);		    
+    select_time_columns_string := string_varray_to_csv(select_time_columns);
+
+    sct_time_column := select_time_columns(1);
+    ert_time_column := select_time_columns(2);
+    asct_time_column := select_time_columns(3);    
 
     -- Define the invariant part of the query.
-
     exeString := 'INSERT INTO onTheFlyDecom_results (ERT, SCT, ASCT, Value) ' ||
                  'SELECT ' || monitor_value || select_time_columns_string || ', Value from ' || tableName ||
 		         ' WHERE TMID = :tlmId_in';
@@ -1077,34 +1130,34 @@ BEGIN
     -- Note: I'm testing forgoing bind variables for this part, as there are many possible inputs, and the which values need to be 
     --       queried by will vary significantly.
 
-    -- Narrow by the column used for TSL fetch, and query by the rest if provided.
+    -- Narrow by the definition column used for TSL fetch, and query by the rest if provided.
     CASE definitionColumn
         WHEN 0 THEN
             narrowStartStopTimes(startSCT_in, stopSCT_in, TSLRowStartTime, TSLRowStopTime, queryStart, queryStop);
-            exeString := exeString || ' AND SCT_VTCW >= ' || queryStart ||' AND SCT_VTCW ' || booleanOpString || queryStop;
+            exeString := exeString || ' AND ' || sct_time_column || ' >= ' || queryStart ||' AND ' || sct_time_column || booleanOpString || queryStop;
             IF startERT_in != -1 THEN
-                exeString := exeString || ' AND ERT BETWEEN ' || startERT_in || ' AND ' || stopERT_in;
+                exeString := exeString || ' AND ' || ert_time_column || ' BETWEEN ' || startERT_in || ' AND ' || stopERT_in;
             END IF;
             IF startASCT_in != -1 THEN
-                exeString := exeString || ' AND ASCT BETWEEN ' || startASCT_in || ' AND ' || stopASCT_in;
+                exeString := exeString || ' AND ' || asct_time_column || ' BETWEEN ' || startASCT_in || ' AND ' || stopASCT_in;
             END IF;
         WHEN 1 THEN
             narrowStartStopTimes(startERT_in, stopERT_in, TSLRowStartTime, TSLRowStopTime, queryStart, queryStop);
-            exeString := exeString || ' AND ERT >= ' || queryStart ||' AND ERT ' || booleanOpString || queryStop;
+            exeString := exeString || ' AND ' || ert_time_column || ' >= ' || queryStart ||' AND ' || ert_time_column || booleanOpString || queryStop;
             IF startSCT_in != -1 THEN
-                exeString := exeString || ' AND SCT_VTCW BETWEEN ' || startSCT_in || ' AND ' || stopSCT_in;
+                exeString := exeString || ' AND ' || sct_time_column || ' BETWEEN ' || startSCT_in || ' AND ' || stopSCT_in;
             END IF;
             IF startASCT_in != -1 THEN
-                exeString := exeString || ' AND ASCT BETWEEN ' || startASCT_in || ' AND ' || stopASCT_in;
+                exeString := exeString || ' AND ' || asct_time_column || ' BETWEEN ' || startASCT_in || ' AND ' || stopASCT_in;
             END IF;
         WHEN 2 THEN 
             narrowStartStopTimes(startASCT_in, stopASCT_in, TSLRowStartTime, TSLRowStopTime, queryStart, queryStop);
-            exeString := exeString || ' AND ASCT >= ' || queryStart || ' AND ASCT ' || booleanOpString || queryStop;
+            exeString := exeString || ' AND ' || asct_time_column || ' >= ' || queryStart || ' AND ' || asct_time_column || booleanOpString || queryStop;
             IF startSCT_in != -1 THEN
-                exeString := exeString || ' AND SCT_VTCW BETWEEN ' || startSCT_in || ' AND ' || stopSCT_in;
+                exeString := exeString || ' AND ' || sct_time_column || ' BETWEEN ' || startSCT_in || ' AND ' || stopSCT_in;
             END IF;
             IF startERT_in != -1 THEN
-                exeString := exeString || ' AND ERT BETWEEN ' || startERT_in || ' AND ' || stopERT_in;
+                exeString := exeString || ' AND ' || ert_time_column || ' BETWEEN ' || startERT_in || ' AND ' || stopERT_in;
             END IF;
     END CASE;
 
@@ -1176,10 +1229,10 @@ Notes:
 PROCEDURE selectNumericTlm
     (systemId_in IN NUMBER,
     tlmId_in IN NUMBER,
-    startERT_in IN NUMBER,
-    stopERT_in IN NUMBER,
     startSCT_in IN NUMBER,
     stopSCT_in IN NUMBER,
+    startERT_in IN NUMBER,
+    stopERT_in IN NUMBER,
     startASCT_in IN NUMBER,
     stopASCT_in IN NUMBER)
 IS
@@ -1220,9 +1273,10 @@ BEGIN
     -- It may also be a SCT range, for flight data where SCT is commensurate with ERT.
 
     status := onTheFlyDecomMissionSpecific.getDefinitionStartStopTimes( systemId_in,
-    	                                                                startERT_in, stopERT_in,
 	                                                                    startSCT_in, stopSCT_in,
+                                                                        startERT_in, stopERT_in,
                                                                         startASCT_in, stopASCT_in,
+
                                                                         definitionStartTime,
 									                                    definitionStopTime,
                                                                         definitionColumn);
@@ -1544,10 +1598,14 @@ BEGIN
             logError('ERROR selectNumericTlm: Invalid or missing time range');
             collateErrors();
             RETURN;
-        WHEN others THEN
-            logError('ERROR selectNumericTlm: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
+        WHEN definition_error THEN
+            logError('ERROR selectNumericTlm: Invalid definition range. Please pass valid parameters.');
             collateErrors();
             RETURN;
+        -- WHEN others THEN
+            -- logError('ERROR selectNumericTlm: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
+            -- collateErrors();
+            -- RETURN;
 
 END selectNumericTlm;
 END onTheFlyDecom;
