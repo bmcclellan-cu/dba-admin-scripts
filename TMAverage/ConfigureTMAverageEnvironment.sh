@@ -346,6 +346,20 @@ EOD
 
     if [ $otfd_opt -ne 0 ]; then
         echo "Granting user access to OTFD package & tables..."
+
+        # Check that OTFD packages & tables exist. 
+        otfd_status=$("$HOME/oracle/GetOTFDStatus.sh" "$ORACLE_SID")
+        if [ $? -ne 0 ]; then
+            echo "$otfd_status"
+            echo "An error occurred while checking OTFD table & package status. Exiting..."
+            exit 1
+        fi
+        if [[ "$otfd_status" == *"Does Not Exist"* ]] || [[ "$otfd_status" == *"Not Loaded"* ]] || [[ "$otfd_status" == *"Compilation Error"* ]]; then
+            echo "$otfd_status"
+            echo "One or more OTFD Packages/tables do not exist/has compilation errors. See procedure status above. Exiting..."
+            exit 1
+        fi
+
         otfd_execute=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
             set heading off
             set feedback off

@@ -200,6 +200,21 @@ else
     end_date=${4^^}
 fi
 
+# If using OTFD, check that OTFD packages are functional
+if [ -n "$otfd_opt" ]; then
+    otfd_status=$("$HOME/Robert/anothercommon/oracle/GetOTFDStatus.sh" "$ORACLE_SID")
+    if [ $? -ne 0 ]; then
+        echo "$otfd_status"
+        echo "An error occurred while checking OTFD table & package status. Exiting..."
+        exit 1
+    fi
+    if [[ "$otfd_status" == *"Does Not Exist"* ]] || [[ "$otfd_status" == *"Not Loaded"* ]] || [[ "$otfd_status" == *"Compilation Error"* ]]; then
+        echo "$otfd_status"
+        echo "One or more OTFD Packages/tables do not exist/has compilation errors. See procedure status above. Exiting..."
+        exit 1
+    fi
+fi
+
 # Get the MISC schema, then truncate the _MISC from it
 project_name=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
 if [ $? -ne 0 ]; then
