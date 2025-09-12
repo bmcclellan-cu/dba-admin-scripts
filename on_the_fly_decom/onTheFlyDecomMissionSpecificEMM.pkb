@@ -292,7 +292,7 @@ PROCEDURE addToL0Query( exeString IN OUT VARCHAR2,
 IS
 BEGIN
     IF (gblTestId != -1) THEN
-        exeString := exeString || 'testId=' || TO_CHAR(gblTestId) || ' and ';
+        exeString := exeString || ' AND testId=' || TO_CHAR(gblTestId);
     END IF;
 END addToL0Query;
 
@@ -315,7 +315,7 @@ PROCEDURE addToL1Query( exeString IN OUT VARCHAR2,
 IS
 BEGIN
     IF (gblTestId != -1) THEN
-        exeString := exeString || 'testId=' || TO_CHAR(gblTestId) || ' and ';
+        exeString := exeString || ' AND testId=' || TO_CHAR(gblTestId);
     END IF;
 END addToL1Query;
 
@@ -504,6 +504,8 @@ BEGIN
         -- No ERT range was specified, but a non-zero testId was specified.  Use the ERT range of files associated with that testId.
         SELECT min(MIN_ERT), max(MAX_ERT) INTO definitionStartTime,definitionStopTime FROM TelemetrySourceFiles WHERE 
                testId = gblTestId AND schemaId = systemId_in;
+        
+        definitionColumn   := 1; -- The outputted definitionTimes are ERT. 
     ELSIF (startSCT_in >= 0) THEN
         -- No ERT times were input.  Set the TSL and TMD times to SCT times.
 	-- Either testId=0 was specified, meaning return all tlm data *not* associated with a specific test, or

@@ -1112,10 +1112,6 @@ BEGIN
                  'SELECT ' || monitor_value || select_time_columns_string || ', Value from ' || tableName ||
 		         ' WHERE TMID = :tlmId_in';
 
-    -- Add anything mission-specific to the query, such as testId or tlmFileName.
-    
-    onTheFlyDecomMissionSpecific.addToL1Query(exeString, systemId_in);
-
     IF doInclusiveQuery THEN
         booleanOpString := '<=';
     ELSE
@@ -1155,6 +1151,9 @@ BEGIN
                 exeString := exeString || ' AND ' || ert_time_column || ' BETWEEN ' || startERT_in || ' AND ' || stopERT_in;
             END IF;
     END CASE;
+
+    -- Add anything mission-specific to the query, such as testId or tlmFileName.
+    onTheFlyDecomMissionSpecific.addToL1Query(exeString, systemId_in);
 
     IF (gblDebugLevel >= 1) THEN
         logError( 'INFO ' || exeString);

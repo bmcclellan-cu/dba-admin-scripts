@@ -265,7 +265,7 @@ BEGIN
 	-- the PL/SQL and SQL engines, but should be negligible overall.
         EXECUTE IMMEDIATE 'SELECT fileId from TelemetrySourceFiles WHERE filename=''' ||
      	                  gblTlmFileName || '''' INTO fileId;
-        exeString := exeString || 'fileId=' || TO_CHAR(fileId) || ' and ';
+        exeString := exeString || ' AND fileId=' || TO_CHAR(fileId);
     END IF;
 END addToL0Query;
 
@@ -290,8 +290,8 @@ BEGIN
     IF (LENGTH(gblTlmFileName) > 0) THEN
         EXECUTE IMMEDIATE 'SELECT fileId from TelemetrySourceFiles WHERE filename=''' ||
      	                  gblTlmFileName || '''' INTO fileId;
-        exeString := exeString || 'SCT_VTCW in (select SCT_VTCW from L0_Packets_SID' ||
-	             TO_CHAR(systemId_in) || ' where fileId=' || TO_CHAR(fileId) || ') and ';
+        exeString := exeString || ' AND SCT_VTCW in (select SCT_VTCW from L0_Packets_SID' ||
+	             TO_CHAR(systemId_in) || ' where fileId=' || TO_CHAR(fileId) || ')';
     END IF;
 END addToL1Query;
 
