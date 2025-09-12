@@ -1,8 +1,12 @@
 #!/bin/bash
 #
-# Purpose: This script checks if the OTFD packages are loaded, along with the 
-#          existence of their requisite tables. If the packages exist, it will
-#          also report the package version.
+# Purpose:  This script checks if the OTFD packages are loaded, along with the 
+#           existence of their requisite tables. If the packages exist, it will
+#           also report the package version. 
+# 
+# Notes:    If either one of the packages has a compilation error, this script will
+#           report that BOTH have failed because the getVersion function for the base
+#           package will fail if the mission-specific package has a compilation error.
 #
 # Author: Robert Schmidt
 #
@@ -26,10 +30,12 @@ while getopts ":h" option; do
     esac
 done
 
+exit_code=0
+
 
 # Check argument count
 if [ $# -eq 1 ]; then
-    ORACLE_SID=${1,,}
+    export ORACLE_SID=${1,,}
 elif [ $# -gt 1 ]; then
     echo "$usage"
     echo "$example"
@@ -58,14 +64,14 @@ fi
 results_table_check=$("$HOME/common/oracle/CheckIfTableExists.sh" "$misc_schema" ONTHEFLYDECOM_RESULTS)
 if [ $? -ne 0 ]; then
     echo "$results_table_check"
-    echo "An error occurred while checking if table ONTHEFLYDECOM_RESULTS exists. Exiting..."
+    echo "An error occurred while checking if table ONTHEFLYDECOM_RESULTS exists. Continuing..."
     exit 1
 fi
 
 error_table_check=$("$HOME/common/oracle/CheckIfTableExists.sh" "$misc_schema" ONTHEFLYDECOM_ERRORS)
 if [ $? -ne 0 ]; then
     echo "$error_table_check"
-    echo "An error occurred while checking if table ONTHEFLYDECOM_ERRORS exists. Exiting..."
+    echo "An error occurred while checking if table ONTHEFLYDECOM_ERRORS exists. Continuing..."
     exit 1
 fi
 
@@ -74,7 +80,7 @@ fi
 base_package_check=$("$HOME/common/oracle/CheckIfObjectExists.sh" "$misc_schema" ONTHEFLYDECOM)
 if [ $? -ne 0 ]; then
     echo "$base_package_check"
-    echo "An error occurred while checking if object ONTHEFLYDECOM exists. Exiting..."
+    echo "An error occurred while checking if object ONTHEFLYDECOM exists. Continuing..."
     exit 1
 fi
 
@@ -85,66 +91,67 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Get version of OTFD packages
+if [ "$base_package_check" == "Yes" ] && [ "$mission_package_check" == "Yes" ]; then
+    # Get versions of both OTFD packages. 
+    package_versions=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+        whenever oserror exit 1
+        whenever sqlerror exit 1
 
-base_version=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
-    whenever oserror exit 1
-    whenever sqlerror exit 1
+        set feedback off
+        set heading off
+        set pagesize 0
 
-    set feedback off
-    set heading off
-    set pagesize 0
+        BEGIN
+        ONTHEFLYDECOM.getVersion;
+        END;
+        /
+        SELECT message FROM ONTHEFLYDECOM_ERRORS;
 
-    BEGIN
-    ONTHEFLYDECOM.getVersion;
-    END;
-    /
-    SELECT message FROM ONTHEFLYDECOM_ERRORS;
+        COMMIT; -- Clears the ONTHEFLYDECOM_ERRORS table
 
-    COMMIT; -- Clears the ONTHEFLYDECOM_ERRORS table for the next query
-
-    exit;
+        exit;
 EOD
-)
-error_code=$?
-if [[ $base_version == *"ORA-04063"* ]]; then
-    base_version="ERRORRED" # Compilation error, package inaccessible
-elif [ $error_code -ne 0 ]; then
-    echo "$base_version"
-    echo "An error occurred while checking version of base OTFD package. Exiting..."
-    exit 1
+    )
+    error_code=$?
+    if [[ $package_versions == *"ORA-04063"* ]]; then
+        base_version="Compilation Error" # Compilation error, package inaccessible
+        mission_version="Compilation Error"
+    elif [ $error_code -ne 0 ]; then
+        echo "$package_versions"
+        echo "An error occurred while checking version of base OTFD package. Continuing..."
+        exit 1
+    else
+        base_version="$(echo "$package_versions" | sed -n '1 p')"
+        mission_version="$(echo "$package_versions" | sed -n '2 p')"
+
+        base_version="${base_version#INFO multimission version: }"
+        mission_version="${mission_version#INFO mission-specific version: }"
+    fi
 fi
 
-mission_version=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
-    whenever oserror exit 1
-    whenever sqlerror exit 1
-
-    set feedback off
-    set heading off
-    set pagesize 0
-
-    set serveroutput on
-
-    BEGIN
-    DBMS_OUTPUT.PUT_LINE(ONTHEFLYDECOMMISSIONSPECIFIC.getVersion);
-    END;
-    /
-
-    exit;
-EOD
-)
-error_code=$?
-if [[ $mission_version == *"ORA-04063"* ]]; then
-    mission_version="ERRORRED" # Compilation error, package inaccessible
-elif [ $error_code -ne 0 ]; then
-    echo "$base_version"
-    echo "An error occurred while checking version of mission-specific OTFD package. Exiting..."
-    exit 1
+if [ "$base_package_check" != "Yes" ]; then
+    base_version="Not Loaded"
+fi
+if [ "$mission_package_check" != "Yes" ]; then
+    mission_version="Not Loaded"
 fi
 
-echo "Results: $results_table_check"
-echo "Error: $error_table_check"
-echo "Base: $base_package_check"
-echo "Mission: $mission_package_check"
-echo "Base Version: $base_version"
-echo "Mission Version: $mission_version"
+if [ "$results_table_check" == "Yes" ]; then
+    echo "ONTHEFLYDECOM_RESULTS:    Exists"
+else
+    echo "ONTHEFLYDECOM_RESULTS:    Does Not Exist"
+fi
+
+if [ "$error_table_check" == "Yes" ]; then
+    echo "ONTHEFLYDECOM_ERRORS:     Exists"
+else
+    echo "ONTHEFLYDECOM_ERRORS:     Does Not Exist"
+fi
+
+echo "Base OTFD Package:        $base_version"
+echo "Mission-specific Package: $mission_version"
+
+if [ $exit_code -ne 0 ]; then
+    echo "Script ran with one or more errors. Please check above output for more details."
+    exit 1
+fi
