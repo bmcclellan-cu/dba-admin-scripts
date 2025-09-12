@@ -1596,10 +1596,10 @@ BEGIN
             logError('ERROR selectNumericTlm: Definition Error. Input parameters invalid.');
             collateErrors();
             RETURN;
-        -- WHEN others THEN
-            -- logError('ERROR selectNumericTlm: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
-            -- collateErrors();
-            -- RETURN;
+        WHEN others THEN
+            logError('ERROR selectNumericTlm: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
+            collateErrors();
+            RETURN;
 
 END selectNumericTlm;
 END onTheFlyDecom;
