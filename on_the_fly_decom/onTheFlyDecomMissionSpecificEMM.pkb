@@ -85,7 +85,7 @@ FUNCTION getVersion
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'EMM 0.1';
+    return 'EMM 0.2';
 END getVersion;
 
 

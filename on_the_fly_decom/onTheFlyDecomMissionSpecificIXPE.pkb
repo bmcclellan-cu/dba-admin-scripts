@@ -65,7 +65,7 @@ FUNCTION getVersion
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'IXPE 0.1';
+    return 'IXPE 0.2';
 END getVersion;
 
 
