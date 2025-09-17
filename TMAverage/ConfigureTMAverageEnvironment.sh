@@ -12,10 +12,10 @@
 #        required dependencies for the python script to run.
 # 
 # Author: Robert Schmidt
-# Created on Jun 6, 2025
-# Last modified on August 25th, 2025 - RS
+# Created: Jun 6, 2025
+# Last Modified: September 12th, 2025 - RS
 ##########################################################################
-usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafile ] (optional, create TMAverage tablespace and table.) ] [ -v (optional, create venv in tmaverage script directory ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ username (optional) ] [ password (optional) ]"
+usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafile ] (optional, create TMAverage_SID1 tablespace) ] [ -b (optional, create TMAverage tables) ] [ -v (optional, create venv in tmaverage script directory ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ username (optional) ] [ password (optional) ]"
 example1="Example: ./ConfigureTMAverageEnvironment.sh -t /ssd_internal/Robert/AIMPROD_TMAVERAGE/tmaverage_table.dbf"
 example2="         ./ConfigureTMAverageEnvironment.sh -u -o -v PROCESSTMIDTEST testPWD"
 
@@ -25,7 +25,7 @@ otfd_opt=0
 venv_opt=0
 table_opt=0
 datafile_path=""
-while getopts ":huovt:" option; do
+while getopts ":hubovt:" option; do
     case $option in
     h)
         echo "$usage"
@@ -43,8 +43,10 @@ while getopts ":huovt:" option; do
         venv_opt=1
         ;;
     t)
-        table_opt=1
         datafile_path=$OPTARG
+        ;;
+    b)
+        table_opt=1
         ;;
     \?)
         echo "Error: Invalid option"
@@ -97,6 +99,12 @@ if [[ "$otfd_opt" -ne 0 && "$user_opt" -eq 0 ]]; then
     exit 1
 fi
 
+# If user did not specify anything for script to do, display a warning.
+if [ $user_opt -eq 0 ] && [ $otfd_opt -eq 0 ] && [ $venv_opt -eq 0 ] && [ $table_opt -eq 0 ] && [ -z "$datafile_path" ]; then
+    echo "Error: Must specify at least 1 action for script to take. Please enter at least 1 flag (-u, -o, -v, -t, -b). Exiting..."
+    exit 1
+fi
+
 # Checking $ORACLE_SID
 sid_check=$("$HOME"/common/oracle/VerifyAllParam.sh -I)
 if [ -n "$sid_check" ]; then
@@ -104,7 +112,7 @@ if [ -n "$sid_check" ]; then
         echo "Error: \$ORACLE_SID not set..."
         exit 1
     fi
-    echo "Error: provided \$ORACLE_SID is not open. Exiting..."
+    echo "Error: Provided \$ORACLE_SID is not open. Exiting..."
     exit 1
 fi
 
@@ -137,8 +145,51 @@ fi
 
 schema_name="${project_name^^}_L1A"
 
+
+
+# Create tablespace if path is specified
+if [ -n "$datafile_path" ]; then
+    # Check that tablespace exists.
+    tablespace_check=$("$HOME/common/oracle/CheckIfTablespaceExists.sh" "$tablespace_name")
+    if [ $? -ne 0 ]; then
+        echo "$tablespace_check"
+        echo "An error occurred while running CheckIfTablespaceExists.sh. Exiting..."
+        exit 1
+    fi
+    if [ "$tablespace_check" == "No" ]; then
+        echo "Creating tablespace $tablespace_name..."
+        if [ -f "$datafile_path" ]; then
+            echo "Error: Datafile path may not contain a pre-existing path. Exiting..."
+            exit 1
+        fi
+        create_tablespace=$("$HOME/common/oracle/CreateNewTablespace.sh" "$tablespace_name" "$datafile_path")
+        status_code=$?
+        if [ $status_code -ne 0 ] && [[ "$create_tablespace" == *"already exists in the current database"* ]]; then
+            echo "Tablespace $tablespace_name already exists. Continuing..."
+        elif [ $status_code -ne 0 ]; then
+            echo "$create_tablespace"
+            echo "An error occurred while running CreateNewTablespace.sh. Exiting..."
+            exit 1
+        fi
+    else
+        echo "Tablespace $tablespace_name already exists. Continuing..."
+    fi
+fi
+
 # Create the TMAverage table if desired.
 if [ $table_opt -ne 0 ]; then
+    # Check that tablespace exists.
+    tablespace_check=$("$HOME/common/oracle/CheckIfTablespaceExists.sh" "$tablespace_name")
+    if [ $? -ne 0 ]; then
+        echo "$tablespace_check"
+        echo "An error occurred while running CheckIfTablespaceExists.sh. Exiting..."
+        exit 1
+    fi
+    if [ "$tablespace_check" != "Yes" ]; then
+        echo "Tablespace $tablespace_name does not exist. Please run script with -t flag to create. Exiting..."
+        exit 1
+    fi
+
     # Check that L1A schema exists.
     l1a_schema_check=$("$HOME/common/oracle/CheckIfSchemaExists.sh" "$schema_name")
     if [ $? -ne 0 ]; then
@@ -148,18 +199,6 @@ if [ $table_opt -ne 0 ]; then
     fi
     if [[ "$l1a_schema_check" != "Yes" ]]; then
         echo "Schema ${schema_name} does not exist. Exiting..."
-        exit 1
-    fi
-
-    # Create tablespace for TMAverage
-    echo "Creating tablespace $tablespace_name..."
-    create_tablespace=$("$HOME/common/oracle/CreateNewTablespace.sh" "$tablespace_name" "$datafile_path")
-    status_code=$?
-    if [ $status_code -ne 0 ] && [[ "$create_tablespace" == *"already exists in the current database"* ]]; then
-        echo "Tablespace $tablespace_name already exists. Continuing..."
-    elif [ $status_code -ne 0 ]; then
-        echo "$create_tablespace"
-        echo "An error occurred while running CreateNewTablespace.sh. Exiting..."
         exit 1
     fi
 
@@ -307,6 +346,20 @@ EOD
 
     if [ $otfd_opt -ne 0 ]; then
         echo "Granting user access to OTFD package & tables..."
+
+        # Check that OTFD packages & tables exist. 
+        otfd_status=$("$HOME/oracle/GetOTFDStatus.sh" "$ORACLE_SID")
+        if [ $? -ne 0 ]; then
+            echo "$otfd_status"
+            echo "An error occurred while checking OTFD table & package status. Exiting..."
+            exit 1
+        fi
+        if [[ "$otfd_status" == *"Does Not Exist"* ]] || [[ "$otfd_status" == *"Not Loaded"* ]] || [[ "$otfd_status" == *"Compilation Error"* ]]; then
+            echo "$otfd_status"
+            echo "One or more OTFD Packages/tables do not exist/has compilation errors. See procedure status above. Exiting..."
+            exit 1
+        fi
+
         otfd_execute=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
             set heading off
             set feedback off

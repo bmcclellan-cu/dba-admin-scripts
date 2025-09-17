@@ -91,62 +91,67 @@ def update_tmaverage_stats(
         
     # Convert errors list to CLOB-compatible string
     errors_clob = '\n'.join(errors) if errors else None
-    
-    # Convert timedelta to Oracle INTERVAL DAY TO SECOND format
-    interval_value = None
-    if time_duration is not None:
-        total_seconds = int(time_duration.total_seconds())
-        days = total_seconds // 86400
-        remaining_seconds = total_seconds % 86400
-        hours = remaining_seconds // 3600
-        remaining_seconds %= 3600
-        minutes = remaining_seconds // 60
-        seconds = remaining_seconds % 60
-        interval_value = f"{days} {hours:02d}:{minutes:02d}:{seconds:02d}"
-    
+        
     failed = 1 if failed else 0
     cancelled = 1 if cancelled else 0
-    
-    # Use MERGE statement to INSERT if not exists, UPDATE if exists
-    sql = f"""MERGE INTO {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} target
-             USING (SELECT :1 as DATABASE_NAME, :2 as START_TIME, :3 as TIME_RAN, :4 as FAILED, :5 as CANCELLED,
-                           :6 as INGESTED, :7 as INSERTED, :8 as UNIQUE_CONSTRAINT_NUM, :9 as OTFD_ERROR_NUM, :10 as ERRORS FROM dual) source
-             ON (target.DATABASE_NAME = source.DATABASE_NAME AND target.START_TIME = source.START_TIME)
-             WHEN MATCHED THEN
-                 UPDATE SET 
-                     TIME_RAN  = source.TIME_RAN,
-                     FAILED    = source.FAILED,
-                     CANCELLED = source.CANCELLED,
-                     INGESTED  = source.INGESTED,
-                     INSERTED  = source.INSERTED,
-                     UNIQUE_CONSTRAINT_NUM = source.UNIQUE_CONSTRAINT_NUM,
-                     OTFD_ERROR_NUM = source.OTFD_ERROR_NUM,
-                     ERRORS    = source.ERRORS
-             WHEN NOT MATCHED THEN
-                 INSERT (DATABASE_NAME, START_TIME, TIME_RAN, FAILED, CANCELLED, INGESTED, INSERTED, UNIQUE_CONSTRAINT_NUM, OTFD_ERROR_NUM, ERRORS)
-                 VALUES (source.DATABASE_NAME, source.START_TIME, source.TIME_RAN, source.FAILED, source.CANCELLED,
-                        source.INGESTED, source.INSERTED, source.UNIQUE_CONSTRAINT_NUM, source.OTFD_ERROR_NUM, source.ERRORS)"""
-    
+
+    select_sql = f"""SELECT COUNT(*) FROM {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} WHERE DATABASE_NAME=:database AND START_TIME=:start_time"""
+
+    insert_sql = f"""INSERT INTO {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} 
+    (DATABASE_NAME, START_TIME, TIME_RAN, FAILED, CANCELLED, INGESTED, INSERTED, UNIQUE_CONSTRAINT_NUM, OTFD_ERROR_NUM, ERRORS) VALUES 
+    (:database, :start_time, :time_ran, :failed, :cancelled, :ingested, :inserted, :unique_constraint_num, :otfd_error_num, :errors)"""
+
+    update_sql = f"""UPDATE {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} SET 
+        TIME_RAN    = :time_ran, 
+        FAILED      = :failed,
+        CANCELLED   = :cancelled,
+        INGESTED    = :ingested,
+        INSERTED    = :inserted,
+        UNIQUE_CONSTRAINT_NUM = :unique_constraint_num,
+        OTFD_ERROR_NUM = :otfd_error_num,
+        ERRORS      = :errors
+        WHERE DATABASE_NAME=:database AND START_TIME=:start_time
+    """
+
     try:
-        cursor.execute(sql, [
-            database,
-            start_time,
-            interval_value,
-            failed,
-            cancelled,
-            ingested,
-            inserted,
-            unique_constraint_num,
-            otfd_error_num,
-            errors_clob
-        ])
-        cursor.connection.commit()
-        logger.info(f"Successfully updated TMAVERAGE_STATS for database {database}")
+        entry_count = cursor.execute(select_sql, 
+            database=database,
+            start_time=start_time,
+        ).fetchone()[0]
+
+        if entry_count == 0: # No TMAVERAGE_STATS entry, so insert one
+            cursor.execute(insert_sql,
+                database=database,
+                start_time=start_time,
+                time_ran=time_duration,
+                failed=failed,
+                cancelled=cancelled,
+                ingested=ingested,
+                inserted=inserted,
+                unique_constraint_num=unique_constraint_num,
+                otfd_error_num=otfd_error_num,
+                errors=errors_clob
+            )
+            cursor.connection.commit()
+        else: # TMAVERAGE_STATS entry exists, so update.
+            cursor.execute(update_sql,
+                database=database,
+                start_time=start_time,
+                time_ran=time_duration,
+                failed=failed,
+                cancelled=cancelled,
+                ingested=ingested,
+                inserted=inserted,
+                unique_constraint_num=unique_constraint_num,
+                otfd_error_num=otfd_error_num,
+                errors=errors_clob
+            )
+            cursor.connection.commit()
+
     except oracledb.DatabaseError as error:
         logger.exception(f"Error updating TMAVERAGE_STATS: {error}")
         cursor.connection.rollback()
         raise error
-
 
 def setup_logger(log_file: str):
     """
@@ -478,7 +483,7 @@ def insert_tmaverage_rows(database: str, tmaverage_values: list):
                 f"ORA-00001: Unique Constraint Violated during insert. Insert has been automatically rolled back."
                 "This is likely due to the script parameters overlapping with pre-existing data. Please double-check"
                 "the data in TMAverage. Continuing..."
-            )
+            ) 
             raise error
         else:
             logger.exception("An unknown exception occurred.")
@@ -702,7 +707,14 @@ def process_values_by_tmid(
                 current_bucket_count,
             )
         )
-    return (results_len, insert_tmaverage_rows(database, insertion_data))
+    try:
+        inserted = insert_tmaverage_rows(database, insertion_data)
+    except Exception as e:
+        # This adds the number of rows that were ingested to any insert error, so that
+        # the main process can still report how many rows were ingested.
+        e.ingested_num = results_len
+        raise e
+    return (results_len, inserted)
 
 
 def main():
@@ -972,6 +984,8 @@ def main():
                 if str(error).find("ORA-00001") != -1:
                     # This is not a critical failure, and script will continue processing. Log error to user and continue
                     unique_constraint_num += 1
+                    if hasattr(error, "ingested_num"):
+                        day_ingested_rows += error.ingested_num
                 else:
                     error_status = True
                     logger.exception(
@@ -990,6 +1004,10 @@ def main():
                 )
                 all_errors.append(traceback.format_exc())
 
+                if hasattr(error, "ingested_num"):
+                    day_ingested_rows += error.ingested_num
+
+
         if cancelled:
             break
 
@@ -1000,12 +1018,14 @@ def main():
                 "Please check worker log files at /tmp/TMAverageLogs/ for more details. Continuing..."
             )
         if unique_constraint_num > 0:
+            error_status = True
             logger.error(
                 f"One or more unique constraint errors (ORA-00001) occurred while processing TMID {tmid_input} for date {single_date}. "
                 "Please check worker log files at /tmp/TMAverageLogs/ for more details. Continuing..."
             )
         
         if otfd_error_num > 0:
+            error_status = True
             logger.error(
                 f"One or more OnTheFlyDecom errors occurred during processing TMID {tmid_input} for date {single_date}. Please check logs or "
                 "the TMAVERAGE_STATS for more details. Continuing..."
@@ -1039,7 +1059,8 @@ def main():
         cancelled=cancelled,
         ingested=total_ingested_rows,
         inserted=total_inserted_rows,
-        unique_constraint_num=unique_constraint_num,
+        # Every insert is guaranteed to insert 288 rows (5m * 288 = 1 day), so multiply failed bulk inserts by 288.
+        unique_constraint_num=unique_constraint_num*288,
         otfd_error_num=otfd_error_num,
         errors=all_errors,
     )
