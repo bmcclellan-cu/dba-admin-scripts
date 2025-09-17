@@ -3,6 +3,8 @@
 # Purpose:  This script checks if the OTFD packages are loaded, along with the 
 #           existence of their requisite tables. If the packages exist, it will
 #           also report the package version. 
+#           Packages: ONTHEFLYDECOM, ONTHEFLYDECOMMISSIONSPECIFIC
+#           Tables: ONTHEFLYDECOM_ERRORS, ONTHEFLYDECOM_RESULTS.
 # 
 # Notes:    If either one of the packages has a compilation error, this script will
 #           report that BOTH have failed because the getVersion function for the base
@@ -29,9 +31,6 @@ while getopts ":h" option; do
         exit 1
     esac
 done
-
-exit_code=0
-
 
 # Check argument count
 if [ $# -eq 1 ]; then
@@ -64,14 +63,14 @@ fi
 results_table_check=$("$HOME/common/oracle/CheckIfTableExists.sh" "$misc_schema" ONTHEFLYDECOM_RESULTS)
 if [ $? -ne 0 ]; then
     echo "$results_table_check"
-    echo "An error occurred while checking if table ONTHEFLYDECOM_RESULTS exists. Continuing..."
+    echo "An error occurred while checking if table ONTHEFLYDECOM_RESULTS exists. Exiting..."
     exit 1
 fi
 
 error_table_check=$("$HOME/common/oracle/CheckIfTableExists.sh" "$misc_schema" ONTHEFLYDECOM_ERRORS)
 if [ $? -ne 0 ]; then
     echo "$error_table_check"
-    echo "An error occurred while checking if table ONTHEFLYDECOM_ERRORS exists. Continuing..."
+    echo "An error occurred while checking if table ONTHEFLYDECOM_ERRORS exists. Exiting..."
     exit 1
 fi
 
@@ -80,7 +79,7 @@ fi
 base_package_check=$("$HOME/common/oracle/CheckIfObjectExists.sh" "$misc_schema" ONTHEFLYDECOM)
 if [ $? -ne 0 ]; then
     echo "$base_package_check"
-    echo "An error occurred while checking if object ONTHEFLYDECOM exists. Continuing..."
+    echo "An error occurred while checking if object ONTHEFLYDECOM exists. Exiting..."
     exit 1
 fi
 
@@ -118,7 +117,7 @@ EOD
         mission_version="Compilation Error"
     elif [ $error_code -ne 0 ]; then
         echo "$package_versions"
-        echo "An error occurred while checking version of base OTFD package. Continuing..."
+        echo "An error occurred while checking version of base OTFD package. Exiting..."
         exit 1
     else
         base_version="$(echo "$package_versions" | sed -n '1 p')"
@@ -151,7 +150,4 @@ fi
 echo "Base OTFD Package:        $base_version"
 echo "Mission-specific Package: $mission_version"
 
-if [ $exit_code -ne 0 ]; then
-    echo "Script ran with one or more errors. Please check above output for more details."
-    exit 1
-fi
+exit 0
