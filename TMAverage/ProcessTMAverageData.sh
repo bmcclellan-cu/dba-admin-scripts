@@ -1,22 +1,22 @@
 #!/bin/bash
 #
-# Purpose: A wrapper for the ProcessTMAverageData.py helper script, which averages the data from 
-#          TMAnalog over 5 minute periods per TMID and inserts it into L1A.TMAVERAGE. This script
-#          runs a few extra checks beforehand to ensure the script is ready to run.
-#          This wrapper allows you to run the script at an offset from the current date and a range, 
-#          allowing for consistent use via a crontab (i.e, today is 16-JUL-25, offset is set to 5 days, and
-#          range is set to 3 days, so the script will process data from 11-JUL-25 to 13-JUL-25 (3 days of data)).
-#          If you want to specify a specific date range, you need to invoke the .py script directly.
+# Purpose:  A wrapper for the ProcessTMAverageData.py helper script, which averages the data from 
+#           TMAnalog over 5 minute periods per TMID and inserts it into L1A.TMAVERAGE. This script
+#           runs a few extra checks beforehand to ensure the script is ready to run.
+#           This wrapper allows you to run the script at an offset from the current date and a range, 
+#           allowing for consistent use via a crontab (i.e, today is 16-JUL-25, offset is set to 5 days, and
+#           range is set to 3 days, so the script will process data from 11-JUL-25 to 13-JUL-25 (3 days of data)).
+#           The -d flag allows for a date to be passed directly
 # 
-# Note:    Please do not run this script at a parallel degree above 16 on lasp-db5, as the script consumes
-#          a lot of IO, and may cause performance issues.
+# Note:     Please do not run this script at a parallel degree above 16 on lasp-db5, as the script consumes
+#           a lot of IO, and may cause performance issues.
 # 
-#          For more detailed documentation go to https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
+#           For more detailed documentation go to https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
 # 
 # Author: Robert Schmidt
 # 
 # Created on: July 21st, 2025
-# Modified on: September 12th, 2025 - RS
+# Modified on: September 18th, 2025 - RS
 ###############################################################
 usage="Usage: ./ProcessTMAverageData.sh [ -r (optional, only email on error) ] [ -o (optional, use OTFD) ] [ -e [ filename ] (absolute path filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL | filename] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
 example1="Example: ./ProcessTMAverageData.sh goldprod ALL 14 7 8"
@@ -202,7 +202,7 @@ fi
 
 # If using OTFD, check that OTFD packages are functional
 if [ -n "$otfd_opt" ]; then
-    otfd_status=$("$HOME/Robert/anothercommon/oracle/GetOTFDStatus.sh" "$ORACLE_SID")
+    otfd_status=$("$HOME/common/oracle/GetOTFDStatus.sh" "$ORACLE_SID")
     if [ $? -ne 0 ]; then
         echo "$otfd_status"
         echo "An error occurred while checking OTFD table & package status. Exiting..."
