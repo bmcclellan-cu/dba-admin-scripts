@@ -1,3 +1,16 @@
+# Purpose:  The script that actually performs the TMAverage processing. This script is intended to be called by 
+#           ProcessTMAverageData.sh, as that script performs important input validation and date conversion for 
+#           offsets. 
+# 
+# Note:    Please do not run this script at a parallel degree above 16 on lasp-db5, as the script consumes
+#          a lot of IO, and may cause performance issues.
+# 
+#          For more detailed documentation go to https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
+# 
+# Author: Robert Schmidt
+# Modified on: September 18th, 2025 - RS
+###############################################################
+
 # System imports
 import sys
 import logging
@@ -874,7 +887,11 @@ def main():
 
     start_time = datetime.datetime.now()
 
+    expected_duration = num_of_days*datetime.timedelta(minutes=2)
+
     logger.info(f"Script has started at {start_time}")
+    logger.info(f"Maximum expected runtime for processing {num_of_days} days is {expected_duration}.")
+
     cursor = connection.cursor()
 
     # Initialize the tmaverage_stats entry.
@@ -1008,6 +1025,7 @@ def main():
                     day_ingested_rows += error.ingested_num
 
 
+        # Day error checks:
         if cancelled:
             break
 
@@ -1050,11 +1068,13 @@ def main():
 
     end_time = datetime.datetime.now()
 
+    duration = end_time - start_time
+
     update_tmaverage_stats(
         cursor=connection.cursor(),
         database=database,
         start_time=start_time,
-        time_duration=end_time - start_time,
+        time_duration=duration,
         failed=critical_failure,
         cancelled=cancelled,
         ingested=total_ingested_rows,
@@ -1066,8 +1086,15 @@ def main():
     )
 
     logger.info(
-        f"Script completed at time {end_time}. Duration: {end_time - start_time}"
+        f"Script completed at time {end_time}. Duration: {duration}"
     )
+
+    if duration > expected_duration:
+        error_status=True
+        logger.error(
+            f"TMAverage took longer than expected to run ({duration} > {expected_duration}). "
+            "Please check log files to determine cause of slowdown."
+        )
 
     if critical_failure:
         logger.critical(
@@ -1091,7 +1118,6 @@ def main():
         logger.info(f"Rows ingested: {total_ingested_rows}")
         logger.info(f"Rows inserted: {total_inserted_rows}")
         exit(0)
-
 
 if __name__ == "__main__":
     main()

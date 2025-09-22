@@ -13,7 +13,7 @@
 # 
 # Author: Robert Schmidt
 # Created: Jun 6, 2025
-# Last Modified: September 12th, 2025 - RS
+# Last Modified: September 18th, 2025 - RS
 ##########################################################################
 usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafile ] (optional, create TMAverage_SID1 tablespace) ] [ -b (optional, create TMAverage tables) ] [ -v (optional, create venv in tmaverage script directory ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ username (optional) ] [ password (optional) ]"
 example1="Example: ./ConfigureTMAverageEnvironment.sh -t /ssd_internal/Robert/AIMPROD_TMAVERAGE/tmaverage_table.dbf"
@@ -348,7 +348,7 @@ EOD
         echo "Granting user access to OTFD package & tables..."
 
         # Check that OTFD packages & tables exist. 
-        otfd_status=$("$HOME/oracle/GetOTFDStatus.sh" "$ORACLE_SID")
+        otfd_status=$("$HOME/common/oracle/GetOTFDStatus.sh" "$ORACLE_SID")
         if [ $? -ne 0 ]; then
             echo "$otfd_status"
             echo "An error occurred while checking OTFD table & package status. Exiting..."
