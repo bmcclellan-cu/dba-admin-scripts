@@ -1,17 +1,16 @@
 /*************************************************************************************************
-File:       onTheFlyDecomMissionSpecificIXPE.pkb (package body for package: onTheFlyDecomMissionSpecific
+File:       onTheFlyDecomMissionSpecificEMA.pkb (package body for package: onTheFlyDecomMissionSpecific
 
-Purpose:    IXPE-specific code for on-the-fly decom, called by the core package.
+Purpose:    EMA-specific code for on-the-fly decom, called by the core package.
   
 Revisions:
   mm/dd/yy who  description
-  10/19/23 SM   Initial version.
-  09/11/25 RS   Updated for EMA main package updates
+  08/27/25 RS   Initial Version
   
 Usage: 
   1. In sqlplus:
      @<full_path>/onTheFlyDecomMissionSpecific.pks      -- compile the package spec
-     @<full_path>/onTheFlyDecomMissionSpecificIXPE.pkb  -- compile the package body
+     @<full_path>/onTheFlyDecomMissionSpecificEMA.pkb  -- compile the package body
 
 Notes:
   1. Contents (In order of appearance)          
@@ -30,10 +29,7 @@ Notes:
      
   2. Mission Specific Global Variables:
      These are optional inputs which can be set by calling setOption or clearOption.
-     gblTlmFileName:
-       This is a string, the default is "" (empty string).
-       IXPE only; the IXPE code will support this, but not testId.
-
+     
   3. Compiler Errors:
      - A login.sql file can cause compiler errors.
      - If the ampersand character is present in a comment, in sqlplus will get this prompt
@@ -41,7 +37,6 @@ Notes:
        Enter value for t:  (where t is the letter after the ampersand)
 
 *************************************************************************************************/
-
 
 
 CREATE OR REPLACE PACKAGE BODY onTheFlyDecomMissionSpecific
@@ -53,7 +48,13 @@ AS
 -- for different missions, as may the options which selectNumericTlm supports.
 -- Each mission has its own instance of this code, although it may be identical for missions
 -- with the same options.  We do not support a generalized code base which supports all options.
-gblTlmFileName   VARCHAR2(128) := '';
+
+gblVCs     NUMBER := 3;          /* NUMBER interpreted as a bit field, specifying realtime and/or playback
+                                     data retrieval:
+                                     1 Indicates only realtime data is desired.
+                                     2 Indicates only playback data is desired.
+                                     Any other value will get both realtime and playback data. */
+
 
 /*************************************************************************************************
 Function:  getVersion
@@ -65,10 +66,8 @@ FUNCTION getVersion
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'IXPE 0.2';
+    return 'EMA 0.1';
 END getVersion;
-
-
 
 /*************************************************************************************************
 Function:  setOption
@@ -87,8 +86,8 @@ IS
     upperCaseOptionName VARCHAR2(128) := '';
 BEGIN
     upperCaseOptionName := UPPER( optionName);
-    IF (upperCaseOptionName = 'TLMFILENAME') THEN  -- IXPE only
-        gblTlmFileName := optionValue;
+    IF (upperCaseOptionName = 'VCS') THEN
+        gblVCs := TO_NUMBER( optionValue);
     ELSE
         RETURN 0;
     END IF;
@@ -111,11 +110,10 @@ FUNCTION clearOption( optionName VARCHAR2)
 IS
     upperCaseOptionName VARCHAR2(128) := '';
 BEGIN
-    upperCaseOptionName := UPPER( optionName);
-    IF (upperCaseOptionName = 'TLMFILENAME') THEN  -- IXPE only
-        gblTlmFileName := '';
+    IF (upperCaseOptionName = 'VCS') THEN
+        gblVCs := -1;
     ELSIF (upperCaseOptionName = 'ALL') THEN
-        gblTlmFileName := '';
+        gblVCs := -1;
     ELSE
         RETURN 0;
     END IF;
@@ -134,10 +132,8 @@ FUNCTION getOptionsHelp
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'IXPE options are: TLMFILENAME: <filename>';
+    return 'EMA options are: VCS: 1=realtime, 2=playback, 3=both';
 END getOptionsHelp;
-
-
 
 /*************************************************************************************************
 Function:   getTableName
@@ -164,12 +160,19 @@ IS
     tableNameExtension VARCHAR2(10) := '';
     invalidType EXCEPTION;
 BEGIN
-    IF    (type_in = 0) THEN
-        tableName := 'L0_Packets_SID' || systemId_in;
+    IF gblVCs = 1 THEN
+        tableNameExtension := '_RT';
+    ELSIF gblVCs = 2 THEN
+        tableNameExtension := '_PBK';
+    END IF;
+
+    -- Get base tablename by type.
+    IF (type_in = 0) THEN
+        tableName := 'L0_Packets' || tableNameExtension;
     ELSIF (type_in = 1) THEN
-        tableName := 'TManalog_SID'   || systemId_in;
+        tableName := 'TManalog' || tableNameExtension;
     ELSIF (type_in = 2) THEN
-        tableName := 'TMdiscrete_SID' || systemId_in;
+        tableName := 'TMdiscrete' || tableNameExtension;
     ELSIF (type_in = 3) THEN
         tableName := 'TelemetryStorageLocation';
     ELSIF (type_in = 4) THEN
@@ -177,11 +180,12 @@ BEGIN
     ELSE
         RAISE invalidType;
     END IF;
+
+    -- Add schema-SID prefix
+    tableName := 'EMA_SCHEMA' || LPAD(TO_CHAR(systemId_in), 2) || '.' || tableName;
+
     RETURN tableName;
-
 END getTableName;
-
-
 
 /*************************************************************************************************
 Function:   getTimeColumnsL0
@@ -199,12 +203,8 @@ FUNCTION getTimeColumnsL0
     RETURN ONTHEFLYDECOM.string_varray
 IS
 BEGIN
-    -- Note: ASCT is unused for IXPE, so it is aliased as null. No queries can be made by ASCT, 
-    --       and will error during getDefinitionStartStopTime.
-    return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'null AS ASCT');
+    return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'ASCT');
 END getTimeColumnsL0;
-
-
 
 /*************************************************************************************************
 Function:   getTimeColumnsL1
@@ -221,10 +221,8 @@ FUNCTION getTimeColumnsL1
     RETURN ONTHEFLYDECOM.string_varray
 IS
 BEGIN
-    return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'null AS ASCT');
+    return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'ASCT');
 END getTimeColumnsL1;
-
-
 
 /************************************************************************************************* 
 Procedure:  getDecomIdentifier
@@ -237,10 +235,8 @@ FUNCTION getDecomIdentifier
     RETURN VARCHAR2
 IS
 BEGIN
-    RETURN 'apid';
+    RETURN 'dmid';
 END;
-
-
 
 /*************************************************************************************************
 Procedure:   addToL0Query
@@ -258,18 +254,8 @@ PROCEDURE addToL0Query( exeString IN OUT VARCHAR2,
 IS
     fileId NUMBER := -1;
 BEGIN
-    IF (LENGTH(gblTlmFileName) > 0) THEN
-        -- Note:  getting fileId in a subquery doesn't work, get an Oracle error saying a right parenthesis
-	-- is missing.  Plus have to use two single quotes on either side of filename if return the subquery
-	-- in the string.  Here using a separate query to get fileId causes a single context switch between
-	-- the PL/SQL and SQL engines, but should be negligible overall.
-        EXECUTE IMMEDIATE 'SELECT fileId from TelemetrySourceFiles WHERE filename=''' ||
-     	                  gblTlmFileName || '''' INTO fileId;
-        exeString := exeString || ' AND fileId=' || TO_CHAR(fileId);
-    END IF;
+    NULL;
 END addToL0Query;
-
-
 
 /*************************************************************************************************
 Procedure:   addToL1Query
@@ -287,15 +273,8 @@ PROCEDURE addToL1Query( exeString IN OUT VARCHAR2,
 IS
     fileId NUMBER := -1;
 BEGIN
-    IF (LENGTH(gblTlmFileName) > 0) THEN
-        EXECUTE IMMEDIATE 'SELECT fileId from TelemetrySourceFiles WHERE filename=''' ||
-     	                  gblTlmFileName || '''' INTO fileId;
-        exeString := exeString || ' AND SCT_VTCW in (select SCT_VTCW from L0_Packets_SID' ||
-	             TO_CHAR(systemId_in) || ' where fileId=' || TO_CHAR(fileId) || ')';
-    END IF;
+    NULL;
 END addToL1Query;
-
-
 
 /*************************************************************************************************
 PROCEDURE: getDecomMapCur
@@ -329,9 +308,9 @@ IS
     query_sql CLOB; -- Practically unlimited length
 BEGIN
     tmdecom_table_name := onTheFlyDecomMissionSpecific.getTableName(4, systemId_in);
-    query_sql := 'SELECT :systemId_in AS systemId, apid, startBit, length, dataType, definitionStart
+    query_sql := 'SELECT :systemId_in AS systemId, dmid as apid, startBit, length, dataType, definitionStart
         FROM ' || tmdecom_table_name || '
-        WHERE apid     = :apid_in
+        WHERE dmid     = :apid_in
           AND tlmId    = :tlmId_in
           AND definitionStart <= :tmdqstoptime
           AND definitionStart >= COALESCE(
@@ -350,8 +329,6 @@ BEGIN
               tlmId_in,                   -- :tlmId_in2 (subquery)
               TMDQueryStartTime_in;           
 END getDecomMapCur;
-
-
 
 /*************************************************************************************************
 PROCEDURE: getTSLCur
@@ -390,7 +367,7 @@ BEGIN
         SELECT definitionStart,
                isInL0,
                isInL1,
-               apid
+               dmid as apid
         FROM ' || tsl_table_name || '
         WHERE tlmId = :tlmId_in
           AND definitionStart <= :definitionStopTime_in
@@ -402,16 +379,12 @@ BEGIN
                 ), 0)
         ORDER BY definitionStart, apid';
 
-    DBMS_OUTPUT.PUT_LINE('getTSLCur: ' || TO_CHAR(query_sql));
-
     OPEN cursor_out FOR query_sql
         USING tlmId_in,         -- :tlmId_in (outer query)
               definitionStopTime_in, -- :definitionStopTime_in
               tlmId_in,         -- :tlmId_in2 (subquery)
               definitionStartTime_in; -- :definitionStartTime_in
 END getTSLCur;
-
-
 
 /*************************************************************************************************
 FUNCTION: getDefinitionStartStopTimes
@@ -436,16 +409,6 @@ Outputs:
 
 Returns: 1=success, 0=failure
 
-Notes:
-  - IXPE does not support ASCT, so any attempt to query by that column gets prevented here as a
-    form of input validation. 
-  - SCT and/or ERT is always specified when filename is specified:
-    IXPE retrieve_eng always requires SCT and/or ERT, even when source_filename is specified.
-    Therefore we do not need code to select min_ert/max_ert of the TelemetrySourceFiles record.
-    Using min_sct/max_sct would be problematic because even current data has near-zero time-stamps
-    for min_sct, which if used as definition start/stop times, could cause a large number of
-    decom maps to be used, i.e. from 1980/006 GPS epoch..current time the entire history 
-
 *************************************************************************************************/
 FUNCTION getDefinitionStartStopTimes(   systemId_in IN NUMBER,
                                         startSCT_in IN NUMBER,
@@ -453,10 +416,10 @@ FUNCTION getDefinitionStartStopTimes(   systemId_in IN NUMBER,
                                         startERT_in IN NUMBER,
                                         stopERT_in  IN NUMBER,
                                         startASCT_in IN NUMBER,
-                                        stopASCT_in IN NUMBER,
+                                        stopASCT_in  IN NUMBER,
 
-	                                    definitionStartTime OUT NUMBER,
-				                        definitionStopTime OUT NUMBER,
+                                        definitionStartTime OUT NUMBER,
+                                        definitionStopTime OUT NUMBER,
                                         definitionColumn OUT NUMBER)
 				      RETURN NUMBER
 IS
@@ -464,35 +427,24 @@ BEGIN
     -- Initialize outputs in case return with error.
     definitionStartTime := -1;
     definitionStopTime := -1;
+    definitionColumn := -1;
 
-    -- If ASCT is specified, error immediately.
-    IF startASCT_in >= 0 OR stopASCT_in >= 0 THEN
-        ONTHEFLYDECOM.logError('ERROR IXPE Only supports querying by ERT, SCT.');
+    -- If ERT or SCT are specified, error immediately.
+    IF startERT_in >= 0 OR stopERT_in >= 0 OR startERT_in >= 0 OR stopERT_in >= 0 THEN
+        ONTHEFLYDECOM.logError('ERROR EMA only supports querying by ASCT.');
         RETURN 0;
     END IF;
 
-    
-    -- If an ERT range was specified, use it as the time range for the queries.
-    -- Otherwise assume SCT can be used for the time range when querying these tables.
-    -- This presumes SCT and ERT are the same, or close enough.
-
-    IF (startERT_in >= 0 AND stopERT_in >= 0) THEN
+    IF (startASCT_in >= 0 AND stopASCT_in >= 0)  THEN
         -- Input ERT times are valid, so use them.
-        definitionStartTime := startERT_in;
-        definitionStopTime  := stopERT_in;
-        definitionColumn    := 1;
-    ELSIF (startSCT_in >= 0 AND stopSCT_In >= 0) THEN
-        -- No ERT times were input, so set the TSL and TMD times to SCT times,
-        -- and hope they're comparable to TSF and TMD times (and ERT).  In flight,
-        -- SCT is the same as ERT, i.e. not jammed in the future like during IandT.
-        definitionStartTime := startSCT_in;
-        definitionStopTime  := stopSCT_in;
-        definitionColumn    := 0;
+        definitionStartTime := startASCT_in;
+        definitionStopTime  := stopASCT_in;
+        definitionColumn    := 2;
     ELSE
-        ONTHEFLYDECOM.logError('ERROR Incomplete query provided. Missing start/stop ERT/SCT.');
         RETURN 0;
     END IF;
     RETURN 1;
+
 END getDefinitionStartStopTimes;
 
 END onTheFlyDecomMissionSpecific;

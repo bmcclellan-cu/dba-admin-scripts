@@ -18,9 +18,13 @@ Notes:
      PROCEDURE setOption
      PROCEDURE clearOption
      FUNCTION  getTableName
-     FUNCTION  getL0PacketsSCTColName
+     FUNCTION  getTimeColumnsL0
+     FUNCTION  getTimeColumnsL1
+     FUNCTION  getDecomIdentifier
      PROCEDURE addToL0Query
      PROCEDURE addToL1Query
+     PROCEDURE getDecomMapCur
+     PROCEDURE getTSLCur
      PROCEDURE getDefinitionStartStopTimes
      
   2. Mission Specific Global Variables:
@@ -81,7 +85,7 @@ FUNCTION getVersion
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'EMM 0.1';
+    return 'EMM 0.2';
 END getVersion;
 
 
@@ -199,6 +203,10 @@ BEGIN
     ELSIF (type_in = 2) THEN
         tableName := 'emm_schema' || LPAD(TO_CHAR(systemId_in), 2, '0') || '.TMdiscrete' ||
                       tableNameExtension;
+    ELSIF (type_in = 3) THEN
+        tableName := 'TelemetryStorageLocation';
+    ELSIF (type_in = 4) THEN
+        tableName := 'TMDecom';
     ELSE
         RAISE invalidType;
     END IF;
@@ -210,23 +218,61 @@ END getTableName;
 
 
 /*************************************************************************************************
-Function:   getL0PacketsSCTColName
+Function:   getTimeColumnsL0
 
-Purpose:    This function returns the name of the SCT column in the L0_Packets table.
+Purpose:    This function returns an array of the columns names used to query in L0_Packets. These
+            are expected in the order (0: SCT, 1: ERT, 2: ASCT). They are used both for the query and
+            the where clause.
 
 Input:      None
 
-Returns:    The column name as a VARCHAR2
+Returns:    A VARRAY of the time columns, maximum of 3.
 
 *************************************************************************************************/
-FUNCTION getL0PacketsSCTColName
-         RETURN VARCHAR2
+FUNCTION getTimeColumnsL0
+    RETURN ONTHEFLYDECOM.string_varray
 IS
 BEGIN
-    RETURN 'SCT_GPS_USEC';
+    -- Note: ASCT is unused for IXPE, so it is aliased as null. No queries can be made by ASCT, 
+    --       and will error during getDefinitionStartStopTime.
+    return ONTHEFLYDECOM.string_varray('SCT_GPS_USEC', 'ERT', 'null AS ASCT');
+END getTimeColumnsL0;
 
-END getL0PacketsSCTColName;
 
+
+/*************************************************************************************************
+Function:   getTimeColumnsL1
+
+Purpose:    This function returns an array of the columns names used to query L1 tables. These
+            are expected in the order (0: SCT, 1: ERT, 2: ASCT). They are used both for the query and
+            the where clause.
+ 
+Input:      None
+
+Returns:    A VARRAY of the time columns, maximum of 3.
+*************************************************************************************************/
+FUNCTION getTimeColumnsL1
+    RETURN ONTHEFLYDECOM.string_varray
+IS
+BEGIN
+    return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'null AS ASCT');
+END getTimeColumnsL1;
+
+
+
+/************************************************************************************************* 
+Procedure:  getDecomIdentifier
+
+Purpose:    Returns either 'apid' or 'dmid' based on what field is being used to determine the 
+            decom map. This is only different for EMA, which uses 'dmid'.
+
+*************************************************************************************************/
+FUNCTION getDecomIdentifier
+    RETURN VARCHAR2
+IS
+BEGIN
+    RETURN 'apid';
+END;
 
 
 /*************************************************************************************************
@@ -246,7 +292,7 @@ PROCEDURE addToL0Query( exeString IN OUT VARCHAR2,
 IS
 BEGIN
     IF (gblTestId != -1) THEN
-        exeString := exeString || 'testId=' || TO_CHAR(gblTestId) || ' and ';
+        exeString := exeString || ' AND testId=' || TO_CHAR(gblTestId);
     END IF;
 END addToL0Query;
 
@@ -269,9 +315,124 @@ PROCEDURE addToL1Query( exeString IN OUT VARCHAR2,
 IS
 BEGIN
     IF (gblTestId != -1) THEN
-        exeString := exeString || 'testId=' || TO_CHAR(gblTestId) || ' and ';
+        exeString := exeString || ' AND testId=' || TO_CHAR(gblTestId);
     END IF;
 END addToL1Query;
+
+
+/*************************************************************************************************
+PROCEDURE: getDecomMapCur
+
+Purpose:    Given a SID, APID, TLMID, start and stop time, opens a cursor containing all relevant decom maps.
+            This is done due to differences in the TMDecom table location and structure (EMA has a separate 
+            table for each SID, IXPE has a single table with a SID column).
+
+Inputs:
+   
+    systemId_in          - The SID of the decom map.
+    apid_in              - The APID of the decom map.
+    TMDQueryStartTime_in - The beginning of the time period being queried for, inclusive.
+    TMDQueryStartTime_in - The end of the time period being queried for, inclusive.
+
+Outputs:
+
+    cursor_out     - The cursor created for the query.
+    
+*************************************************************************************************/
+PROCEDURE getDecomMapCur(
+    systemId_in IN NUMBER,
+    apid_in IN NUMBER,
+    tlmId_in IN NUMBER,
+    TMDQueryStartTime_in IN NUMBER,
+    TMDQueryStopTime_in IN NUMBER,
+    cursor_out OUT curType
+    )
+IS 
+    tmdecom_table_name VARCHAR2(50);
+    query_sql CLOB; -- Practically unlimited length
+BEGIN
+    tmdecom_table_name := onTheFlyDecomMissionSpecific.getTableName(4, systemId_in);
+    query_sql := 'SELECT :systemId_in AS systemId, apid, startBit, length, dataType, definitionStart
+        FROM ' || tmdecom_table_name || '
+        WHERE apid     = :apid_in
+          AND tlmId    = :tlmId_in
+          AND definitionStart <= :tmdqstoptime
+          AND definitionStart >= COALESCE(
+                (SELECT MAX(definitionStart)
+                   FROM ' || tmdecom_table_name || '
+                  WHERE tlmId    = :tlmId_in2
+                    AND definitionStart <= :tmdqstarttime
+                ), 0)
+        ORDER BY definitionStart';
+
+    OPEN cursor_out FOR query_sql
+        USING systemId_in,                -- :systemId_in
+              apid_in,                    -- :apid_in
+              tlmId_in,                   -- :tlmId_in
+              TMDQueryStopTime_in,        -- :tmdqstoptime
+              tlmId_in,                   -- :tlmId_in2 (subquery)
+              TMDQueryStartTime_in;           
+END getDecomMapCur;
+
+
+
+/*************************************************************************************************
+PROCEDURE: getTSLCur
+
+Purpose:    Given a SID, APID, TLMID, start and stop time, opens a cursor containing all relevant 
+            TelemetryStorageLocation entries. This is done due to differences in the TelemetryStorageLocation
+            table location and structure (EMA has a separate table for each SID, IXPE has a single table with 
+            a SID column).
+
+Inputs:
+   
+    systemId_in          - The SID of the decom map.
+    apid_in              - The APID of the decom map.
+    TMDQueryStartTime_in - The beginning of the time period being queried for, inclusive.
+    TMDQueryStartTime_in - The end of the time period being queried for, inclusive.
+
+Outputs:
+
+    cursor_out     - The cursor created for the query.
+    
+*************************************************************************************************/
+PROCEDURE getTSLCur(
+    systemId_in IN NUMBER,
+    tlmId_in IN NUMBER,
+    definitionStartTime_in IN NUMBER,
+    definitionStopTime_in IN NUMBER,
+    cursor_out OUT curType
+)
+IS
+    tsl_table_name VARCHAR(50);
+    query_sql CLOB;
+BEGIN
+    tsl_table_name := onTheFlyDecomMissionSpecific.getTableName(3, systemId_in);
+
+    query_sql := '
+        SELECT definitionStart,
+               isInL0,
+               isInL1,
+               apid
+        FROM ' || tsl_table_name || '
+        WHERE tlmId = :tlmId_in
+          AND definitionStart <= :definitionStopTime_in
+          AND definitionStart >= COALESCE(
+                (SELECT MAX(definitionStart)
+                   FROM TelemetryStorageLocation
+                  WHERE tlmId    = :tlmId_in2
+                    AND definitionStart <= :definitionStartTime_in
+                ), 0)
+        ORDER BY definitionStart, apid';
+
+    DBMS_OUTPUT.PUT_LINE('getTSLCur: ' || TO_CHAR(query_sql));
+
+    OPEN cursor_out FOR query_sql
+        USING tlmId_in,         -- :tlmId_in (outer query)
+              definitionStopTime_in, -- :definitionStopTime_in
+              tlmId_in,         -- :tlmId_in2 (subquery)
+              definitionStartTime_in; -- :definitionStartTime_in
+END getTSLCur;
 
 
 
@@ -279,35 +440,54 @@ END addToL1Query;
 FUNCTION: getDefinitionStartStopTimes
 
 Purpose:  Gets start/stop times for use in queries to the TelemetryStorageLocation and TMDecom tables.
-          Uses gblTestId.
+          This does not narrow the query being made, but rather chooses which parameter to use to fetch
+          the relevant records for decommutation. In this case, it takes into account if the user
+          has a testID selected.
 
 Inputs:
-    systemId_in  - E.g. 1 = FLIGHT, 2 = AIT, 3 = FSA, etc.
+    systemId_in  - E.g. 1 = FLIGHT, 2 = TEST
     startERT_in  - Starting Earth Received Time in GPS microseconds. -1 if not used.
     stopERT_in   - Ending Earth Received Time in GPS microseconds. -1 if not used.
     startSCT_in  - Starting spacecraft time in GPS microseconds. -1 if not used.
     stopSCT_in   - Ending spacecraft time in GPS microseconds. -1 if not used.
+    startASCT_in - Start Adjusted Time in GPS microseconds. -1 if not used.
+    stopASCT_in  - End Adjusted Time in GPS microseconds. -1 if not used.
 
 Outputs:
-    definitionStart - GPS microseconds
-    definitionStop  - GPS microseconds
+    definitionStart  - GPS microseconds
+    definitionStop   - GPS microseconds
+    definitionColumn - Column being used to get the start and stop times (0: SCT, 1: ERT, 2: ASCT)
 
 Returns: 1=success, 0=failure
 
+Notes:
+  - EMA does not support ASCT, so any attempt to query by that column gets prevented here as a
+    form of input validation. 
+
 *************************************************************************************************/
-FUNCTION getDefinitionStartStopTimes( systemId_in IN NUMBER,
-                                      startERT_in IN NUMBER,
-                                      stopERT_in  IN NUMBER,
-			              startSCT_in IN NUMBER,
-			              stopSCT_in  IN NUMBER,
-	                              definitionStartTime OUT NUMBER,
-				      definitionStopTime OUT NUMBER)
+FUNCTION getDefinitionStartStopTimes(   systemId_in IN NUMBER,
+                                        startSCT_in IN NUMBER,
+                                        stopSCT_in  IN NUMBER,
+                                        startERT_in IN NUMBER,
+                                        stopERT_in  IN NUMBER,
+                                        startASCT_in IN NUMBER,
+                                        stopASCT_in  IN NUMBER,
+
+                                        definitionStartTime OUT NUMBER,
+                                        definitionStopTime OUT NUMBER,
+                                        definitionColumn OUT NUMBER)
 				      RETURN NUMBER
 IS
 BEGIN
     -- Initialize outputs in case return with error.
     definitionStartTime := -1;
     definitionStopTime := -1;
+
+    -- If ASCT is specified, error immediately.
+    IF startASCT_in >= 0 OR stopASCT_in >= 0 THEN
+        ONTHEFLYDECOM.logError('ERROR EMA Only supports querying by ERT, SCT.');
+        RETURN 0;
+    END IF;
     
     -- If a ERT range was specified, use it as the definition range.
     -- Else if a non-zero testId was specified, use that test's ERT range, as reflected by min/max ERT in TelemetrySourceFiles.
@@ -319,10 +499,13 @@ BEGIN
         -- Input ERT times are valid, so use them.
         definitionStartTime := startERT_in;
         definitionStopTime  := stopERT_in;
+        definitionColumn    := 1;
     ELSIF (gblTestId >= 1) THEN
         -- No ERT range was specified, but a non-zero testId was specified.  Use the ERT range of files associated with that testId.
         SELECT min(MIN_ERT), max(MAX_ERT) INTO definitionStartTime,definitionStopTime FROM TelemetrySourceFiles WHERE 
                testId = gblTestId AND schemaId = systemId_in;
+        
+        definitionColumn   := 1; -- The outputted definitionTimes are ERT. 
     ELSIF (startSCT_in >= 0) THEN
         -- No ERT times were input.  Set the TSL and TMD times to SCT times.
 	-- Either testId=0 was specified, meaning return all tlm data *not* associated with a specific test, or
@@ -330,14 +513,14 @@ BEGIN
         -- This is the case for flight, where SCT is the same as ERT, i.e. not jammed in the future like during IandT.
         definitionStartTime := startSCT_in;
         definitionStopTime  := stopSCT_in;
+        definitionColumn    := 0;
     ELSE
+        ONTHEFLYDECOM.logError('ERROR Incomplete query provided. Missing start/stop ERT/SCT.');
         RETURN 0;
     END IF;
     RETURN 1;
 
 END getDefinitionStartStopTimes;
-
-
 
 END onTheFlyDecomMissionSpecific;
 /
