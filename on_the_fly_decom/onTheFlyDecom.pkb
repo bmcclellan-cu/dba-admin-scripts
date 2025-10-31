@@ -164,8 +164,9 @@ TYPE tsl_row_t IS RECORD (
 
 -- Make a type for input to replaceBindVars.
 TYPE name_value_t IS TABLE OF VARCHAR2(64) INDEX BY VARCHAR2(64);
-
-gblSequence NUMBER := 1;  /* sequence column (row counter) in onTheFlyDecom_errors */
+/* sequence column (row counter) in onTheFlyDecom_errors. 
+Represents a single unique message. Duplicate sequence entries indicate a split message*/
+gblSequence NUMBER := 1;  
 
 /*************************************************************************************************
 Procedure:  string_varray_to_csv
@@ -194,8 +195,8 @@ END string_varray_to_csv;
 Procedure:  logError
 
 Purpose:    Inserts a new row with a message to the onTheFlyDecom_errors temporary table, incrementing
-            a global counter indicating the order of events. The collateErrors function is used to 
-            compact the errors such that identical error messages are not repeated.
+            a global counter indicating the order of events. The collateErrors function is used by 
+            selectNumericTlm to compact the errors such that identical error messages are not repeated.
 
 Input:      message - VARCHAR2 The error message to log.
                       It should start with "ERROR ", "WARNING " or "INFO ".
@@ -205,9 +206,17 @@ Notes:
 *************************************************************************************************/
 PROCEDURE logError(msg VARCHAR2)
 IS
-    tmpOccurrences NUMBER;
+    messageRow VARCHAR2(500);
+    rowLength  NUMBER := 500;
+    rowStart     NUMBER := 1;
 BEGIN
-    INSERT INTO onTheFlyDecom_errors (sequence, message, occurrences) VALUES (gblSequence, msg, 1);
+    LOOP
+        EXIT WHEN rowStart >= LENGTH(msg);
+
+        messageRow := SUBSTR(msg, rowStart, rowLength);
+        rowStart := rowStart + rowLength;
+        INSERT INTO ONTHEFLYDECOM_ERRORS (sequence, message, occurrences) VALUES (gblSequence, messageRow, 1);
+    END LOOP;
     gblSequence := gblSequence + 1;
 EXCEPTION
     WHEN others THEN
@@ -267,7 +276,7 @@ IS
     missionSpecificVersion VARCHAR2(128);
 BEGIN
     missionSpecificVersion := onTheFlyDecomMissionSpecific.getVersion();
-    logError( 'INFO multimission version: 0.2');
+    logError( 'INFO multimission version: 0.2.1');
     logError( 'INFO mission-specific version: ' || missionSpecificVersion);
 END getVersion;
 
