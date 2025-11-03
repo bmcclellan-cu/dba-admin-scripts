@@ -176,7 +176,6 @@ Purpose:    Inserts a new row with a message to the onTheFlyDecom_errors tempora
             a global counter indicating the order of events. The collateErrors function is used by 
             selectNumericTlm to compact the errors such that identical error messages are not repeated.
 
-
 Input:      message -  VARCHAR2 The error message to log.
                        It should start with "ERROR ", "WARNING " or "INFO ".
             priority - NUMBER   How "important" the log message is:
@@ -234,11 +233,13 @@ END logOTFD;
 /*************************************************************************************************
 Procedure:  collateErrors
 
-Purpose:    If gblDebugLevel is 0, takes the errors currently in the onTheFlyDecom_errors table and 
-            deletes errors with identical error messages, incrementing an occurrences counter to reflect
-            the number of errors. The lowest sequence is preserved, such that the order that the errors 
-            initially occurred in is preserved. This was done to the inefficiency of incrementing said
-            counter throughout runtime when displaying 80K+ errors.
+Purpose:    Takes the log output in onTheFlyDecom_errors and deletes sequential entries with identical 
+            logging messages, incrementing the occurrences counter to reflect the number of errors. The 
+            lowest sequence is preserved. This is significantly more efficient than running an UPDATE
+            query for every message logged (especially when exceeding 10K messages for a single procedure call), 
+            and still allows for log compaction. This has no significant performance impact for low amounts of 
+            log output, and makes troubleshooting issues in the decom code (such as decomFromHexString) significantly 
+            less tedious.
 
 Input:      None
 
@@ -250,43 +251,40 @@ BEGIN
     if (gblDebugLevel >= 2) THEN
         DBMS_OUTPUT.PUT_LINE('DEBUG: collateErrors with gblDebugLevel=' || gblDebugLevel);
     END IF;
-    if (TRUE) THEN
-        -- First, identify the start of each sequential group of identical messages
-        -- and count how many consecutive occurrences there are
-        MERGE INTO onTheFlyDecom_errors t
-        USING (
+    -- First, identify the start of each sequential group of identical messages
+    -- and count how many consecutive occurrences there are
+    MERGE INTO onTheFlyDecom_errors t
+    USING (
+        SELECT 
+            MIN(sequence) AS sequence,
+            message,
+            COUNT(*) AS cnt
+        FROM (
             SELECT 
                 sequence,
                 message,
-                COUNT(*) AS cnt
-            FROM (
-                SELECT 
-                    sequence,
-                    message,
-                    sequence - ROW_NUMBER() OVER (PARTITION BY message ORDER BY sequence) AS grp
-                FROM onTheFlyDecom_errors
-            )
-            GROUP BY message, grp, sequence
-            HAVING sequence = MIN(sequence)
-        ) s
-        ON (t.sequence = s.sequence AND t.message = s.message)
-        WHEN MATCHED THEN
-        UPDATE SET t.occurrences = s.cnt;
+                sequence - ROW_NUMBER() OVER (PARTITION BY message ORDER BY sequence) AS grp
+            FROM onTheFlyDecom_errors
+        )
+        GROUP BY message, grp
+    ) s
+    ON (t.sequence = s.sequence AND t.message = s.message)
+    WHEN MATCHED THEN
+    UPDATE SET t.occurrences = s.cnt;
 
-        -- Delete all rows except the first occurrence of each sequential group
-        DELETE FROM onTheFlyDecom_errors t
-        WHERE sequence NOT IN (
-            SELECT MIN(sequence)
-            FROM (
-                SELECT 
-                    sequence,
-                    message,
-                    sequence - ROW_NUMBER() OVER (PARTITION BY message ORDER BY sequence) AS grp
-                FROM onTheFlyDecom_errors
-            )
-            GROUP BY message, grp
-        );
-    END IF;
+    -- Delete all rows except the first occurrence of each sequential group
+    DELETE FROM onTheFlyDecom_errors t
+    WHERE sequence NOT IN (
+        SELECT MIN(sequence)
+        FROM (
+            SELECT 
+                sequence,
+                message,
+                sequence - ROW_NUMBER() OVER (PARTITION BY message ORDER BY sequence) AS grp
+            FROM onTheFlyDecom_errors
+        )
+        GROUP BY message, grp
+    );
 EXCEPTION
     WHEN others THEN
         DBMS_OUTPUT.PUT_LINE('ERROR: collateErrors failed: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
@@ -482,6 +480,7 @@ BEGIN
     return result;
 END replaceBindVars;
 
+
 /*************************************************************************************************
 Function:   decomFromHexString
 
@@ -544,55 +543,51 @@ IS
     nBytes INTEGER;
     mask NUMBER;
     bitIsSet BOOLEAN;
-    errMsg VARCHAR2(500) := 'decomFromHexString: Error! ';
     message VARCHAR2(500) := '';
 BEGIN
     -- This gets called especially often and WILL clog up debugging, so it has priority 3.
-    logOTFD('decomFromHexString called with hexString_in=' || hexString_in || ', bitOffset_in=' || bitOffset_in || ', bitLength_in=' || bitLength_in || ', dataType_in=' || dataType_in, 3);
-    
+    logOTFD('decomFromHexString: hexString_in=' || hexString_in || ', bitOffset_in=' || bitOffset_in || ', bitLength_in=' || bitLength_in || ', dataType_in=' || dataType_in, 3);
+
     -- First, the inputs are validated -----------------------------------------------------------
     IF hexString_in = '' THEN
-        errMsg := errMsg || 'Input hex string is empty!';
+        logOTFD('decomFromHexString: Input hex string is empty!', 0);
         return 0;
     END IF;
 
     nBytes := LENGTH( hexString_in)/2; -- Get the number of bytes in hexString_in
 
     IF MOD( LENGTH( hexString_in), 2) != 0 THEN
-        errMsg := errMsg || 'Input hex string does not have an even number of characters: ' || hexString_in;
+        logOTFD('decomFromHexString: Input hexString_in (' || hexString_in || ') does not have an even number of characters', 0);
         return 0;
     END IF;
 
     IF nBytes > 8 THEN
-        errMsg := errMsg || 'Input hex string longer than 8 bytes! nBytes = ' || nBytes;
+        logOTFD('decomFromHexString: Input nBytes(' || nBytes || ') greater than 8 bytes!', 0);
         return 0;
     END IF;
 
     IF bitOffset_in < 0 or bitOffset_in > (nBytes*8 - 1) THEN
-        errMsg := errMsg || 'Input bitOffset is invalid: ' || bitOffset_in;
+        logOTFD('decomFromHexString: Input bitOffset(' || bitOffset_in || ') is invalid', 0);
         return 0;
     END IF;
 
     IF (bitOffset_in + bitLength_in) > (nBytes*8) THEN
-        errMsg := errMsg || 'Error: Input bitOffset + bitLength (' ||
-	          bitOffset_in || ' + ' || bitLength_in || ') exceeds length of hex string: ' ||
-                  nBytes*8;
+        logOTFD('decomFromHexString: Input bitOffset(' || bitOffset_in || ') + bitLength(' || bitLength_in || ')  exceeds length of hex string(' || nBytes*8 || ')', 0);
         return 0;
     END IF;
 
-    IF (dataType_in != 'F') and (dataType_in != 'I') and (dataType_in != 'U') and 
-       (dataType_in != 'D') THEN
-        errMsg := errMsg || 'Unsupported input dataType: ' || dataType_in;
+    IF (dataType_in != 'F') and (dataType_in != 'I') and (dataType_in != 'U') and (dataType_in != 'D') THEN
+        logOTFD('decomFromHexString: Unsupported input dataType(' || dataType_in || ')', 0);
         return 0;
     END IF;
 
     IF (dataType_in = 'F') THEN
         IF (bitLength_in != 32) and (bitLength_in != 64) THEN
-            errMsg := errMsg || 'Invalid bitLength = ' || bitLength_in || ' for dataType=F';
+            logOTFD('decomFromHexString: Invalid bitLength(' || bitLength_in || ') for dataType=F', 0);
             return 0;
         END IF;
         IF bitOffset_in != 0 THEN
-            errMsg := errMsg || 'Input bitOffset must be 0 for ' || 'dataType=F';
+            logOTFD('decomFromHexString: Input bitOffset(' || bitOffset_in || ') must be 0 for dataType=F', 0);
             return 0;
         END IF;
     END IF;
@@ -606,7 +601,7 @@ BEGIN
             valueAsNumber := TO_NUMBER( UTL_RAW.CAST_TO_BINARY_FLOAT( HEXTORAW( hexString_in), 1));
    	    EXCEPTION
 	    WHEN others THEN
-	        errMsg := errMsg || 'Cannot convert bits to float';
+            logOTFD('decomFromHexString: Failed to convert bits to FLOAT', 0);
 	        return 0;
 	END;
     ELSIF dataType_in = 'F' and bitLength_in = 64 and nBytes = 8 THEN
@@ -616,7 +611,7 @@ BEGIN
             valueAsNumber := TO_NUMBER( UTL_RAW.CAST_TO_BINARY_DOUBLE( HEXTORAW( hexString_in), 1));
 	    EXCEPTION
 	    WHEN others THEN
-	        errMsg := errMsg || 'Cannot convert bits to double';
+            logOTFD('decomFromHexString: Failed to convert bits to DOUBLE', 0);
 	        return 0;
 	END;
     ELSE
@@ -629,7 +624,7 @@ BEGIN
             valueAsNumber := TO_NUMBER( hexString_in, 'XXXXXXXXXXXXXXXX');
         EXCEPTION
         WHEN others THEN
-            errMsg := errMsg || 'Cannot convert bits directly to number';
+            logOTFD('decomFromHexString: Failed to convert bits directly to NUMBER', 0);
             return 0;
         END;
         -- 'valueAsNumber' can be thought of as a 64-bit unsigned integer
@@ -671,7 +666,7 @@ BEGIN
     -- to be invalid, and are discarded.
     IF valueAsNumber > 1e125 OR valueAsNumber < -1e125 THEN
         IF gblDebugLevel > 0 THEN
-            logOTFD('WARNING: Numeric overflow detected, dropping record with hex ' || hexString_in, 1);
+            logOTFD('decomFromHexString: Numeric overflow detected, dropping record with hex ' || hexString_in, 1);
         END IF;
         valueAsNumber := NULL;
         return 0;
@@ -680,9 +675,6 @@ BEGIN
     -- The bits are now set correctly for an unsigned integer
     -- If dataType is signed integer, and the MSB bit is set, then we want to interpret the bits as a negative number
     -- The correct negative value is returned by the expression:  (valueAsNumber - 2^bitLength_in)
-    message := 'ValueAsNumber : ' || TO_CHAR(valueAsNumber);
-    message := message || ', Hexstring_in : ' || hexString_in;
-
     IF dataType_in = 'I' THEN
         -- Only attempt to BITAND if the value is an int, otherwise the operation may fail.
         bitIsSet := (BITAND(valueAsNumber, POWER(2,bitLength_in-1)) != 0);
@@ -695,7 +687,7 @@ BEGIN
 
     EXCEPTION
     WHEN others THEN
-        logOTFD('ERROR decomFromHexString: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM || ' with: ' || message, 0);
+        logOTFD('decomFromHexString: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
         return 0;
 
 END decomFromHexString;
@@ -729,7 +721,7 @@ IS
     l_index        PLS_INTEGER := 1;
     l_tab          nestedTable_typ := nestedTable_typ();
 BEGIN
-    logOTFD('CSV2NestedTable called with p_list=' || p_list, 2);
+    logOTFD('CSV2NestedTable: p_list=' || p_list, 2);
     LOOP
         l_comma_index := INSTR(l_string, ',', l_index);
         EXIT WHEN l_comma_index = 0;
@@ -768,8 +760,12 @@ PROCEDURE narrowStartStopTimes(
     queryStopTime  OUT NUMBER)
 IS
 BEGIN
-    logOTFD('narrowStartStopTimes called with startTime=' || startTime || ', stopTime=' || stopTime 
-    || ', TSLStartTime=' || TSLStartTime || ', TSLStopTime=' || TSLStopTime, 2);
+    logOTFD('narrowStartStopTimes: startTime=' || startTime ||
+            ', stopTime=' || stopTime ||
+            ', TSLStartTime=' || TSLStartTime ||
+            ', TSLStopTime=' || TSLStopTime, 2
+    );
+
     IF (TSLStartTime = -1) THEN
         queryStartTime := startTime;
     ELSIF (TSLStartTime > startTime) THEN
@@ -898,12 +894,13 @@ IS
 
     monitor_value VARCHAR2(20); -- This string is set to inject the monitor flag into SQL queries made.
 BEGIN
-    logOTFD('queryL0 called with tmdecom_row_t=<not_unpackable>, startSCT_in=' || startSCT_in || 
+    logOTFD('queryL0: tmdecom_row_t=<not_unpackable>, startSCT_in=' || startSCT_in || 
             ', stopSCT_in=' || stopSCT_in || 
             ', startERT_in=' || startERT_in || 
             ', stopERT_in=' || stopERT_in || 
             ', startASCT_in=' || startASCT_in || 
-            ', stopASCT_in=' || stopASCT_in, 2);
+            ', stopASCT_in=' || stopASCT_in, 2
+    );
 
     -- Get the table name
     tableName := onTheFlyDecomMissionSpecific.getTableName(0, decomMap.systemId);
@@ -1017,7 +1014,7 @@ BEGIN
     -- exeString := 'SELECT * FROM (' || exeString || ') inner_table WHERE ASCT >= :startASCT_in AND ASCT ' || booleanOpString || ' :stopASCT_in';
 
     -- Log the composed query if debug level is high enough
-    logOTFD('INFO debugString=' || exeString, 2);
+    logOTFD('queryL0: ' || exeString, 2);
 
     open c for exeString using nBytes, byteOffset, apid, byteOffset, nBytes;
     
@@ -1072,22 +1069,19 @@ BEGIN
             INSERT INTO onTheFlyDecom_results (SCT, ERT, ASCT, VALUE) VALUES (sct_arr(indx), ert_arr(indx), asct_arr(indx), value_arr(indx));
         
         nRows := nRows + nValues; -- Increment the row counter 
-    END LOOP;
-
-    IF (gblDebugLevel >= 1) THEN
-        debugString := 'queryL0: inserted ' || nRows || ' rows into onTheFlyDecom_results table.';
-        logOTFD( 'INFO ' || debugString, 2);
-    END IF;
-
+    END LOOP;    
     CLOSE c;
+
+    logOTFD( 'queryL0: inserted ' || nRows || ' rows into onTheFlyDecom_results table.', 2);
+
     RETURN;
 
     EXCEPTION
     WHEN decom_error THEN
-        logOTFD('ERROR queryL0: No provided ERT or SCT time range', 0);
+        logOTFD('queryL0: No provided ERT or SCT time range', 0);
         RETURN;
     WHEN others THEN
-        logOTFD('ERROR queryL0: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+        logOTFD('queryL0: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
         RETURN;
 END queryL0;
 
@@ -1160,7 +1154,7 @@ IS
 
     monitor_value VARCHAR2(20); 
 BEGIN
-    logOTFD('queryL1 called with parameters systemId_in=' || systemId_in || 
+    logOTFD('queryL1: systemId_in=' || systemId_in || 
             ', tlmId_in=' || tlmId_in ||
             ', startERT_in=' || startERT_in || 
             ', stopERT_in=' || stopERT_in ||
@@ -1172,7 +1166,8 @@ BEGIN
             ', TSLRowStopTime=' || TSLRowStopTime ||
             ', dataType=' || dataType ||
             ', doInclusiveQuery=' || sys.diutil.bool_to_int(doInclusiveQuery) ||
-            ', definitionColumn=' || definitionColumn, 2);
+            ', definitionColumn=' || definitionColumn, 2
+    );
 
     IF (datatype != 'D') THEN
         -- Query TManalog
@@ -1248,19 +1243,15 @@ BEGIN
     -- Add anything mission-specific to the query, such as testId or tlmFileName.
     onTheFlyDecomMissionSpecific.addToL1Query(exeString, systemId_in);
 
-    logOTFD( 'INFO ' || exeString, 2);
+    logOTFD('queryL1: ' || exeString, 2);
 
     -- Insert the values.
     EXECUTE IMMEDIATE exeString USING IN tlmId_in;
 
-    IF (gblDebugLevel >= 1) THEN
-        logOTFD( 'INFO queryL1: inserted ' || sql%Rowcount || ' rows into onTheFlyDecom_results table.', 2);
-    END IF;
+    logOTFD('queryL1: inserted ' || sql%Rowcount || ' rows into onTheFlyDecom_results table.', 2);
     
     RETURN;
-    
 END queryL1;
-
 
 
 /*************************************************************************************************
@@ -1332,10 +1323,15 @@ IS
     tmd_cursor curType;
     tsl_cursor curType;
 BEGIN 
-    logOTFD('selectNumericTlm called with parameters systemId_in=' || systemId_in || ', tlmId_in=' || tlmId_in || ', startSCT_in=' || startSCT_in
-    || ', stopSCT_in=' || stopSCT_in || ', startERT_in=' || startERT_in || ', stopERT_in=' || stopERT_in || ', startASCT_in=' || startASCT_in 
-    || ', stopASCT_in=' || stopASCT_in, 2);
-
+    logOTFD('selectNumericTlm: systemId_in=' || systemId_in || 
+            ', tlmId_in=' || tlmId_in || 
+            ', startSCT_in=' || startSCT_in || 
+            ', stopSCT_in=' || stopSCT_in || 
+            ', startERT_in=' || startERT_in || 
+            ', stopERT_in=' || stopERT_in || 
+            ', startASCT_in=' || startASCT_in || 
+            ', stopASCT_in=' || stopASCT_in, 2
+    );
     -- STEP A: Initialization --------------------------------------------------------------------
 
     EXECUTE IMMEDIATE 'TRUNCATE TABLE onTheFlyDecom_results';
@@ -1361,7 +1357,7 @@ BEGIN
     END IF;
 
     IF (gblDecomMapTimeGPS != -1) THEN
-        logOTFD( 'INFO gblDecomMapTimeGPS = ' || TO_CHAR( gblDecomMapTimeGPS), 2);
+        logOTFD( 'selectNumericTlm: gblDecomMapTimeGPS = ' || TO_CHAR( gblDecomMapTimeGPS), 2);
     END IF;
 
     -- Initialize apidArray
@@ -1374,7 +1370,7 @@ BEGIN
     -- Check that dataType is in the supported set: unsigned or signed int, float or discrete.
     -- We don't support strings by design.
     IF (NOT ((dataType = 'U') OR (dataType = 'I') OR (dataType = 'F') OR (dataType = 'D'))) THEN
-        logOTFD('ERROR unsupported dataType for tlmId=' || tlmId_in || ': ' || dataType, 0);
+        logOTFD('selectNumericTlm: unsupported dataType for tlmId=' || tlmId_in || ': ' || dataType, 0);
         RETURN;
     END IF;
 
@@ -1409,7 +1405,7 @@ BEGIN
 
         IF TSLRows.COUNT = 0 THEN
             -- No TSL rows exist, so must be a derived item or other non-packetized item, which are only stored in the L1 tables.
-            logOTFD('No TSL rows exist, must be a derived item; querying L1...', 2);
+            logOTFD('selectNumericTlm: No TSL rows exist, must be a derived item; querying L1...', 2);
             queryL1( systemId_in, tlmId_in, startERT_in, stopERT_in, startSCT_in, stopSCT_in, startASCT_in, stopASCT_in,
 	             -1, -1, dataType, true, definitionColumn);
 	        RETURN;
@@ -1423,13 +1419,13 @@ BEGIN
 	        -- This is only used in testing.
             IF (gblForceIsInL0 != -1) THEN
 	            IF (TSLRows(i).isInL0 != gblForceIsInL0) THEN
-		            logOTFD('INFO changing TSLRows(' || TO_CHAR(i) || ').isInL0 to ' || TO_CHAR( gblForceIsInL0), 2);
+		            logOTFD('selectNumericTlm: changing TSLRows(' || TO_CHAR(i) || ').isInL0 to ' || TO_CHAR( gblForceIsInL0), 2);
 		        END IF;
 	            TSLRows(i).isInL0 := gblForceIsInL0;
 	        END IF;
             IF (gblForceIsInL1 != -1) THEN
 	            IF (TSLRows(i).isInL1 != gblForceIsInL1) THEN
-		            logOTFD('INFO changing TSLRows(' || TO_CHAR(i) || ').isInL1 to ' || TO_CHAR( gblForceIsInL1), 2);
+		            logOTFD('selectNumericTlm: changing TSLRows(' || TO_CHAR(i) || ').isInL1 to ' || TO_CHAR( gblForceIsInL1), 2);
 		        END IF;
 	            TSLRows(i).isInL1 := gblForceIsInL1;
 	        END IF;
@@ -1449,7 +1445,7 @@ BEGIN
 
             -- Skip this row and warn if both isInL0=0 and isInL1=0.
             IF (isInL0 = false AND isInL1 = false) THEN
-                logOTFD('TSL Row starting at ' || TSLRows(i).definitionStart || ' reports false for isInL0 and isInL1. Skipping...', 1);
+                logOTFD('selectNumericTlm: TSL Row starting at ' || TSLRows(i).definitionStart || ' reports false for isInL0 and isInL1. Skipping...', 1);
                 CONTINUE;
             END IF;
 
@@ -1503,7 +1499,6 @@ BEGIN
             END LOOP;
         END IF;
 
-
         -- STEP D: Get the decom rows applicable to this tlmId and to the time range of the TSL row. ---------
 
         -- Normally the TSL row start/stop times are used as the end points of the following query.
@@ -1544,7 +1539,7 @@ BEGIN
 
             -- If not in L1 and no TMDecom rows found, skip TSL row.
             IF (TMDRows.COUNT = 0) THEN
-                logOTFD('No TMDecom rows returned for Start Time ' || TMDQueryStartTime || ' and End Time ' || TMDQueryStopTime, 1);
+                logOTFD('selectNumericTlm: No TMDecom rows returned for Start Time ' || TMDQueryStartTime || ' and End Time ' || TMDQueryStopTime, 1);
                 CONTINUE;
             END IF;
 
@@ -1557,7 +1552,7 @@ BEGIN
 		    -- This shouldn't happen because is should be true that isInL0=0 and isInL1=0.
 		    -- This is just for extra robustness in case TSL and TMD don't both have end markers.
                 IF (TMDRows(j).startBit = -1) THEN
-                    logOTFD('TMDecom row Starting at ' || TMDRows(i).definitionStart || ' is an end marker (startBit -1). Skipping...', 2);
+                    logOTFD('selectNumericTlm: TMDecom row Starting at ' || TMDRows(i).definitionStart || ' is an end marker (startBit -1). Skipping...', 2);
                     CONTINUE;
                 END IF;
 
@@ -1574,9 +1569,9 @@ BEGIN
                 END IF;
                 doInclusiveQuery := (isLastTSLRow AND isLastTMDRow);
 
-                logOTFD('INFO isLastTSLRow = ' || sys.diutil.bool_to_int(isLastTSLRow) ||
-                    ', isLastTMDRow = ' || sys.diutil.bool_to_int(isLastTMDRow) ||
-                    ', doInclusiveQuery = ' || sys.diutil.bool_to_int(doInclusiveQuery), 
+                logOTFD('selectNumericTlm: isLastTSLRow = ' || sys.diutil.bool_to_int(isLastTSLRow) ||
+                        ', isLastTMDRow = ' || sys.diutil.bool_to_int(isLastTMDRow) ||
+                        ', doInclusiveQuery = ' || sys.diutil.bool_to_int(doInclusiveQuery), 
                 2);
 			     
                 -- Get start and stop times for this TMD row.  Adjust these times so they're within the range
@@ -1621,11 +1616,9 @@ BEGIN
             END LOOP;  -- end loop through TMdecom rows
             EXCEPTION
                 WHEN NO_DATA_FOUND THEN
-                    logOTFD('ERROR selectNumericTlm: ' || 'No TMDecom rows found for time range ' || 
-                              TSLRowStartTime || ' - ' || TSLRowStopTime, 0);
+                    logOTFD('selectNumericTlm: ' || 'No TMDecom rows found for time range ' || TSLRowStartTime || ' - ' || TSLRowStopTime, 0);
                 WHEN others THEN
-                    logOTFD('ERROR selectNumericTlm: fetch block: others exception: ' ||
-		              SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+                    logOTFD('selectNumericTlm: fetch block: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
             END;    
         END LOOP;  -- end loop through TelemetryStorageLocation rows
 
@@ -1635,23 +1628,22 @@ BEGIN
 
     EXCEPTION
         WHEN NO_DATA_FOUND THEN
-            logOTFD('ERROR selectNumericTlm: No telemetryStorageLocation ' ||
-                     'rows found for time range ' || definitionStartTime || ' - ' || definitionStopTime, 0);
+            logOTFD('selectNumericTlm: No telemetryStorageLocation rows found for time range ' || definitionStartTime || ' - ' || definitionStopTime, 0);
             collateErrors();
             RETURN;
     END;
 
     EXCEPTION
         WHEN time_error THEN
-            logOTFD('ERROR selectNumericTlm: Invalid or missing time range', 0);
+            logOTFD('selectNumericTlm: Invalid or missing time range', 0);
             collateErrors();
             RETURN;
         WHEN definition_error THEN
-            logOTFD('ERROR selectNumericTlm: Definition Error. Input parameters invalid.', 0);
+            logOTFD('selectNumericTlm: Definition Error. Input parameters invalid.', 0);
             collateErrors();
             RETURN;
         WHEN others THEN
-            logOTFD('ERROR selectNumericTlm: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+            logOTFD('selectNumericTlm: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
             collateErrors();
             RETURN;
 
