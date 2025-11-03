@@ -16,19 +16,19 @@ Revisions:
   08/27/25 RS   Updated for EMA
 
 Methods:
-  logError             - The error logging function writes to the onTheFlyDecom_errors table.
-  setOption            - End-user application calls to set options, both generic and mission-specific.
-  clearOption          - End-user application calls to revert an option to its default value.
-  string_varray_to_csv - Converts a varray of up to 3 strings into CSV.
-  replaceBindVars      - Replaces ":bind_var" in a query with the value.  For debugging queries.
-  decomFromHexString   - Returns a NUMBER from a hex string, given offset, length and dataType.
-  CSV2NestedTable      - Converts a comma separated string of apids to a PL/SQL table of integer apids.
-  narrowStartStopTimes - Used so the data from L0/L1 queries with multiple TSL or TMD rows don't overlap.
-  queryL0              - Queries L0_Packets and decoms a telemetry item from each BLOB, as directed
-                         by one TMDecom record.  Inserts results into the onTheFlyDecom_results table.
-  queryL1              - Queries TManalog or TMdiscrete, inserts results into onTheFlyDecom_results.
-  selectNumericTlm     - The main telemetry retrieval procedure;  mostly generic code, with a few
-                         calls to mission-specific code.
+  logOTFD               - The error logging function writes to the onTheFlyDecom_errors table.
+  setOption             - End-user application calls to set options, both generic and mission-specific.
+  clearOption           - End-user application calls to revert an option to its default value.
+  string_varrayToCSV    - Converts a varray of up to 3 strings into CSV.
+  replaceBindVars       - Replaces ":bind_var" in a query with the value.  For debugging queries.
+  decomFromHexString    - Returns a NUMBER from a hex string, given offset, length and dataType.
+  CSV2NestedTable       - Converts a comma separated string of apids to a PL/SQL table of integer apids.
+  narrowStartStopTimes  - Used so the data from L0/L1 queries with multiple TSL or TMD rows don't overlap.
+  queryL0               - Queries L0_Packets and decoms a telemetry item from each BLOB, as directed
+                          by one TMDecom record.  Inserts results into the onTheFlyDecom_results table.
+  queryL1               - Queries TManalog or TMdiscrete, inserts results into onTheFlyDecom_results.
+  selectNumericTlm      - The main telemetry retrieval procedure;  mostly generic code, with a few
+                          calls to mission-specific code.
 
 Usage: 
   1. In sqlplus:   If not already installed/compiled, do:
@@ -121,7 +121,7 @@ Notes:
        In this case the SCT times used together with TSL and TMD times is not an issue.
 *************************************************************************************************/
 
-CREATE OR REPLACE PACKAGE BODY onTheFlyDecom
+CREATE OR REPLACE PACKAGE BODY IXPE_MISC.onTheFlyDecom
 AS
 
 -- These options, and additional mission-specific options, are settable by calling the setOption
@@ -134,7 +134,7 @@ AS
 -- If debug level is above 0, the L0 and L1 queries will have the monitor flag enabled, allowing for query performance to be measured.
 -- Keep in mind that this does not apply for TMDecom/TelemetryStorageLocation queries, as those are unlikely to be performance bottlenecks
 -- and use inline SQL, which cannot have those flags injected.
-gblDebugLevel      NUMBER := 0;           /* 0=silent,  1=verbose, 2=more verbose */
+gblDebugLevel      NUMBER := 0;           /* 0=errors,  1=warning, 2=verbose debug, 3=very verbose debug */
 gblApids           VARCHAR2(128) := '-1'; /* comma-separated list of apids */
 gblDecomMapTimeGPS NUMBER := -1;          /* Overrides using start/stop times and TMdecom table for decom map time(s). */
 gblForceIsInL0     NUMBER := -1;          /* -1 = not in effect, 0 = isInL0=0, 1 = isInL0=1 */
@@ -169,61 +169,65 @@ Represents a single unique message. Duplicate sequence entries indicate a split 
 gblSequence NUMBER := 1;  
 
 /*************************************************************************************************
-Procedure:  string_varray_to_csv
-
-Purpose:    Converts the string_varray datatype to a csv for use in query creation.
-
-Input:      array_in - string_varray (VARRAY(3) OF VARCHAR(200)) The array to convert.
-*************************************************************************************************/
-FUNCTION string_varray_to_csv(array_in IN string_varray)
-RETURN VARCHAR2 IS
-    l_result VARCHAR2(32767);
-BEGIN
-    IF array_in IS NOT NULL THEN
-        FOR i IN 1 .. array_in.COUNT LOOP
-            IF i > 1 THEN
-                l_result := l_result || ',';
-            END IF;
-            l_result := l_result || array_in(i);
-        END LOOP;
-    END IF;
-
-    RETURN l_result;
-END string_varray_to_csv;
-
-/*************************************************************************************************
-Procedure:  logError
+Procedure:  logOTFD
 
 Purpose:    Inserts a new row with a message to the onTheFlyDecom_errors temporary table, incrementing
             a global counter indicating the order of events. The collateErrors function is used by 
             selectNumericTlm to compact the errors such that identical error messages are not repeated.
 
-Input:      message - VARCHAR2 The error message to log.
-                      It should start with "ERROR ", "WARNING " or "INFO ".
+
+Input:      message -  VARCHAR2 The error message to log.
+                       It should start with "ERROR ", "WARNING " or "INFO ".
+            priority - NUMBER   How "important" the log message is:
+                        0: ERROR            - Needs to be logged regardless of logging level
+                        1: WARNING          - May represent a non-fatal error or issue
+                        2: DEBUG            - Logs all actions taken, including all SQL run and most function calls made
+                        3: VERBOSE DEBUG    - Logs all SQL, function calls, etc. (critically, this includes decomFromHexString, 
+                                              which gets called for every data point).
 
 Notes:
     Rows in the onTheFlyDecom_errors temporary table are of the form sequence, message, occurrences.
 *************************************************************************************************/
-PROCEDURE logError(msg VARCHAR2)
+PROCEDURE logOTFD(msg VARCHAR2, priority NUMBER)
 IS
     messageRow VARCHAR2(500);
+    messagePrefix VARCHAR2(10);
     rowLength  NUMBER := 500;
     rowStart     NUMBER := 1;
+
+    priority_error EXCEPTION;
 BEGIN
-    LOOP
-        EXIT WHEN rowStart >= LENGTH(msg);
+    -- Only log if the logging level is high enough to allow it
+    CASE priority
+        WHEN 0 THEN
+            messagePrefix := 'ERROR: ';
+        WHEN 1 THEN
+            messagePrefix := 'WARNING: ';
+        WHEN 2 THEN
+            messagePrefix := 'DEBUG: ';
+        WHEN 3 THEN
+            messagePrefix := 'V-DEBUG: ';
+        ELSE
+            raise priority_error;
+    END CASE;
+    -- msg := messagePrefix || msg;  TODO: Fix
+    IF (priority <= gblDebugLevel) THEN
+        LOOP
+            EXIT WHEN rowStart >= LENGTH(msg);
 
-        messageRow := SUBSTR(msg, rowStart, rowLength);
-        rowStart := rowStart + rowLength;
-        INSERT INTO ONTHEFLYDECOM_ERRORS (sequence, message, occurrences) VALUES (gblSequence, messageRow, 1);
-    END LOOP;
-    gblSequence := gblSequence + 1;
+            messageRow := SUBSTR(msg, rowStart, rowLength);
+            rowStart := rowStart + rowLength;
+            INSERT INTO ONTHEFLYDECOM_ERRORS (sequence, message, occurrences) VALUES (gblSequence, messageRow, 1);
+        END LOOP;
+        gblSequence := gblSequence + 1;
+    END IF;
 EXCEPTION
+    WHEN priority_error THEN
+        DBMS_OUTPUT.PUT_LINE('Error in logOTFD: Priority-error - Priority ' || priority || ' is invalid. ');
     WHEN others THEN
-        DBMS_OUTPUT.PUT_LINE('Error in logError: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
+        DBMS_OUTPUT.PUT_LINE('Error in logOTFD: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
         DBMS_OUTPUT.PUT_LINE('Attempted message logged: ' || msg);
-
-END logError;
+END logOTFD;
 
 
 /*************************************************************************************************
@@ -242,6 +246,9 @@ Notes:
 *************************************************************************************************/
 PROCEDURE collateErrors IS
 BEGIN
+    if (gblDebugLevel >= 2) THEN
+        DBMS_OUTPUT.PUT_LINE('DEBUG: collateErrors called with debug level ' || gblDebugLevel);
+    END IF;
     if (gblDebugLevel = 0) THEN
         MERGE INTO onTheFlyDecom_errors t
         USING (
@@ -262,22 +269,49 @@ BEGIN
     END IF;
 EXCEPTION
     WHEN others THEN
-        DBMS_OUTPUT.PUT_LINE('Error in collateErrors: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
+        DBMS_OUTPUT.PUT_LINE('ERROR: collateErrors failed: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
 END collateErrors;
+
+
+/*************************************************************************************************
+Procedure:  string_varrayToCSV
+
+Purpose:    Converts the string_varray datatype to a CSV for use in query creation.
+
+Input:      array_in - string_varray (VARRAY(3) OF VARCHAR(200)) The array to convert.
+*************************************************************************************************/
+FUNCTION string_varrayToCSV(array_in IN string_varray)
+RETURN VARCHAR2 IS
+    l_result VARCHAR2(32767);
+BEGIN
+    -- Unable to inline-unpack the string_varray, so will log the return value instead of input.
+    logOTFD('string_varrayToCSV called with array_in=<not_unpackable>', 2);
+    IF array_in IS NOT NULL THEN
+        FOR i IN 1 .. array_in.COUNT LOOP
+            IF i > 1 THEN
+                l_result := l_result || ',';
+            END IF;
+            l_result := l_result || array_in(i);
+        END LOOP;
+    END IF;
+    logOTFD('string_varrayToCSV completed string_varray unpack, value is ' || l_result, 2);
+    RETURN l_result;
+END string_varrayToCSV;
 
 /*************************************************************************************************
 Procedure:  getVersion
 
 Purpose:    This procedure writes the version in a log message to the onTheFlyDecom_errors temporary table.
-
 *************************************************************************************************/
 PROCEDURE getVersion
 IS
     missionSpecificVersion VARCHAR2(128);
 BEGIN
+    logOTFD('getVersion called', 2);
+
     missionSpecificVersion := onTheFlyDecomMissionSpecific.getVersion();
-    logError( 'INFO multimission version: 0.2.1');
-    logError( 'INFO mission-specific version: ' || missionSpecificVersion);
+    logOTFD( 'INFO multimission version: 0.2.1', 0);
+    logOTFD( 'INFO mission-specific version: ' || missionSpecificVersion, 0);
 END getVersion;
 
 /*************************************************************************************************
@@ -298,6 +332,7 @@ IS
     status NUMBER;
     optionsHelp VARCHAR2(128) := '';
 BEGIN
+    logOTFD('setOption called with optionName=' || optionName || ', optionValue=' || optionValue, 2);
     -- Clear the temp table in which the errors are stored.
     -- Don't use truncate, doesn't work;  only the last row inserted is still there upon return.
     
@@ -317,21 +352,21 @@ BEGIN
         gblForceIsInL1 := TO_NUMBER(optionValue);
     ELSE
         status := onTheFlyDecomMissionSpecific.setOption( optionName, optionValue);
-	IF (status != 1) THEN
-            logError( 'WARNING setOption: Unsupported option: ' || optionName);
-            logError( 'INFO multimission options are: DEBUGLEVEL: 0|1|2, APIDS: "xx[,yy[,zz]]" etc., ' ||
-	              'DECOMMAPTIMEGPS: nnnnnn, FORCEISINL0: 0|1, FORCEISINL1: 0|1');
+        IF (status != 1) THEN
+            logOTFD( 'ERROR setOption: Unsupported option: ' || optionName, 0);
+            logOTFD('multimission options are: DEBUGLEVEL: 0|1|2, APIDS: "xx[,yy[,zz]]" etc., ' ||
+                    'DECOMMAPTIMEGPS: nnnnnn, FORCEISINL0: 0|1, FORCEISINL1: 0|1', 0);
             optionsHelp := onTheFlyDecomMissionSpecific.getOptionsHelp;
-	    logError( 'INFO ' || optionsHelp);
-	END IF;
+            logOTFD( 'missionspecific options are: ' || optionsHelp, 0); -- TODO: Double-check syntax of output from MS.getOptionsHelp
+        END IF;
     END IF;
     RETURN;
 
     EXCEPTION
     WHEN INVALID_NUMBER THEN
-        logError('ERROR setOption: invalid number: optionName=' || optionName || ', optionValue=' || optionValue);
+        logOTFD('ERROR setOption: invalid number: optionName=' || optionName || ', optionValue=' || optionValue, 0);
     WHEN others THEN
-        logError('ERROR setOption: others exception: optionName=' || optionName || ', optionValue=' || optionValue);
+        logOTFD('ERROR setOption: others exception: optionName=' || optionName || ', optionValue=' || optionValue, 0);
 
 END setOption;
 
@@ -351,6 +386,7 @@ IS
     upperCaseOptionName VARCHAR2(128) := '';
     status NUMBER;
 BEGIN
+    logOTFD('clearOption called with optionName=' || optionName, 2);
     -- Clear the temp table in which the errors are stored.
     -- Don't use truncate, doesn't work;  only the last row inserted is still there upon return.
     
@@ -358,29 +394,30 @@ BEGIN
     gblSequence := 1;
 
     upperCaseOptionName := UPPER( optionName);
-    IF    (upperCaseOptionName = 'DEBUGLEVEL') THEN
+    IF (upperCaseOptionName = 'DEBUGLEVEL') THEN
         gblDebugLevel := 0;
-    ELSIF (upperCaseOptionName = 'APIDS') THEN
-        gblApids := '-1';
-    ELSIF (upperCaseOptionName = 'DECOMMAPTIMEGPS') THEN
-        gblDecomMapTimeGPS := -1;
-    ELSIF (upperCaseOptionName = 'FORCEISINL0') THEN
-        gblForceIsInL0 := -1;
-    ELSIF (upperCaseOptionName = 'FORCEISINL1') THEN
-        gblForceIsInL1 := -1;
-    ELSIF (upperCaseOptionName = 'ALL') THEN
-        gblDebugLevel := 0;
-        gblApids := '-1';
-        gblDecomMapTimeGPS := -1;
-        gblForceIsInL0 := -1;
-        gblForceIsInL1 := -1;
-        status := onTheFlyDecomMissionSpecific.clearOption( optionName);
-    ELSE
-        status := onTheFlyDecomMissionSpecific.clearOption( optionName);
-	IF (status != 1) THEN
-            logError( 'WARNING clearOption: Unsupported option: ' || optionName);
-	END IF;
-    END IF;
+        ELSIF (upperCaseOptionName = 'APIDS') THEN
+            gblApids := '-1';
+        ELSIF (upperCaseOptionName = 'DECOMMAPTIMEGPS') THEN
+            gblDecomMapTimeGPS := -1;
+        ELSIF (upperCaseOptionName = 'FORCEISINL0') THEN
+            gblForceIsInL0 := -1;
+        ELSIF (upperCaseOptionName = 'FORCEISINL1') THEN
+            gblForceIsInL1 := -1;
+        ELSIF (upperCaseOptionName = 'ALL') THEN
+            gblDebugLevel := 0;
+            gblApids := '-1';
+            gblDecomMapTimeGPS := -1;
+            gblForceIsInL0 := -1;
+            gblForceIsInL1 := -1;
+            status := onTheFlyDecomMissionSpecific.clearOption( optionName);
+        ELSE
+            status := onTheFlyDecomMissionSpecific.clearOption( optionName);
+            IF (status != 1) THEN
+                logOTFD( 'ERROR clearOption: Unsupported option: ' || optionName, 0);
+                 -- TODO: Add docstring output
+            END IF;
+        END IF;
     RETURN;
 END clearOption;
 
@@ -412,6 +449,7 @@ IS
     name VARCHAR2(64);
     result VARCHAR2(1000);
 BEGIN
+    logOTFD('calling replaceBindVars with query_str=' || query_str || ', name_value=<not_unpackable>', 2);
     result := query_str;
     name := name_value.FIRST;
     WHILE name IS NOT NULL LOOP
@@ -487,9 +525,10 @@ IS
     errMsg VARCHAR2(500) := 'decomFromHexString: Error! ';
     message VARCHAR2(500) := '';
 BEGIN
-
+    -- This gets called especially often and WILL clog up debugging, so it has priority 3.
+    logOTFD('decomFromHexString called with hexString_in=' || hexString_in || ', bitOffset_in=' || bitOffset_in || ', bitLength_in=' || bitLength_in || ', dataType_in=' || dataType_in, 3);
+    
     -- First, the inputs are validated -----------------------------------------------------------
-
     IF hexString_in = '' THEN
         errMsg := errMsg || 'Input hex string is empty!';
         return 0;
@@ -610,7 +649,7 @@ BEGIN
     -- to be invalid, and are discarded.
     IF valueAsNumber > 1e125 OR valueAsNumber < -1e125 THEN
         IF gblDebugLevel > 0 THEN
-            logError('WARNING: Numeric overflow detected, dropping record with hex ' || hexString_in);
+            logOTFD('WARNING: Numeric overflow detected, dropping record with hex ' || hexString_in, 1);
         END IF;
         valueAsNumber := NULL;
         return 0;
@@ -634,7 +673,7 @@ BEGIN
 
     EXCEPTION
     WHEN others THEN
-        logError('ERROR decomFromHexString: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM || ' with: ' || message);
+        logOTFD('ERROR decomFromHexString: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM || ' with: ' || message, 0);
         return 0;
 
 END decomFromHexString;
@@ -668,6 +707,7 @@ IS
     l_index        PLS_INTEGER := 1;
     l_tab          nestedTable_typ := nestedTable_typ();
 BEGIN
+    logOTFD('CSV2NestedTable called with p_list=' || p_list, 2);
     LOOP
         l_comma_index := INSTR(l_string, ',', l_index);
         EXIT WHEN l_comma_index = 0;
@@ -706,6 +746,8 @@ PROCEDURE narrowStartStopTimes(
     queryStopTime  OUT NUMBER)
 IS
 BEGIN
+    logOTFD('narrowStartStopTimes called with startTime=' || startTime || ', stopTime=' || stopTime 
+    || ', TSLStartTime=' || TSLStartTime || ', TSLStopTime=' || TSLStopTime, 2);
     IF (TSLStartTime = -1) THEN
         queryStartTime := startTime;
     ELSIF (TSLStartTime > startTime) THEN
@@ -834,6 +876,10 @@ IS
 
     monitor_value VARCHAR2(20); -- This string is set to inject the monitor flag into SQL queries made.
 BEGIN
+    logOTFD('queryL0 called with tmdecom_row_t=<not_unpackable>, startSCT_in=' || startSCT_in || ', stopSCT_in=' 
+    || stopSCT_in || ', startERT_in=' || startERT_in || ', stopERT_in=' || stopERT_in 
+    || ', startASCT_in=' || startASCT_in || ', stopASCT_in=' || stopASCT_in, 2);
+
     -- Get the table name
     tableName := onTheFlyDecomMissionSpecific.getTableName(0, decomMap.systemId);
 
@@ -841,7 +887,7 @@ BEGIN
     -- or not exist at all. If a column is not queryable, a 'null AS column_name' is expected, and querying by that column 
     -- will fail before this point.
     select_time_columns := onTheFlyDecomMissionSpecific.getTimeColumnsL0;
-    select_time_columns_string := string_varray_to_csv(select_time_columns);
+    select_time_columns_string := string_varrayToCSV(select_time_columns);
 
     sct_time_column := select_time_columns(1);
     ert_time_column := select_time_columns(2);
@@ -946,10 +992,7 @@ BEGIN
     -- exeString := 'SELECT * FROM (' || exeString || ') inner_table WHERE ASCT >= :startASCT_in AND ASCT ' || booleanOpString || ' :stopASCT_in';
 
     -- Log the composed query if debug level is high enough
-    IF (gblDebugLevel >= 1) THEN        
-        -- debugString := replaceBindVars( exeString, name_value);
-        logError('INFO debugString=' || exeString);
-    END IF;
+    logOTFD('INFO debugString=' || exeString, 2);
 
     open c for exeString using nBytes, byteOffset, apid, byteOffset, nBytes;
     
@@ -989,7 +1032,7 @@ BEGIN
 	        ELSE
 		        debugString := 'Error occurred with apid=' || TO_CHAR(apid) || ', offset=' || TO_CHAR(byteOffset) ||
 		               ':' || TO_CHAR(bitOffsetInSubstring) || ', dataType=' || dataType;
-	            logError( 'INFO ' || debugString);
+	            logOTFD( 'INFO ' || debugString, 0);  -- TODO: Reformat. Error or warning or INFO?
 	        END IF;
         END LOOP;
 
@@ -1006,7 +1049,7 @@ BEGIN
 
     IF (gblDebugLevel >= 1) THEN
         debugString := 'queryL0: inserted ' || nRows || ' rows into onTheFlyDecom_results table.';
-        logError( 'INFO ' || debugString);
+        logOTFD( 'INFO ' || debugString, 2);
     END IF;
 
     CLOSE c;
@@ -1014,10 +1057,10 @@ BEGIN
 
     EXCEPTION
     WHEN decom_error THEN
-        logError('ERROR queryL0: No provided ERT or SCT time range');
+        logOTFD('ERROR queryL0: No provided ERT or SCT time range', 0);
         RETURN;
     WHEN others THEN
-        logError('ERROR queryL0: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
+        logOTFD('ERROR queryL0: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
         RETURN;
 END queryL0;
 
@@ -1090,6 +1133,12 @@ IS
 
     monitor_value VARCHAR2(20); 
 BEGIN
+    logOTFD('queryL1 called with parameters systemId_in=' || systemId_in || ', tlmId_in=' || tlmId_in
+    || ', startERT_in=' || startERT_in || ', stopERT_in=' || stopERT_in || ', startSCT_in=' || startSCT_in || ', stopSCT_in=' || stopSCT_in
+    || ', startASCT_in=' || startASCT_in || ', stopASCT_in=' || stopASCT_in || ', TSLRowStartTime=' || TSLRowStartTime
+    || ', TSLRowStopTime=' || TSLRowStopTime || ', dataType=' || dataType
+    || ', doInclusiveQuery=' || doInclusiveQuery || ', definitionColumn=' || definitionColumn, 2);
+
     IF (datatype != 'D') THEN
         -- Query TManalog
         tableName := onTheFlyDecomMissionSpecific.getTableName(1, systemId_in);
@@ -1110,7 +1159,7 @@ BEGIN
     END IF;		
 
     select_time_columns := onTheFlyDecomMissionSpecific.getTimeColumnsL1;
-    select_time_columns_string := string_varray_to_csv(select_time_columns);
+    select_time_columns_string := string_varrayToCSV(select_time_columns);
 
     sct_time_column := select_time_columns(1);
     ert_time_column := select_time_columns(2);
@@ -1164,17 +1213,13 @@ BEGIN
     -- Add anything mission-specific to the query, such as testId or tlmFileName.
     onTheFlyDecomMissionSpecific.addToL1Query(exeString, systemId_in);
 
-    IF (gblDebugLevel >= 1) THEN
-        logError( 'INFO ' || exeString);
-        logError( 'INFO startASCT_in='||startASCT_in||', stopASCT_in'||stopASCT_in);
-        logError( 'INFO TSLRowStartTime='||TSLRowStartTime||', TSLRowStopTime='||TSLRowStopTime);
-    END IF;
+    logOTFD( 'INFO ' || exeString, 2);
 
     -- Insert the values.
     EXECUTE IMMEDIATE exeString USING IN tlmId_in;
 
     IF (gblDebugLevel >= 1) THEN
-        logError( 'INFO queryL1: inserted ' || sql%Rowcount || ' rows into onTheFlyDecom_results table.');
+        logOTFD( 'INFO queryL1: inserted ' || sql%Rowcount || ' rows into onTheFlyDecom_results table.', 2);
     END IF;
     
     RETURN;
@@ -1252,6 +1297,9 @@ IS
     tmd_cursor curType;
     tsl_cursor curType;
 BEGIN 
+    logOTFD('selectNumericTlm called with parameters systemId_in=' || systemId_in || ', tlmId_in=' || tlmId_in || ', startSCT_in=' || startSCT_in
+    || ', stopSCT_in=' || stopSCT_in || ', startERT_in=' || startERT_in || ', stopERT_in=' || stopERT_in || ', startASCT_in=' || startASCT_in 
+    || ', stopASCT_in=' || stopASCT_in, 2);
 
     -- STEP A: Initialization --------------------------------------------------------------------
 
@@ -1288,7 +1336,7 @@ BEGIN
     END IF;
 
     IF (gblDecomMapTimeGPS != -1) THEN
-        logError( 'INFO gblDecomMapTimeGPS = ' || TO_CHAR( gblDecomMapTimeGPS));
+        logOTFD( 'INFO gblDecomMapTimeGPS = ' || TO_CHAR( gblDecomMapTimeGPS), 2);
     END IF;
 
     -- Initialize apidArray
@@ -1338,7 +1386,7 @@ BEGIN
 	        -- We don't support strings by design.
 
             IF (NOT ((dataType = 'U') OR (dataType = 'I') OR (dataType = 'F') OR (dataType = 'D'))) THEN
-                logError('ERROR unsupported dataType for tlmId=' || tlmId_in || ': ' || dataType);
+                logOTFD('ERROR unsupported dataType for tlmId=' || tlmId_in || ': ' || dataType, 0);
                 RETURN;
             END IF;
 
@@ -1357,13 +1405,13 @@ BEGIN
 	        -- This is only used in testing.
             IF (gblForceIsInL0 != -1) THEN
 	            IF (TSLRows(i).isInL0 != gblForceIsInL0) THEN
-		            logError('INFO changing TSLRows(' || TO_CHAR(i) || ').isInL0 to ' || TO_CHAR( gblForceIsInL0));
+		            logOTFD('INFO changing TSLRows(' || TO_CHAR(i) || ').isInL0 to ' || TO_CHAR( gblForceIsInL0), 2);
 		        END IF;
 	            TSLRows(i).isInL0 := gblForceIsInL0;
 	        END IF;
             IF (gblForceIsInL1 != -1) THEN
 	            IF (TSLRows(i).isInL1 != gblForceIsInL1) THEN
-		            logError('INFO changing TSLRows(' || TO_CHAR(i) || ').isInL1 to ' || TO_CHAR( gblForceIsInL1));
+		            logOTFD('INFO changing TSLRows(' || TO_CHAR(i) || ').isInL1 to ' || TO_CHAR( gblForceIsInL1), 2);
 		        END IF;
 	            TSLRows(i).isInL1 := gblForceIsInL1;
 	        END IF;
@@ -1478,7 +1526,7 @@ BEGIN
 
                 dataType := TMDRows(1).dataType;
 	        IF (NOT ((dataType = 'U') OR (dataType = 'I') OR (dataType = 'F') OR (dataType = 'D'))) THEN
-	            logError('ERROR unsupported dataType for tlmId=' || tlmId_in || ': ' || dataType);
+	            logOTFD('ERROR unsupported dataType for tlmId=' || tlmId_in || ': ' || dataType, 0);
 	            CONTINUE;
 	        END IF;
 
@@ -1527,11 +1575,9 @@ BEGIN
                 END IF;
                 doInclusiveQuery := (isLastTSLRow AND isLastTMDRow);
 
-		        IF (gblDebugLevel >= 2) THEN
-                    logError('INFO isLastTSLRow = ' || (case when isLastTSLRow = true then 'true' else 'false' end) ||
-		             ', isLastTMDRow = ' || (case when isLastTMDRow = true then 'true' else 'false' end) ||
-			            ', doInclusiveQuery = ' || (case when doInclusiveQuery = true then 'true' else 'false' end));
-	            END IF;
+                logOTFD('INFO isLastTSLRow = ' || (case when isLastTSLRow = true then 'true' else 'false' end) ||
+                    ', isLastTMDRow = ' || (case when isLastTMDRow = true then 'true' else 'false' end) ||
+                    ', doInclusiveQuery = ' || (case when doInclusiveQuery = true then 'true' else 'false' end), 2);
 			     
                 -- Get start and stop times for this TMD row.  Adjust these times so they're within the range
                 -- of the TSL record, because we don't want to query outside the TSL record's range.
@@ -1576,11 +1622,11 @@ BEGIN
             END LOOP;  -- loop through TMdecom rows
             EXCEPTION
                 WHEN NO_DATA_FOUND THEN
-                    logError('ERROR selectNumericTlm: ' || 'No TMDecom rows found for time range ' || 
-                              TSLRowStartTime || ' - ' || TSLRowStopTime);
+                    logOTFD('ERROR selectNumericTlm: ' || 'No TMDecom rows found for time range ' || 
+                              TSLRowStartTime || ' - ' || TSLRowStopTime, 0);
                 WHEN others THEN
-                    logError('ERROR selectNumericTlm: fetch block: others exception: ' ||
-		              SQLCODE || ' -ERROR- ' || SQLERRM);
+                    logOTFD('ERROR selectNumericTlm: fetch block: others exception: ' ||
+		              SQLCODE || ' -ERROR- ' || SQLERRM, 0);
             END;    
         END LOOP;  -- end loop through TelemetryStorageLocation rows
 
@@ -1590,23 +1636,23 @@ BEGIN
 
     EXCEPTION
         WHEN NO_DATA_FOUND THEN
-            LogError('ERROR selectNumericTlm: No telemetryStorageLocation ' ||
-                     'rows found for time range ' || definitionStartTime || ' - ' || definitionStopTime);
+            logOTFD('ERROR selectNumericTlm: No telemetryStorageLocation ' ||
+                     'rows found for time range ' || definitionStartTime || ' - ' || definitionStopTime, 0);
             collateErrors();
             RETURN;
     END;
 
     EXCEPTION
         WHEN time_error THEN
-            logError('ERROR selectNumericTlm: Invalid or missing time range');
+            logOTFD('ERROR selectNumericTlm: Invalid or missing time range', 0);
             collateErrors();
             RETURN;
         WHEN definition_error THEN
-            logError('ERROR selectNumericTlm: Definition Error. Input parameters invalid.');
+            logOTFD('ERROR selectNumericTlm: Definition Error. Input parameters invalid.', 0);
             collateErrors();
             RETURN;
         WHEN others THEN
-            logError('ERROR selectNumericTlm: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
+            logOTFD('ERROR selectNumericTlm: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
             collateErrors();
             RETURN;
 

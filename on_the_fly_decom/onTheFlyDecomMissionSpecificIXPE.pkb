@@ -44,7 +44,7 @@ Notes:
 
 
 
-CREATE OR REPLACE PACKAGE BODY onTheFlyDecomMissionSpecific
+CREATE OR REPLACE PACKAGE BODY IXPE_MISC.onTheFlyDecomMissionSpecific
 AS
 
 -- These options are settable by calling the setOption or clearOption procedure.
@@ -467,7 +467,7 @@ BEGIN
 
     -- If ASCT is specified, error immediately.
     IF startASCT_in >= 0 OR stopASCT_in >= 0 THEN
-        ONTHEFLYDECOM.logError('ERROR IXPE Only supports querying by ERT, SCT.');
+        ONTHEFLYDECOM.logOTFD('ERROR IXPE Only supports querying by ERT, SCT.', 0);
         RETURN 0;
     END IF;
 
@@ -489,7 +489,7 @@ BEGIN
         definitionStopTime  := stopSCT_in;
         definitionColumn    := 0;
     ELSE
-        ONTHEFLYDECOM.logError('ERROR Incomplete query provided. Missing start/stop ERT/SCT.');
+        ONTHEFLYDECOM.logOTFD('ERROR Incomplete query provided. Missing start/stop ERT/SCT.', 0);
         RETURN 0;
     END IF;
     RETURN 1;
