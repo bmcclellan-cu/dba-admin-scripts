@@ -21,14 +21,16 @@ AS
 
     PROCEDURE clearOption( optionName IN VARCHAR2);
 
+    -- While the timestamps are all optional and have defaults for the procedure call, specifying none of 
+    -- them will throw a definition_error due to missing inputs and warn the user.
     PROCEDURE selectNumericTlm( systemId_in IN NUMBER,
                                 tlmId_in IN NUMBER,
-                                startSCT_in IN NUMBER,
-                                stopSCT_in IN NUMBER,
-                                startERT_in IN NUMBER,
-                                stopERT_in IN NUMBER,
-                                startASCT_in IN NUMBER,
-                                stopASCT_in IN NUMBER
+                                startERT_in IN NUMBER DEFAULT -1,
+                                stopERT_in IN NUMBER DEFAULT -1,
+                                startSCT_in IN NUMBER DEFAULT -1,
+                                stopSCT_in IN NUMBER DEFAULT -1,
+                                startASCT_in IN NUMBER DEFAULT -1,
+                                stopASCT_in IN NUMBER DEFAULT -1
                                 );
     
     FUNCTION prepareDebugSQL(query_str IN VARCHAR2, name_value IN name_value_t) RETURN VARCHAR2;

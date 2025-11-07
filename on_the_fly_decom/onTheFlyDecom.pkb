@@ -316,6 +316,7 @@ PROCEDURE getVersion
 IS
     missionSpecificVersion VARCHAR2(128);
 BEGIN
+    -- Note: Steve Monk previously had issues with the truncate command, but recent testing has not been able to duplicate those issues.
     EXECUTE IMMEDIATE 'TRUNCATE TABLE ONTHEFLYDECOM_ERRORS';
     missionSpecificVersion := onTheFlyDecomMissionSpecific.getVersion();
     logOTFD( 'INFO multimission version: 0.2.2', -1);
@@ -341,7 +342,7 @@ IS
     optionsHelp VARCHAR2(128) := '';
 BEGIN
     -- Clear the temp table in which the errors are stored.
-    -- Don't use truncate, doesn't work;  only the last row inserted is still there upon return.
+    -- Note: Steve Monk previously had issues with the truncate command, but recent testing has not been able to duplicate those issues.
     EXECUTE IMMEDIATE 'TRUNCATE TABLE ONTHEFLYDECOM_ERRORS';
     gblSequence := 1;
 
@@ -395,6 +396,7 @@ IS
     optionsHelp VARCHAR2(128) := '';
 BEGIN
     -- Clear the temp table in which the errors are stored.
+    -- Note: Steve Monk previously had issues with the truncate command, but recent testing has not been able to duplicate those issues.
     EXECUTE IMMEDIATE 'TRUNCATE TABLE ONTHEFLYDECOM_ERRORS';
     gblSequence := 1;
 
@@ -1325,12 +1327,13 @@ Notes:
 PROCEDURE selectNumericTlm
     (systemId_in IN NUMBER,
     tlmId_in IN NUMBER,
-    startSCT_in IN NUMBER,
-    stopSCT_in IN NUMBER,
-    startERT_in IN NUMBER,
-    stopERT_in IN NUMBER,
-    startASCT_in IN NUMBER,
-    stopASCT_in IN NUMBER)
+    startERT_in IN NUMBER DEFAULT -1,
+    stopERT_in IN NUMBER DEFAULT -1,
+    startSCT_in IN NUMBER DEFAULT -1,
+    stopSCT_in IN NUMBER DEFAULT -1,
+    startASCT_in IN NUMBER DEFAULT -1,
+    stopASCT_in IN NUMBER DEFAULT -1
+    )
 IS
     -- Determined from the query input, is based on what time column to use to query TSL and TMDecom
     -- EMA uses ASCT as the timestamp for their column, while most other missions use ERT with SCT as 
@@ -1364,6 +1367,7 @@ BEGIN
     );
     -- STEP A: Initialization --------------------------------------------------------------------
 
+    -- Note: Steve Monk previously had issues with the truncate command, but recent testing has not been able to duplicate those issues.
     EXECUTE IMMEDIATE 'TRUNCATE TABLE onTheFlyDecom_results';
     EXECUTE IMMEDIATE 'TRUNCATE TABLE ONTHEFLYDECOM_ERRORS';
     gblSequence := 1;
