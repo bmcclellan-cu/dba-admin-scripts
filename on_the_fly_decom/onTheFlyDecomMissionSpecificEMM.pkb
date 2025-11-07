@@ -58,7 +58,7 @@ Notes:
 
 *************************************************************************************************/
 
-CREATE OR REPLACE PACKAGE BODY EMA_MISC.onTheFlyDecomMissionSpecific
+CREATE OR REPLACE PACKAGE BODY EMM_MISC.onTheFlyDecomMissionSpecific
 AS
 
 -- These options are settable by calling the setOption or clearOption procedure.

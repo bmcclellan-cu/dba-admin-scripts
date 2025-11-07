@@ -123,7 +123,7 @@ Notes:
        In this case the SCT times used together with TSL and TMD times is not an issue.
 *************************************************************************************************/
 
-CREATE OR REPLACE PACKAGE BODY IXPE_MISC.onTheFlyDecom
+CREATE OR REPLACE PACKAGE BODY onTheFlyDecom
 AS
 
 -- These options, and additional mission-specific options, are settable by calling the setOption
@@ -166,8 +166,6 @@ TYPE tsl_row_t IS RECORD (
 /* sequence column (row counter) in onTheFlyDecom_errors. 
 Represents a single unique message. Duplicate sequence entries indicate a split message*/
 gblSequence NUMBER := 1;  
-
--- TODO: Update logging for mission-specific code.
 
 /*************************************************************************************************
 Procedure:  logOTFD
