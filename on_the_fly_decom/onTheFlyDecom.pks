@@ -10,6 +10,10 @@ AS
     -- here and referenced as ONTHEFLYDECOM.string_varray in the mission-specific code due to compilation issues.
     TYPE string_varray IS VARRAY(3) OF VARCHAR2(200);
 
+    -- Make a type for input to prepareDebugSQL.
+    TYPE name_value_t IS TABLE OF VARCHAR2(64) INDEX BY VARCHAR2(64);
+
+
     PROCEDURE getVersion; 
 
     PROCEDURE setOption( optionName IN VARCHAR2,
@@ -26,6 +30,9 @@ AS
                                 startASCT_in IN NUMBER,
                                 stopASCT_in IN NUMBER
                                 );
+    
+    FUNCTION prepareDebugSQL(query_str IN VARCHAR2, name_value IN name_value_t) RETURN VARCHAR2;
+    
     PROCEDURE logOTFD(msg VARCHAR2, priority NUMBER);
 
 END onTheFlyDecom;

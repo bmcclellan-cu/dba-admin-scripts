@@ -25,7 +25,8 @@ AS
     FUNCTION getDecomIdentifier RETURN VARCHAR2;
 
     PROCEDURE getDecomMapCur(
-        systemId_in IN NUMBER, apid_in IN NUMBER, tlmId_in IN NUMBER, TMDQueryStartTime_in IN NUMBER, TMDQueryStopTime_in IN NUMBER,
+        systemId_in IN NUMBER, apid_in IN NUMBER, tlmId_in IN NUMBER, TMDQueryStartTime_in IN NUMBER, 
+        TMDQueryStopTime_in IN NUMBER, isLastTSLRow_in IN BOOLEAN,
         cursor_out OUT curType
     );
     PROCEDURE getTSLCur(

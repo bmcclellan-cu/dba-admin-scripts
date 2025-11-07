@@ -39,7 +39,7 @@ Notes:
 *************************************************************************************************/
 
 
-CREATE OR REPLACE PACKAGE BODY onTheFlyDecomMissionSpecific
+CREATE OR REPLACE PACKAGE BODY EMA_MISC.onTheFlyDecomMissionSpecific
 AS
 
 -- These options are settable by calling the setOption or clearOption procedure.
@@ -160,6 +160,7 @@ IS
     tableNameExtension VARCHAR2(10) := '';
     invalidType EXCEPTION;
 BEGIN
+    ONTHEFLYDECOM.logOTFD('getTableName: type_in=' || type_in || ', systemId_in=' || systemId_in, 2);
     IF gblVCs = 1 THEN
         tableNameExtension := '_RT';
     ELSIF gblVCs = 2 THEN
@@ -203,6 +204,7 @@ FUNCTION getTimeColumnsL0
     RETURN ONTHEFLYDECOM.string_varray
 IS
 BEGIN
+    ONTHEFLYDECOM.logOTFD('getTimeColumnsL0: <no_parameters>', 2);
     return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'ASCT');
 END getTimeColumnsL0;
 
@@ -221,6 +223,7 @@ FUNCTION getTimeColumnsL1
     RETURN ONTHEFLYDECOM.string_varray
 IS
 BEGIN
+    ONTHEFLYDECOM.logOTFD('getTimeColumnsL1: <no_parameters>', 2);
     return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'ASCT');
 END getTimeColumnsL1;
 
@@ -235,6 +238,7 @@ FUNCTION getDecomIdentifier
     RETURN VARCHAR2
 IS
 BEGIN
+    ONTHEFLYDECOM.logOTFD('getDecomIdentifier: <no_parameters>', 2);
     RETURN 'dmid';
 END;
 
@@ -254,6 +258,7 @@ PROCEDURE addToL0Query( exeString IN OUT VARCHAR2,
 IS
     fileId NUMBER := -1;
 BEGIN
+    ONTHEFLYDECOM.logOTFD('addToL0Query: exeString=' || exeString || ', systemId_in=' || systemId_in, 2);
     NULL;
 END addToL0Query;
 
@@ -273,6 +278,7 @@ PROCEDURE addToL1Query( exeString IN OUT VARCHAR2,
 IS
     fileId NUMBER := -1;
 BEGIN
+    ONTHEFLYDECOM.logOTFD('addToL1Query: exeString=' || exeString || ', systemId_in=' || systemId_in, 2);
     NULL;
 END addToL1Query;
 
@@ -301,32 +307,58 @@ PROCEDURE getDecomMapCur(
     tlmId_in IN NUMBER,
     TMDQueryStartTime_in IN NUMBER,
     TMDQueryStopTime_in IN NUMBER,
+    isLastTSLRow_in IN BOOLEAN,
     cursor_out OUT curType
     )
 IS 
     tmdecom_table_name VARCHAR2(50);
     query_sql CLOB; -- Practically unlimited length
+    name_value ONTHEFLYDECOM.name_value_t;
+    booleanOpString VARCHAR(2); -- Contains a string to concat whether or not to include the query stop time.
 BEGIN
+    ONTHEFLYDECOM.logOTFD('getDecomMapCur: systemId_in=' || systemId_in ||
+                          ', apid_in=' || apid_in ||
+                          ', tlmId_in=' || tlmId_in || 
+                          ', TMDQueryStartTime_in=' || TMDQueryStartTime_in ||
+                          ', TMDQueryStopTime_in=' || TMDQueryStopTime_in, 2
+    );
+    name_value := ONTHEFLYDECOM.name_value_t( 
+        ':systemId_in' => TO_CHAR(systemId_in),
+        ':apid_in' => TO_CHAR(apid_in),
+        ':tlmId_in' => TO_CHAR(tlmId_in),
+        ':tmdqstarttime' => TO_CHAR(TMDQueryStartTime_in),
+        ':tmdqstoptime' => TO_CHAR(TMDQueryStopTime_in),
+        ':tlmId2_in' => TO_CHAR(tlmId_in)
+    );
+    
+    IF (isLastTSLRow_in) THEN
+        booleanOpString := '<=';
+    ELSE
+        booleanOpString := '<';
+    END IF;
+
     tmdecom_table_name := onTheFlyDecomMissionSpecific.getTableName(4, systemId_in);
     query_sql := 'SELECT :systemId_in AS systemId, dmid as apid, startBit, length, dataType, definitionStart
         FROM ' || tmdecom_table_name || '
         WHERE dmid     = :apid_in
           AND tlmId    = :tlmId_in
-          AND definitionStart <= :tmdqstoptime
+          AND definitionStart ' || booleanOpString || ' :tmdqstoptime
           AND definitionStart >= COALESCE(
                 (SELECT MAX(definitionStart)
                    FROM ' || tmdecom_table_name || '
-                  WHERE tlmId    = :tlmId_in2
+                  WHERE tlmId    = :tlmId2_in
                     AND definitionStart <= :tmdqstarttime
                 ), 0)
         ORDER BY definitionStart';
+
+    ONTHEFLYDECOM.logOTFD('getDecomMapCur: ' || ONTHEFLYDECOM.prepareDebugSQL(query_sql, name_value), 2);
 
     OPEN cursor_out FOR query_sql
         USING systemId_in,                -- :systemId_in
               apid_in,                    -- :apid_in
               tlmId_in,                   -- :tlmId_in
               TMDQueryStopTime_in,        -- :tmdqstoptime
-              tlmId_in,                   -- :tlmId_in2 (subquery)
+              tlmId_in,                   -- :tlmId2_in (subquery)
               TMDQueryStartTime_in;           
 END getDecomMapCur;
 
@@ -360,7 +392,20 @@ PROCEDURE getTSLCur(
 IS
     tsl_table_name VARCHAR(50);
     query_sql CLOB;
+    name_value ONTHEFLYDECOM.name_value_t;
 BEGIN
+    ONTHEFLYDECOM.logOTFD('getTSLCur: systemId_in=' || systemId_in ||
+                          ', tlmId_in=' || tlmId_in || 
+                          ', definitionStartTime_in=' || definitionStartTime_in ||
+                          ', definitionStopTime_in=' || definitionStopTime_in, 2
+    );
+    name_value := ONTHEFLYDECOM.name_value_t( 
+        ':tlmId_in' => TO_CHAR(tlmId_in),
+        ':definitionStartTime_in' => TO_CHAR(definitionStartTime_in),
+        ':definitionStopTime_in' => TO_CHAR(definitionStopTime_in),
+        ':tlmId2_in' => TO_CHAR(tlmId_in)    
+    );
+
     tsl_table_name := onTheFlyDecomMissionSpecific.getTableName(3, systemId_in);
 
     query_sql := '
@@ -374,15 +419,17 @@ BEGIN
           AND definitionStart >= COALESCE(
                 (SELECT MAX(definitionStart)
                    FROM TelemetryStorageLocation
-                  WHERE tlmId    = :tlmId_in2
+                  WHERE tlmId    = :tlmId2_in
                     AND definitionStart <= :definitionStartTime_in
                 ), 0)
         ORDER BY definitionStart, apid';
 
+    ONTHEFLYDECOM.logOTFD('getTSLCur: ' || ONTHEFLYDECOM.prepareDebugSQL(query_sql, name_value), 2);
+
     OPEN cursor_out FOR query_sql
         USING tlmId_in,         -- :tlmId_in (outer query)
               definitionStopTime_in, -- :definitionStopTime_in
-              tlmId_in,         -- :tlmId_in2 (subquery)
+              tlmId_in,         -- :tlmId2_in (subquery)
               definitionStartTime_in; -- :definitionStartTime_in
 END getTSLCur;
 
@@ -424,6 +471,14 @@ FUNCTION getDefinitionStartStopTimes(   systemId_in IN NUMBER,
 				      RETURN NUMBER
 IS
 BEGIN
+    ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: systemId_in=' || systemId_in ||
+                          ', startSCT_in=' || startSCT_in ||
+                          ', stopSCT_in=' || stopSCT_in ||
+                          ', startERT_in=' || startERT_in ||
+                          ', stopERT_in=' || stopERT_in ||
+                          ', startASCT_in=' || startASCT_in ||
+                          ', stopASCT_in=' || stopASCT_in, 2 
+    );
     -- Initialize outputs in case return with error.
     definitionStartTime := -1;
     definitionStopTime := -1;
@@ -431,7 +486,7 @@ BEGIN
 
     -- If ERT or SCT are specified, error immediately.
     IF startERT_in >= 0 OR stopERT_in >= 0 OR startERT_in >= 0 OR stopERT_in >= 0 THEN
-        ONTHEFLYDECOM.logError('ERROR EMA only supports querying by ASCT.');
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: EMA only supports querying by ASCT.', 0);
         RETURN 0;
     END IF;
 
