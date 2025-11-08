@@ -68,12 +68,7 @@ done
 
 shift $(($OPTIND -1))
 
-# Constant variables
-tmaverage_table="TMAVERAGE_SID1"
-tmaverage_stats_table="TMAVERAGE_STATS"
-tablespace_name="TMAVERAGE_SID1"
-
-# Set environment variables
+# Set DBA environment variables
 if [ -f /export/home/oracle/.bashrc ]; then
     source /export/home/oracle/.bashrc
     if [ $? -ne 0 ]; then
@@ -85,6 +80,8 @@ else
     export PATH=$ORACLE_HOME/bin:$PATH
     export LD_LIBRARY_PATH=$ORACLE_HOME/lib
 fi
+
+export DB_EMAIL_LIST="Robert.Schmidt@lasp.colorado.edu"
 
 # Resolve the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -120,6 +117,23 @@ if [ -n "$sid_check" ]; then
     echo "ERROR: Provided database is not open. Exiting..."
     exit 1
 fi
+
+newest_python=$(ls /usr/bin/python3* | grep -oP 'python3\.\d+' | sort -V | tail -n 1)
+if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
+    echo "$newest_python"
+    echo "Failed to find newest version of python. TMAverage requires the use of python. Exiting..."
+    exit 1
+fi
+
+# Set TMAverage static values from helper script. If the database name is not supported, this will fail.
+var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID")
+if [ $? -ne 0 ]; then
+    echo "$var_commands"
+    echo "ERROR: Database is not supported by TMAverage. Exiting..."
+    exit 1
+fi
+
+eval "$var_commands"
 
 timestamp=$(date "+%Y%m%d-%H%M%S")
 LOGDIR="/tmp/TMAverageLogs/$database"
@@ -215,34 +229,16 @@ if [ -n "$otfd_opt" ]; then
     fi
 fi
 
-# Get the MISC schema, then truncate the _MISC from it
-project_name=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
-if [ $? -ne 0 ]; then
-    echo "$project_name"
-    echo "An error occurred while running GetSchemaName.sh. Exiting..."
-    exit 1
-fi
-if [[ "$project_name" != *"_MISC" ]]; then
-    echo "ERROR: Attempted to retrieve MISC schema, got $project_name instead. Schema name must match glob *'_MISC'. Exiting..."
-    exit 1
-else
-    project_name="${project_name::-5}"
-fi
-project_name="${project_name^^}"
-
 select_tab_count=0
-# Set up table names based on project type
-if [[ $project_name == "AIM" ]]; then
-    select_tables="'TELEMETRYITEMDEFINITION', 'TELEMETRYANALOGCONVERSIONS', 'TMANALOG_TABLE'"
-    select_tab_count=$((select_tab_count+3))
-elif [[ $project_name == "EVE" ]]; then
-    select_tables="'TELEMETRYITEMDEFINITION', 'TELEMETRYANALOGCONVERSIONS', 'TMANALOG'"
-    select_tab_count=$((select_tab_count+3))
-else
-    select_tables="'TELEMETRYITEMDEFINITION', 'TELEMETRYANALOGCONVERSIONS', 'TMANALOG_SID1'"
-    select_tab_count=$((select_tab_count+3))
-fi
-insert_tables="'$tmaverage_table', '$tmaverage_stats_table'"
+
+IFS='.' read -r s telemetry_analog_conversions_tab <<< "$telemetry_analog_conversions_name"
+IFS='.' read -r s telemetry_item_definitions_tab <<< "$telemetry_item_definitions_name"
+IFS='.' read -r s tmanalog_table_tab <<< "$tmanalog_table_name"
+
+select_tables="'$telemetry_analog_conversions_tab', '$telemetry_item_definitions_tab', '$tmanalog_table_tab'"
+select_tab_count=$((select_tab_count+3))
+
+insert_tables="'$tmaverage_table_name', '$tmaverage_stats_name'"
 
 # Check for read access to ONTHEFLYDECOM tables
 if [[ -n "$otfd_opt" ]]; then

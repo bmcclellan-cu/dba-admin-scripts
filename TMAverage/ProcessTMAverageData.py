@@ -90,8 +90,8 @@ def update_tmaverage_stats(
         time_duration: datetime.timedelta = None,
         failed: bool = None,
         cancelled: bool = None,
-        ingested: int = None,
-        inserted: int = None,
+        rows_read: int = None,
+        rows_returned: int = None,
         unique_constraint_num: int = None,
         otfd_error_num: int = None,
         errors: list[str] = None,
@@ -111,18 +111,18 @@ def update_tmaverage_stats(
     select_sql = f"""SELECT COUNT(*) FROM {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} WHERE DATABASE_NAME=:database AND START_TIME=:start_time"""
 
     insert_sql = f"""INSERT INTO {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} 
-    (DATABASE_NAME, START_TIME, TIME_RAN, FAILED, CANCELLED, INGESTED, INSERTED, UNIQUE_CONSTRAINT_NUM, OTFD_ERROR_NUM, ERRORS) VALUES 
-    (:database, :start_time, :time_ran, :failed, :cancelled, :ingested, :inserted, :unique_constraint_num, :otfd_error_num, :errors)"""
+    (DATABASE_NAME, START_TIME, TIME_RAN, FAILED, CANCELLED, ROWS_READ, ROWS_RETURNED, UNIQUE_CONSTRAINT_NUM, OTFD_ERROR_NUM, ERRORS) VALUES 
+    (:database, :start_time, :time_ran, :failed, :cancelled, :rows_read, :rows_returned, :unique_constraint_num, :otfd_error_num, :errors)"""
 
     update_sql = f"""UPDATE {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} SET 
-        TIME_RAN    = :time_ran, 
-        FAILED      = :failed,
-        CANCELLED   = :cancelled,
-        INGESTED    = :ingested,
-        INSERTED    = :inserted,
+        TIME_RAN        = :time_ran, 
+        FAILED          = :failed,
+        CANCELLED       = :cancelled,
+        ROWS_READ       = :rows_read,
+        ROWS_RETURNED   = :rows_returned,
         UNIQUE_CONSTRAINT_NUM = :unique_constraint_num,
-        OTFD_ERROR_NUM = :otfd_error_num,
-        ERRORS      = :errors
+        OTFD_ERROR_NUM  = :otfd_error_num,
+        ERRORS          = :errors
         WHERE DATABASE_NAME=:database AND START_TIME=:start_time
     """
 
@@ -139,8 +139,8 @@ def update_tmaverage_stats(
                 time_ran=time_duration,
                 failed=failed,
                 cancelled=cancelled,
-                ingested=ingested,
-                inserted=inserted,
+                rows_read=rows_read,
+                rows_returned=rows_returned,
                 unique_constraint_num=unique_constraint_num,
                 otfd_error_num=otfd_error_num,
                 errors=errors_clob
@@ -153,8 +153,8 @@ def update_tmaverage_stats(
                 time_ran=time_duration,
                 failed=failed,
                 cancelled=cancelled,
-                ingested=ingested,
-                inserted=inserted,
+                rows_read=rows_read,
+                rows_returned=rows_returned,
                 unique_constraint_num=unique_constraint_num,
                 otfd_error_num=otfd_error_num,
                 errors=errors_clob
@@ -625,7 +625,7 @@ def process_values_by_tmid(
 ):
     """
     This function fetches, calibrates, and finds the minimum, maximum, and average values for each 5 minute period
-    for a single specified start_date. It returns a tuple of the number of rows ingested and inserted, which are tallied
+    for a single specified start_date. It returns a tuple of the number of rows read and inserted, which are tallied
     up in the main thread. If the thread is not initialized, it will return (-1, -1), and the main thread will interpret
     that result as a complete failure. This function is run on each child process for each specified TMID.
     """
@@ -721,13 +721,13 @@ def process_values_by_tmid(
             )
         )
     try:
-        inserted = insert_tmaverage_rows(database, insertion_data)
+        num_inserted = insert_tmaverage_rows(database, insertion_data)
     except Exception as e:
-        # This adds the number of rows that were ingested to any insert error, so that
-        # the main process can still report how many rows were ingested.
-        e.ingested_num = results_len
+        # This adds the number of rows that were read to any insert error, so that
+        # the main process can still report how many rows were read before the insert error.
+        e.rows_read = results_len
         raise e
-    return (results_len, inserted)
+    return (results_len, num_inserted)
 
 
 def main():
@@ -937,8 +937,8 @@ def main():
     )
 
     error_status = False
-    total_ingested_rows = 0
-    total_inserted_rows = 0
+    total_rows_read = 0
+    total_rows_returned = 0
 
     critical_failure = False
     cancelled = False
@@ -959,8 +959,8 @@ def main():
 
         logger.info(f"Processing data for TMID(s) {tmid_input} for date {single_date}")
 
-        day_ingested_rows = 0
-        day_inserted_rows = 0
+        day_rows_read = 0
+        day_rows_returned = 0
 
         day_error_status = False
         critical_failure = False
@@ -982,16 +982,16 @@ def main():
                 if result == (-1, -1):
                     critical_failure = True
                 else:
-                    day_ingested_rows += result[0]
-                    day_inserted_rows += result[1]
+                    day_rows_read += result[0]
+                    day_rows_returned += result[1]
 
             except KeyboardInterrupt:
                 logger.critical(
                     "Script has been cancelled. Terminating multiprocessing pool..."
                 )
 
-                logger.info(f"Rows ingested before cancel: {total_ingested_rows}")
-                logger.info(f"Rows ingested before cancel: {total_inserted_rows}")
+                logger.info(f"Rows read before cancel: {total_rows_read}")
+                logger.info(f"Rows returned before cancel: {total_rows_returned}")
 
                 worker_pool.terminate()
                 cancelled = True
@@ -1001,8 +1001,8 @@ def main():
                 if str(error).find("ORA-00001") != -1:
                     # This is not a critical failure, and script will continue processing. Log error to user and continue
                     unique_constraint_num += 1
-                    if hasattr(error, "ingested_num"):
-                        day_ingested_rows += error.ingested_num
+                    if hasattr(error, "rows_read"):
+                        day_rows_read += error.rows_read
                 else:
                     error_status = True
                     logger.exception(
@@ -1013,7 +1013,7 @@ def main():
             except OTFDException as error:
                 all_errors.append(f"An OTFD error occurred. ONTHEFLYDECOM_ERRORS Rows: {error.error_rows}")
                 otfd_error_num += len(error.error_rows)
-            except:
+            except Exception as error:
                 error_status = True
                 logger.exception(
                     f"An exception occurred while processing data for TMID {tmid_input} for date {single_date}. Please see below output.",
@@ -1021,8 +1021,8 @@ def main():
                 )
                 all_errors.append(traceback.format_exc())
 
-                if hasattr(error, "ingested_num"):
-                    day_ingested_rows += error.ingested_num
+                if hasattr(error, "rows_read"):
+                    day_rows_read += error.rows_read
 
 
         # Day error checks:
@@ -1057,11 +1057,11 @@ def main():
             break
                     
         logger.info(f"Processing for date {single_date} complete.")
-        logger.info(f"Ingested {day_ingested_rows} rows.")
-        logger.info(f"Inserted {day_inserted_rows} rows.")
+        logger.info(f"Read {day_rows_read} rows.")
+        logger.info(f"Returned {day_rows_returned} rows.")
 
-        total_inserted_rows += day_inserted_rows
-        total_ingested_rows += day_ingested_rows
+        total_rows_returned += day_rows_returned
+        total_rows_read += day_rows_read
 
     worker_pool.close()
     worker_pool.join()
@@ -1077,8 +1077,8 @@ def main():
         time_duration=duration,
         failed=critical_failure,
         cancelled=cancelled,
-        ingested=total_ingested_rows,
-        inserted=total_inserted_rows,
+        rows_read=total_rows_read,
+        rows_returned=total_rows_returned,
         # Every insert is guaranteed to insert 288 rows (5m * 288 = 1 day), so multiply failed bulk inserts by 288.
         unique_constraint_num=unique_constraint_num*288,
         otfd_error_num=otfd_error_num,
@@ -1100,8 +1100,8 @@ def main():
         logger.critical(
             "One or more of the worker threads failed for an unknown reason. Please check worker logs to determine the cause of failure. \n"
         )
-        logger.info(f"Rows ingested before failure: {total_ingested_rows}")
-        logger.info(f"Rows ingested before failure: {total_inserted_rows}")
+        logger.info(f"Rows read before failure: {total_rows_read}")
+        logger.info(f"Rows returned before failure: {total_rows_returned}")
         exit(1)
 
     if error_status:
@@ -1109,14 +1109,14 @@ def main():
             "One or more errors occurred during execution. "
             " Please check the above output and the log files for more details."
         )
-        logger.info(f"Rows ingested: {total_ingested_rows}")
-        logger.info(f"Rows inserted: {total_inserted_rows}")
+        logger.info(f"Rows read: {total_rows_read}")
+        logger.info(f"Rows returned: {total_rows_returned}")
         exit(1)
 
     else:
         logger.info("Script has successfully completed!")
-        logger.info(f"Rows ingested: {total_ingested_rows}")
-        logger.info(f"Rows inserted: {total_inserted_rows}")
+        logger.info(f"Rows read: {total_rows_read}")
+        logger.info(f"Rows returned: {total_rows_returned}")
         exit(0)
 
 if __name__ == "__main__":

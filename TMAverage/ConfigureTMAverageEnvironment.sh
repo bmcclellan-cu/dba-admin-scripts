@@ -60,13 +60,6 @@ shift $(($OPTIND -1))
 username=""
 password=""
 
-# Set static values. These are used so that exceptions can be easily managed (aim).
-tablespace_name="TMAVERAGE_SID1"
-tmaverage_table_name="TMAVERAGE_SID1"
-tmaverage_stats_name="TMAVERAGE_STATS"
-
-tmanalog_table_name="TMANALOG_SID1"
-
 # Resolve the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -116,36 +109,22 @@ if [ -n "$sid_check" ]; then
     exit 1
 fi
 
-# Gets the MISC schema, then truncate the _MISC from it. 
-project_name=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
+newest_python=$(ls /usr/bin/python3* | grep -oP 'python3\.\d+' | sort -V | tail -n 1)
+if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
+    echo "$newest_python"
+    echo "Failed to find newest version of python. TMAverage requires the use of python. Exiting..."
+    exit 1
+fi
+
+# Set static values from helper script. If the database name is not supported, this will fail.
+var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID")
 if [ $? -ne 0 ]; then
-    echo "$project_name"
-    echo "An error occurred while running GetSchemaName.sh. Exiting..."
+    echo "$var_commands"
+    echo "ERROR: Database is not supported by TMAverage. Exiting..."
     exit 1
 fi
-if [[ "$project_name" != *"_MISC" ]]; then
-    echo "Attempted to retrieve MISC schema, got $project_name instead. Schema name must match glob *'_MISC'. Exiting..."
-    exit 1
-else
-    project_name="${project_name::-5}"
-fi
-project_name="${project_name^^}"
 
-
-# Check project name and set static variables accordingly
-if [[ "$project_name" == "AIM" ]]; then
-    ct_schema_name="AIM_CT_SC"
-    tmanalog_table_name="TMANALOG_TABLE"
-elif [[ "$project_name" == "EVE" ]]; then
-    ct_schema_name="EVE_CT"
-    tmanalog_table_name="TMANALOG"
-else
-    ct_schema_name="${project_name}_CT"
-fi
-
-schema_name="${project_name^^}_L1A"
-
-
+eval "$var_commands"
 
 # Create tablespace if path is specified
 if [ -n "$datafile_path" ]; then
@@ -209,7 +188,6 @@ if [ $table_opt -ne 0 ]; then
         echo "An error occurred while running CheckIfTableExists.sh Exiting..."
         exit 1
     fi
-
     if [[ "$check_table_exists" == *"No"* ]]; then
         # Create TMAverage table
         echo "Creating table $schema_name.$tmaverage_table_name in tablespace $tablespace_name..."
@@ -227,7 +205,7 @@ if [ $table_opt -ne 0 ]; then
                 MINIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
                 MAXIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
                 VALUE_COUNT NUMBER(7,0) NOT NULL ENABLE,
-                CONSTRAINT PK_TMAVERAGE_SID1 PRIMARY KEY (TMID, SCT_VTCW) ENABLE
+                CONSTRAINT PK_$tmaverage_table_name PRIMARY KEY (TMID, SCT_VTCW) ENABLE
             )
             ORGANIZATION INDEX PCTFREE 0 LOGGING
             TABLESPACE "$tablespace_name";
@@ -265,8 +243,8 @@ EOD
             TIME_RAN        INTERVAL DAY TO SECOND,
             FAILED          NUMBER(1),
             CANCELLED       NUMBER(1),
-            INGESTED        NUMBER,
-            INSERTED        NUMBER,
+            ROWS_READ       NUMBER,
+            ROWS_RETURNED   NUMBER,
             UNIQUE_CONSTRAINT_NUM NUMBER,
             OTFD_ERROR_NUM  NUMBER,
             ERRORS          CLOB
@@ -329,18 +307,18 @@ EOD
     read_write_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$table1,$table2" table ALL "$username" Y)
     if [ $? -ne 0 ]; then
         echo "$read_write_permissions"
-        echo "An error occurred while granting read-write permissions to table $schema_name.$tmaverage_table_name on $username. Exiting..."
+        echo "An error occurred while granting read-write permissions to tables $table1, $table2 on $username. Exiting..."
         exit 1
     fi
 
-    table1="${schema_name}.$tmanalog_table_name"
-    table2="${ct_schema_name}.TelemetryItemDefinition"
-    table3="${ct_schema_name}.TelemetryAnalogConversions"
+    table1="$tmanalog_table_name"
+    table2="$telemetry_item_definitions_name"
+    table3="$telemetry_analog_conversions_name"
 
     read_only_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$table1,$table2,$table3" table SELECT "$username" Y)
     if [ $? -ne 0 ]; then
         echo "$read_only_permissions"
-        echo "An error occurred while granting read-only permission to the below tables. Exiting..."
+        echo "An error occurred while granting read-only permission to the following tables $table1, $table2, $table3. Exiting..."
         exit 1
     fi
 
@@ -366,8 +344,8 @@ EOD
             whenever oserror exit 1
             whenever sqlerror exit 1
 
-            GRANT EXECUTE ON ${project_name}_MISC.ONTHEFLYDECOM TO $username;
-            GRANT EXECUTE ON ${project_name}_MISC.ONTHEFLYDECOMMISSIONSPECIFIC TO $username;
+            GRANT EXECUTE ON ONTHEFLYDECOM TO $username;
+            GRANT EXECUTE ON ONTHEFLYDECOMMISSIONSPECIFIC TO $username;
 EOD
         )
         if [ $? -ne 0 ]; then
@@ -375,14 +353,20 @@ EOD
             echo "An error occurred while granting access to the OTFD package to $username. Exiting..."
             exit 1
         fi
+        # Note: Not using GrantNewPermissions because it requires the misc schema name.
+        otfd_tables=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+            set heading off
+            set feedback off
+            whenever oserror exit 1
+            whenever sqlerror exit 1
 
-        results="${project_name}_MISC.ONTHEFLYDECOM_RESULTS"
-        errors="${project_name}_MISC.ONTHEFLYDECOM_ERRORS"
-
-        otfd_tables=$("$HOME/common/oracle/GrantNewPermissions.sh" "$results,$errors" table ALL "$username" Y)
+            GRANT ALL ON ONTHEFLYDECOM_RESULTS TO $username;
+            GRANT ALL ON ONTHEFLYDECOM_ERRORS TO $username;
+EOD
+        )
         if [ $? -ne 0 ]; then
             echo "$otfd_tables"
-            echo "An error occurred while granting read-only permissions. Exiting..."
+            echo "An error occurred while granting access to the OTFD tables to $username. Exiting..."
             exit 1
         fi
     fi
@@ -392,13 +376,6 @@ fi
 
 # Create a virtual environment in the current directory and install needed dependencies.
 if [ $venv_opt -ne 0 ]; then
-    newest_python=$(ls /usr/bin/python3* | grep -oP 'python3\.\d+' | sort -V | tail -n 1)
-    if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
-        echo "$newest_python"
-        echo "Failed to find newest version of python in order to create virtual environment. Exiting..."
-        exit 1
-    fi
-
     create_venv=$("$newest_python" -m venv "$SCRIPT_DIR/venv")
     if [ $? -ne 0 ]; then
         echo "$create_venv"
