@@ -20,11 +20,12 @@ import sys
 # Dictionary of databases this script is designed for and the appropriate table to access. If script is run on an unsupported database,
 # it will fail.
 TMANALOG_DBS = {
-    "goldprod": "GOLD_L1A.TMANALOG_SID1",
+    "goldprod": "GOLD_L1A.TMANALOG_SID<SID>",
     "evep12c": "EVE_L1A.TMANALOG",
-    "tsisprod": "TSIS_L1A.TMANALOG_SID1",
+    "tsisprod": "TSIS_L1A.TMANALOG_SID<SID>",
     "aimprod": "AIM_L1A.TMANALOG_TABLE",
-    "ixpeprod": "IXPE_L1A.TMANALOG_SID1",
+    "ixpeprod": "IXPE_L1A.TMANALOG_SID<SID>",
+    "emadev": "EMA_SCHEMA<SID>.TMANALOG"
 }
 
 # The L1A schema for each supported DB. Should theoretically be derived from DB name.
@@ -61,14 +62,30 @@ class OTFDException(Exception):
     Custom exception class for OTFD errors. Includes an array of rows from ONTHEFLYDECOM_ERRORS.
     """
 
+class TMAverageConfigs():
+    """
+    Class that parses and allows access to TMAverage config parameters. 
+    Is a single point through which database and SID-dependent alterations are made.
+
+    Note: TODO: I have realized that the fact that this now needs to be evaluated at runtime means that it will have to be passed
+                to the worker threads in some way. I can probably just pass a copy of this class and let it serialize-deserialize it into the process.
+    """
+    def __init__(self, database: str, sid: str):
+        self.tmanalog_table_name = TMANALOG_DBS[database].replace("<SID>", sid)
+        self.tmaverage_table_name = f"{DB_SCHEMAS[database]}.{TMAVERAGE_TABLE_NAME}" # TODO: Add exception for emadev
+        self.tmaverage_stats_name = f"{DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME}" # TODO: Add exception for emadev
+        self.telemetry_analog_conversions_name = TELEMETRYANALOGCONVERSIONS_DBS[database]  # TODO: Add exception for emadev
+        self.telemetry_item_definitions_name = TELEMETRYITEMDEFINITION_DBS[database]  # TODO: 
+
 # Only gets called directly by bash scripts to set the correct environment variables. 
 # Print out the variable assignments, and the bash script will execute them via `exec`.
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) != 3:
         print("ERROR: Must take database parameter.")
         exit(1)
 
     database = sys.argv[1]
+    sid = sys.argv[2]
 
     tmaverage_table_name=TMAVERAGE_TABLE_NAME.upper()
     tmaverage_stats_name=TMAVERAGE_STATS_NAME.upper()
