@@ -46,7 +46,7 @@ class OTFDException(Exception):
     """
 
 # Only gets called directly by bash scripts to set the correct environment variables. 
-# Print out the variable assignments, and the bash script will execute them via command substitution.
+# Print out the variable assignments, and the bash script will execute them via `exec`.
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("ERROR: Must take database parameter.")
