@@ -80,8 +80,6 @@ else
     export LD_LIBRARY_PATH=$ORACLE_HOME/lib
 fi
 
-export DB_EMAIL_LIST="Robert.Schmidt@lasp.colorado.edu"
-
 # Resolve the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
