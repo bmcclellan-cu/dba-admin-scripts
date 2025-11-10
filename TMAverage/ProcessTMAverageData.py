@@ -8,7 +8,8 @@
 #          For more detailed documentation go to https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
 # 
 # Author: Robert Schmidt
-# Modified on: September 18th, 2025 - RS
+# Created: April 3rd, 2025
+# Modified on: November 10th, 2025 - RS
 ###############################################################
 
 # System imports

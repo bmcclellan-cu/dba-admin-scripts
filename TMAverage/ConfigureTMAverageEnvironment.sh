@@ -7,19 +7,26 @@
 # Notes: The L1A schema must exist in order for this script to work. 
 #        The script defaults to assuming that the analog table is TMANALOG_SID1, but can be
 #        overwritten for cases where the table is different.
-#       
-#        The -v option creates a venv in the same directory as the script is located with the 
-#        required dependencies for the python script to run.
+# 
+#        This script uses TMAverageHelpers.py to set various static parameters that vary by 
+#        database. Any updates to tmaverage configurations must be done in TMAverageHelpers.py
+# 
+# IMPORTANT: As a part of the TMAverage & TMAverage_Stats table checks, this script will validate 
+#            that the MOST RECENT DDL changes have been applied to the respective table. It is 
+#            assumed that all previous updates have been applied, and the the only check that is 
+#            performed is for the most recent modifications. This check must be updated every time 
+#            the DDL is updated, and the respective variables in TMAverageHelpers.py must be updated:
+#            tmaverage_table_check_columns, tmaverage_stats_check_columns.
+# 
 # 
 # Author: Robert Schmidt
-# Created: Jun 6, 2025
-# Last Modified: September 18th, 2025 - RS
+# Created: June 6th, 2025
+# Last Modified: November 10th, 2025 - RS
 ##########################################################################
 usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafile ] (optional, create TMAverage_SID1 tablespace) ] [ -b (optional, create TMAverage tables) ] [ -v (optional, create venv in tmaverage script directory ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ username (optional) ] [ password (optional) ]"
 example1="Example: ./ConfigureTMAverageEnvironment.sh -t /ssd_internal/Robert/AIMPROD_TMAVERAGE/tmaverage_table.dbf"
 example2="         ./ConfigureTMAverageEnvironment.sh -u -o -v PROCESSTMIDTEST testPWD"
-
-
+    
 user_opt=0
 otfd_opt=0
 venv_opt=0
@@ -116,6 +123,12 @@ if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
     exit 1
 fi
 
+# Set config variables to default values:
+tmaverage_table_name="";tmaverage_stats_name="";tablespace_name="";tmanalog_table_name="";schema_name=""
+telemetry_analog_conversions_name="";telemetry_item_definitions_name="";tmaverage_table_ddl="";tmaverage_stats_ddl=""
+tmaverage_table_check_columns="";tmaverage_stats_check_columns=""
+
+
 # Set static values from helper script. If the database name is not supported, this will fail.
 var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID")
 if [ $? -ne 0 ]; then
@@ -188,6 +201,7 @@ if [ $table_opt -ne 0 ]; then
         echo "An error occurred while running CheckIfTableExists.sh Exiting..."
         exit 1
     fi
+
     if [[ "$check_table_exists" == *"No"* ]]; then
         # Create TMAverage table
         echo "Creating table $schema_name.$tmaverage_table_name in tablespace $tablespace_name..."
@@ -197,28 +211,34 @@ if [ $table_opt -ne 0 ]; then
             whenever oserror exit 1
             whenever sqlerror exit 1
 
-            CREATE TABLE "$schema_name"."$tmaverage_table_name"
-            (
-                TMID NUMBER(7,0) NOT NULL ENABLE,
-                SCT_VTCW NUMBER(16,0) NOT NULL ENABLE,
-                AVERAGE_VALUE FLOAT(126) NOT NULL ENABLE,
-                MINIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
-                MAXIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
-                VALUE_COUNT NUMBER(7,0) NOT NULL ENABLE,
-                CONSTRAINT PK_$tmaverage_table_name PRIMARY KEY (TMID, SCT_VTCW) ENABLE
-            )
-            ORGANIZATION INDEX PCTFREE 0 LOGGING
-            TABLESPACE "$tablespace_name";
-
+            $tmaverage_table_ddl
 EOD
         )
         if [ $? -ne 0 ]; then
             echo "$create_table"
-            echo "An error occurred while creating table $tmaverage_table_name. Exiting..."
+            echo "An error occurred while creating table $schema_name.$tmaverage_table_name. Exiting..."
             exit 1
         fi
     else
-        echo "Table $schema_name.$tmaverage_table_name already exists. Continuing..."
+        echo "Table $schema_name.$tmaverage_table_name already exists, checking most-recently-updated columns..."
+        # Check most recent updates to the TMAverage table. 
+        for column in $tmaverage_table_check_columns; do
+            echo "Checking: $column"
+            column_check=$("$HOME/common/oracle/CheckIfColumnExists.sh" "$schema_name" "$tmaverage_table_name" "$column")
+            if [ $? -ne 0 ]; then
+                echo "$column_check"
+                echo "An error occurred while running CheckIfColumnExists.sh. Exiting..."
+                exit 1
+            fi
+            if [[ $column_check != "Yes" ]]; then
+                echo "ERROR: Column $column is not present in $schema_name.$tmaverage_table_name. Please update the table DDL to the following: "
+                echo
+                echo
+                echo "$tmaverage_table_ddl"
+                exit 1
+            fi
+        done
+        echo "Table exists and is up-to-date. Continuing..."
     fi
 
     # Check if TMAverage_stats table already exists
@@ -237,19 +257,7 @@ EOD
         whenever oserror exit 1
         whenever sqlerror exit 1
 
-        CREATE TABLE $schema_name.$tmaverage_stats_name (
-            DATABASE_NAME   VARCHAR2(128),
-            START_TIME      TIMESTAMP PRIMARY KEY,
-            TIME_RAN        INTERVAL DAY TO SECOND,
-            FAILED          NUMBER(1),
-            CANCELLED       NUMBER(1),
-            ROWS_READ       NUMBER,
-            ROWS_RETURNED   NUMBER,
-            UNIQUE_CONSTRAINT_NUM NUMBER,
-            OTFD_ERROR_NUM  NUMBER,
-            ERRORS          CLOB
-        )
-        TABLESPACE "$tablespace_name";
+        $tmaverage_stats_ddl
 EOD
         )
         if [ $? -ne 0 ]; then
@@ -258,7 +266,25 @@ EOD
             exit 1
         fi
     else
-        echo "Table $schema_name.$tmaverage_stats_name already exists. Continuing..."
+        echo "Table $schema_name.$tmaverage_stats_name already exists, checking most-recently-updated columns..."
+       # Check most recent updates to the TMAVERAGE_STATS table. 
+        for column in $tmaverage_stats_check_columns; do
+            echo "Checking: $column"
+            column_check=$("$HOME/common/oracle/CheckIfColumnExists.sh" "$schema_name" "$tmaverage_stats_name" "$column")
+            if [ $? -ne 0 ]; then
+                echo "$column_check"
+                echo "An error occurred while running CheckIfColumnExists.sh. Exiting..."
+                exit 1
+            fi
+            if [[ $column_check != "Yes" ]]; then
+                echo "ERROR: Column $column is not present in $tmaverage_stats_name. Please update the table DDL to the following: "
+                echo
+                echo
+                echo "$tmaverage_stats_ddl"
+                exit 1
+            fi
+        done
+        echo "Table exists and is up-to-date. Continuing..."
     fi
 fi
 

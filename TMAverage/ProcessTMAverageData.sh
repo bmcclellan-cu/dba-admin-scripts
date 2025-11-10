@@ -14,9 +14,8 @@
 #           For more detailed documentation go to https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
 # 
 # Author: Robert Schmidt
-# 
 # Created on: July 21st, 2025
-# Modified on: September 18th, 2025 - RS
+# Modified on: November 10th, 2025 - RS
 ###############################################################
 usage="Usage: ./ProcessTMAverageData.sh [ -r (optional, only email on error) ] [ -o (optional, use OTFD) ] [ -e [ filename ] (absolute path filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL | filename] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
 example1="Example: ./ProcessTMAverageData.sh goldprod ALL 14 7 8"
@@ -81,6 +80,8 @@ else
     export LD_LIBRARY_PATH=$ORACLE_HOME/lib
 fi
 
+export DB_EMAIL_LIST="Robert.Schmidt@lasp.colorado.edu"
+
 # Resolve the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -122,6 +123,10 @@ if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
     echo "Failed to find newest version of python. TMAverage requires the use of python. Exiting..."
     exit 1
 fi
+
+# Set config variables to default values:
+tmaverage_table_name="";tmaverage_stats_name="";tablespace_name="";
+tmanalog_table_name="";telemetry_analog_conversions_name="";telemetry_item_definitions_name=""
 
 # Set TMAverage static values from helper script. If the database name is not supported, this will fail.
 var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID")

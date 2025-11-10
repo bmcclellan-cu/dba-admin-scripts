@@ -6,7 +6,8 @@
 # Note:    For more detailed documentation go to https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
 # 
 # Author: Robert Schmidt
-# Created on: June 21st, 2025
+# Created: June 21st, 2025
+# Last Modified: November 10th, 2025 - RS
 ###############################################################
 usage="Usage: ./FindTMAverageLastIngested.sh [ database ]"
 example1="Example: ./FindTMAverageLastIngested.sh goldprod"
@@ -55,6 +56,10 @@ if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
     echo "Failed to find newest version of python. TMAverage requires the use of python. Exiting..."
     exit 1
 fi
+
+# Set config variables to default values:
+tmaverage_table_name=""
+schema_name=""
 
 # Set static values from helper script. If the database name is not supported, this will fail.
 var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID")
