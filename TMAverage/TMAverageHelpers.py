@@ -35,11 +35,19 @@ DB_SCHEMAS = {
     "evep12c": "EVE_L1A",
     "tsisprod": "TSIS_L1A",
     "ixpeprod": "IXPE_L1A",
+    "emadev": "EMA_SCHEMA<SID>"
 }
 
-TMAVERAGE_TABLE_NAME    = "TMAVERAGE_SID1"
-TMAVERAGE_STATS_NAME    = "TMAVERAGE_STATS"
-TABLESPACE_NAME         = "TMAVERAGE_SID1"
+# TODO: Add exceptions for emadev
+TMAVERAGE_TABLE_NAME = {
+    "*": "TMAVERAGE_SID1"
+}
+TMAVERAGE_STATS_NAME = {
+    "*": "TMAVERAGE_STATS"
+}
+TABLESPACE_NAME = {
+    "*": "TMAVERAGE_SID1"
+}
 
 TELEMETRYITEMDEFINITION_DBS = {
     "aimprod": "AIM_CT_SC.TELEMETRYITEMDEFINITION",
@@ -57,6 +65,54 @@ TELEMETRYANALOGCONVERSIONS_DBS = {
     "ixpeprod": "IXPE_CT.TELEMETRYANALOGCONVERSIONS",
 }
 
+# When this is updated, update the tmaverage_table_check_columns variable as well.
+TMAVERAGE_TABLE_DDL=f"""CREATE TABLE <SCHEMA_NAME>.<TMAVERAGE_TABLE_NAME>
+(
+    TMID NUMBER(7,0) NOT NULL ENABLE,
+    SCT_VTCW NUMBER(16,0) NOT NULL ENABLE,
+    AVERAGE_VALUE FLOAT(126) NOT NULL ENABLE,
+    MINIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
+    MAXIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
+    VALUE_COUNT NUMBER(7,0) NOT NULL ENABLE,
+    CONSTRAINT PK_<TMAVERAGE_TABLE_NAME> PRIMARY KEY (TMID, SCT_VTCW) ENABLE
+)
+ORGANIZATION INDEX PCTFREE 0 LOGGING
+TABLESPACE \\"<TABLESPACE_NAME>\\";"""
+TMAVERAGE_TABLE_CHECK_COLUMNS=""
+
+# When this is updated, update the tmaverage_stats_check_columns variable as well.
+TMAVERAGE_STATS_DDL=f"""CREATE TABLE <SCHEMA_NAME>.<TMAVERAGE_STATS_NAME> (
+    DATABASE_NAME   VARCHAR2(128),
+    START_TIME      TIMESTAMP PRIMARY KEY,
+    TIME_RAN        INTERVAL DAY TO SECOND,
+    FAILED          NUMBER(1),
+    CANCELLED       NUMBER(1),
+    ROWS_READ       NUMBER,
+    ROWS_RETURNED   NUMBER,
+    UNIQUE_CONSTRAINT_NUM NUMBER,
+    OTFD_ERROR_NUM  NUMBER,
+    ERRORS          CLOB
+)
+TABLESPACE \\"<TABLESPACE_NAME>\\";"""
+TMAVERAGE_STATS_CHECK_COLUMNS="ROWS_READ ROWS_RETURNED"
+
+def fetch_config(config_dict: dict, config_key: str, mappings: dict = {}):
+    """
+    Basic helper that handles default values for config items as well as replacing parts of the string on-the-fly.
+    """
+    try:
+        config_item = config_dict[config_key]
+    except KeyError:
+        try:
+            config_item = config_item["*"] # Try to get default value instead.
+        except:
+            print(f"ERROR: Config key {config_key} not supported. Database/SID passed is not valid.")
+    
+    for key in mappings.keys():
+        config_item.replace(key, mappings[key])
+    
+    return config_item
+
 class OTFDException(Exception):
     """
     Custom exception class for OTFD errors. Includes an array of rows from ONTHEFLYDECOM_ERRORS.
@@ -71,11 +127,33 @@ class TMAverageConfigs():
                 to the worker threads in some way. I can probably just pass a copy of this class and let it serialize-deserialize it into the process.
     """
     def __init__(self, database: str, sid: str):
-        self.tmanalog_table_name = TMANALOG_DBS[database].replace("<SID>", sid)
-        self.tmaverage_table_name = f"{DB_SCHEMAS[database]}.{TMAVERAGE_TABLE_NAME}" # TODO: Add exception for emadev
-        self.tmaverage_stats_name = f"{DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME}" # TODO: Add exception for emadev
-        self.telemetry_analog_conversions_name = TELEMETRYANALOGCONVERSIONS_DBS[database]  # TODO: Add exception for emadev
-        self.telemetry_item_definitions_name = TELEMETRYITEMDEFINITION_DBS[database]  # TODO: 
+        self.schema_name=fetch_config(DB_SCHEMAS, database, {"<SID>", sid})
+
+        self.tmanalog_table_name = fetch_config(TMANALOG_DBS, database, {"<SID>", sid})
+        self.tmaverage_table_name = f"{self.schema_name}.{fetch_config(TMAVERAGE_TABLE_NAME, database)}"
+        self.tmaverage_stats_name = f"{self.schema_name}.{fetch_config(TMAVERAGE_STATS_NAME, database)}"
+
+        self.tablespace_name=fetch_config(TABLESPACE_NAME, database)
+
+        self.telemetry_analog_conversions_name = fetch_config(TELEMETRYANALOGCONVERSIONS_DBS, database, {"<SID>", sid})
+        self.telemetry_item_definitions_name = fetch_config(TELEMETRYITEMDEFINITION_DBS, database, {"<SID>": sid})
+        
+        self.tmaverage_table_ddl = fetch_config(TMAVERAGE_TABLE_DDL, database, {
+            "<SCHEMA_NAME>": self.schema_name,
+            "<TMAVERAGE_TABLE_NAME>": self.tmaverage_table_name,
+            "<TABLESPACE_NAME>": self.tablespace_name
+        })
+        
+        TMAVERAGE_TABLE_DDL.replace("<SCHEMA_NAME>", self.schema_name).replace("<TMAVERAGE_TABLE_NAME>", self.tmaverage_table_name)
+        self.tmaverage_stats_ddl = self.tmaverage_stats_ddl.replace("<TABLESPACE_NAME>", self.tablespace_name)
+        self.tmaverage_table_check_columns = TMAVERAGE_TABLE_CHECK_COLUMNS.upper()
+
+        self.tmaverage_stats_ddl = TMAVERAGE_STATS_DDL.replace("<SCHEMA_NAME>", self.schema_name).replace("<TMAVERAGE_STATS_NAME>", self.tmaverage_stats_name)
+        self.tmaverage_stats_ddl = self.tmaverage_stats_ddl.replace("<TABLESPACE_NAME>", self.tablespace_name)
+        self.tmaverage_stats_check_columns = TMAVERAGE_STATS_CHECK_COLUMNS.upper()
+
+
+
 
 # Only gets called directly by bash scripts to set the correct environment variables. 
 # Print out the variable assignments, and the bash script will execute them via `exec`.
@@ -87,61 +165,20 @@ if __name__ == "__main__":
     database = sys.argv[1]
     sid = sys.argv[2]
 
-    tmaverage_table_name=TMAVERAGE_TABLE_NAME.upper()
-    tmaverage_stats_name=TMAVERAGE_STATS_NAME.upper()
-    tablespace_name=TABLESPACE_NAME.upper()
+    conf=TMAverageConfigs(database, sid)
 
-    tmanalog_table_name=TMANALOG_DBS[database].upper()
-    schema_name=DB_SCHEMAS[database].upper()
+    print(f"export tmaverage_table_name={conf.tmaverage_table_name}")
+    print(f"export tmaverage_stats_name={conf.tmaverage_stats_name}")
+    print(f"export tablespace_name={conf.tablespace_name}")
 
-    telemetry_analog_conversions_name=TELEMETRYANALOGCONVERSIONS_DBS[database].upper()
-    telemetry_item_definitions_name=TELEMETRYITEMDEFINITION_DBS[database].upper()
+    print(f"export tmanalog_table_name={conf.tmanalog_table_name}")
+    print(f"export schema_name={conf.schema_name}")
 
-    # When this is updated, update the tmaverage_table_check_columns variable as well.
-    tmaverage_table_ddl=f"""CREATE TABLE {schema_name}.{tmaverage_table_name}
-(
-    TMID NUMBER(7,0) NOT NULL ENABLE,
-    SCT_VTCW NUMBER(16,0) NOT NULL ENABLE,
-    AVERAGE_VALUE FLOAT(126) NOT NULL ENABLE,
-    MINIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
-    MAXIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
-    VALUE_COUNT NUMBER(7,0) NOT NULL ENABLE,
-    CONSTRAINT PK_{tmaverage_table_name} PRIMARY KEY (TMID, SCT_VTCW) ENABLE
-)
-ORGANIZATION INDEX PCTFREE 0 LOGGING
-TABLESPACE \\"{tablespace_name}\\";"""
-    
-    tmaverage_table_check_columns=""
+    print(f"export telemetry_analog_conversions_name={conf.telemetry_analog_conversions_name}")
+    print(f"export telemetry_item_definitions_name={conf.telemetry_item_definitions_name}")
 
-    # When this is updated, update the tmaverage_stats_check_columns variable as well.
-    tmaverage_stats_ddl=f"""CREATE TABLE {schema_name}.{tmaverage_stats_name} (
-    DATABASE_NAME   VARCHAR2(128),
-    START_TIME      TIMESTAMP PRIMARY KEY,
-    TIME_RAN        INTERVAL DAY TO SECOND,
-    FAILED          NUMBER(1),
-    CANCELLED       NUMBER(1),
-    ROWS_READ       NUMBER,
-    ROWS_RETURNED   NUMBER,
-    UNIQUE_CONSTRAINT_NUM NUMBER,
-    OTFD_ERROR_NUM  NUMBER,
-    ERRORS          CLOB
-)
-TABLESPACE \\"{tablespace_name}\\";"""
-    
-    tmaverage_stats_check_columns="ROWS_READ ROWS_RETURNED"
-
-    print(f"export tmaverage_table_name={tmaverage_table_name}")
-    print(f"export tmaverage_stats_name={tmaverage_stats_name}")
-    print(f"export tablespace_name={tablespace_name}")
-
-    print(f"export tmanalog_table_name={tmanalog_table_name}")
-    print(f"export schema_name={schema_name}")
-
-    print(f"export telemetry_analog_conversions_name={telemetry_analog_conversions_name}")
-    print(f"export telemetry_item_definitions_name={telemetry_item_definitions_name}")
-
-    print(f"export tmaverage_table_ddl=\"{tmaverage_table_ddl}\"")
-    print(f"export tmaverage_stats_ddl=\"{tmaverage_stats_ddl}\"")
-    print(f"export tmaverage_table_check_columns=\"{tmaverage_table_check_columns}\"")
-    print(f"export tmaverage_stats_check_columns=\"{tmaverage_stats_check_columns}\"")
+    print(f"export tmaverage_table_ddl=\"{conf.tmaverage_table_ddl}\"")
+    print(f"export tmaverage_stats_ddl=\"{conf.tmaverage_stats_ddl}\"")
+    print(f"export tmaverage_table_check_columns=\"{conf.tmaverage_table_check_columns}\"")
+    print(f"export tmaverage_stats_check_columns=\"{conf.tmaverage_stats_check_columns}\"")
 
