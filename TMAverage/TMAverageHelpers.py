@@ -17,56 +17,71 @@
 ##########################################################################
 import sys
 
-# Dictionary of databases this script is designed for and the appropriate table to access. If script is run on an unsupported database,
-# it will fail.
-TMANALOG_DBS = {
-    "goldprod": "GOLD_L1A.TMANALOG_SID<SID>",
-    "evep12c": "EVE_L1A.TMANALOG",
-    "tsisprod": "TSIS_L1A.TMANALOG_SID<SID>",
-    "aimprod": "AIM_L1A.TMANALOG_TABLE",
-    "ixpeprod": "IXPE_L1A.TMANALOG_SID<SID>",
-    "emadev": "EMA_SCHEMA<SID>.TMANALOG"
+# Dictionary of databases and SIDs that the script is designed for. Any attempt 
+# to run any TMAverage scripts on SIDs or databases not listed here will fail and 
+# display an appropriate error message.
+SUPPORTED_DB_SIDS = {
+    "goldprod": [1],
+    "evep12c": [1],
+    "tsisprod": [1],
+    "aimprod": [1],
+    "ixpeprod": [1],
+    "emadev": range(1, 21), # SIDs 1-20.
 }
 
-# The L1A schema for each supported DB. Should theoretically be derived from DB name.
-DB_SCHEMAS = {
+# The schema where data is primarily stored (typically L1A), and where TMAverage tables
+# are located.
+DATA_SCHEMAS = {
     "aimprod": "AIM_L1A",
     "goldprod": "GOLD_L1A",
     "evep12c": "EVE_L1A",
     "tsisprod": "TSIS_L1A",
     "ixpeprod": "IXPE_L1A",
-    "emadev": "EMA_SCHEMA<SID>"
+    "emadev": "EMA_SCHEMA<SID>"  # (EMA) Data is separated by SID/Schema
 }
 
-# TODO: Add exceptions for emadev
+CT_SCHEMAS = {
+    "aimprod": "AIM_CT_SC",
+    "goldprod": "GOLD_CT",
+    "evep12c": "EVE_CT",
+    "tsisprod": "TSIS_CT",
+    "ixpeprod": "IXPE_CT",
+    "emadev": "EMA_CT",
+}
+
+TMANALOG_DBS = {
+    "evep12c":  "<DATA_SCHEMA>.TMANALOG",
+    "emadev":   "<DATA_SCHEMA>.TMANALOG",
+    "aimprod":  "<DATA_SCHEMA>.TMANALOG_TABLE",
+    "*":        "<DATA_SCHEMA>.TMANALOG_SID<SID>",
+}
+
 TMAVERAGE_TABLE_NAME = {
-    "*": "TMAVERAGE_SID1"
+    "emadev":   "<DATA_SCHEMA>.TMAVERAGE",
+    "*":        "<DATA_SCHEMA>.TMAVERAGE_SID<SID>"
 }
+
 TMAVERAGE_STATS_NAME = {
-    "*": "TMAVERAGE_STATS"
+    "emadev":   "EMA_MISC.TMAVERAGE_STATS",     # (EMA) Single TMAVERAGE_STATS table in MISC
+    "*":        "<DATA_SCHEMA>.TMAVERAGE_STATS"
 }
+
 TABLESPACE_NAME = {
-    "*": "TMAVERAGE_SID1"
+    "emadev":   "<DATA_SCHEMA>_TMAVERAGE",      # (EMA) Separate TMAVERAGE tablespaces for each SID/Schema
+    "*":        "TMAVERAGE_SID<SID>",            # (Default) A single tablespace for all data
 }
 
 TELEMETRYITEMDEFINITION_DBS = {
-    "aimprod": "AIM_CT_SC.TELEMETRYITEMDEFINITION",
-    "goldprod": "GOLD_CT.TELEMETRYITEMDEFINITION",
-    "evep12c": "EVE_CT.TELEMETRYITEMDEFINITION",
-    "tsisprod": "TSIS_CT.TELEMETRYITEMDEFINITION",
-    "ixpeprod": "IXPE_CT.TELEMETRYITEMDEFINITION",
+    "*":  "<CT_SCHEMA>.TELEMETRYITEMDEFINITION",
 }
 
 TELEMETRYANALOGCONVERSIONS_DBS = {
-    "aimprod": "AIM_CT_SC.TELEMETRYANALOGCONVERSIONS",
-    "goldprod": "GOLD_CT.TELEMETRYANALOGCONVERSIONS",
-    "evep12c": "EVE_CT.TELEMETRYANALOGCONVERSIONS",
-    "tsisprod": "TSIS_CT.TELEMETRYANALOGCONVERSIONS",
-    "ixpeprod": "IXPE_CT.TELEMETRYANALOGCONVERSIONS",
+    "emadev":   "<DATA_SCHEMA>.TMANALOGCONVERSIONS",   # (EMA) Separate analog conversions for each SID.
+    "*":        "<CT_SCHEMA>.TELEMETRYANALOGCONVERSIONS",
 }
 
 # When this is updated, update the tmaverage_table_check_columns variable as well.
-TMAVERAGE_TABLE_DDL=f"""CREATE TABLE <SCHEMA_NAME>.<TMAVERAGE_TABLE_NAME>
+TMAVERAGE_TABLE_DDL=f"""CREATE TABLE <TMAVERAGE_TABLE_NAME>
 (
     TMID NUMBER(7,0) NOT NULL ENABLE,
     SCT_VTCW NUMBER(16,0) NOT NULL ENABLE,
@@ -81,7 +96,7 @@ TABLESPACE \\"<TABLESPACE_NAME>\\";"""
 TMAVERAGE_TABLE_CHECK_COLUMNS=""
 
 # When this is updated, update the tmaverage_stats_check_columns variable as well.
-TMAVERAGE_STATS_DDL=f"""CREATE TABLE <SCHEMA_NAME>.<TMAVERAGE_STATS_NAME> (
+TMAVERAGE_STATS_DDL=f"""CREATE TABLE <TMAVERAGE_STATS_NAME> (
     DATABASE_NAME   VARCHAR2(128),
     START_TIME      TIMESTAMP PRIMARY KEY,
     TIME_RAN        INTERVAL DAY TO SECOND,
@@ -96,20 +111,32 @@ TMAVERAGE_STATS_DDL=f"""CREATE TABLE <SCHEMA_NAME>.<TMAVERAGE_STATS_NAME> (
 TABLESPACE \\"<TABLESPACE_NAME>\\";"""
 TMAVERAGE_STATS_CHECK_COLUMNS="ROWS_READ ROWS_RETURNED"
 
-def fetch_config(config_dict: dict, config_key: str, mappings: dict = {}):
+def fetch_config(static_config, config_key, tm_config):
     """
     Basic helper that handles default values for config items as well as replacing parts of the string on-the-fly.
     """
-    try:
-        config_item = config_dict[config_key]
-    except KeyError:
+    if isinstance(static_config, dict):
         try:
-            config_item = config_item["*"] # Try to get default value instead.
-        except:
-            print(f"ERROR: Config key {config_key} not supported. Database/SID passed is not valid.")
+            config_item = static_config[config_key]
+        except KeyError:
+            try:
+                config_item = static_config["*"] # Try to get default value instead.
+            except:
+                ValueError(f"ERROR: Config key {config_key} not supported. Database/SID passed is not valid.")
+    elif isinstance(static_config, str):
+        config_item = static_config
+    else:
+        raise ValueError("ERROR: Config must be of type dict or string")
     
-    for key in mappings.keys():
-        config_item.replace(key, mappings[key])
+    # Gets the configs that were populated so far.
+    attributes = vars(tm_config)
+
+    for key in attributes.keys():
+        config_item = config_item.replace(f"<{key}>", attributes[key])
+    
+    if "<" in config_item or ">" in config_item:
+        print("WARNING: Unreplaced substitution present in config: ", file=sys.stderr)
+        print(config_item, file=sys.stderr)
     
     return config_item
 
@@ -123,62 +150,58 @@ class TMAverageConfigs():
     Class that parses and allows access to TMAverage config parameters. 
     Is a single point through which database and SID-dependent alterations are made.
 
-    Note: TODO: I have realized that the fact that this now needs to be evaluated at runtime means that it will have to be passed
-                to the worker threads in some way. I can probably just pass a copy of this class and let it serialize-deserialize it into the process.
+    Note: This is necessary both so that there is a standard way to set the configs, but also so that
+          this data can be passed to the worker threads. Previously they just accessed the constants in
+          TMAverageHelpers.py, but now the constants needs to be evaluated at runtime, and this is a moderately
+          clean way to do it.
     """
     def __init__(self, database: str, sid: str):
-        self.schema_name=fetch_config(DB_SCHEMAS, database, {"<SID>", sid})
+        # Check that database and sid are supported
+        if not (database in SUPPORTED_DB_SIDS.keys() and int(sid) in SUPPORTED_DB_SIDS[database]):
+            raise ValueError(f"ERROR: Database {database} SID {sid} is not supported by TMAverage.")
 
-        self.tmanalog_table_name = fetch_config(TMANALOG_DBS, database, {"<SID>", sid})
-        self.tmaverage_table_name = f"{self.schema_name}.{fetch_config(TMAVERAGE_TABLE_NAME, database)}"
-        self.tmaverage_stats_name = f"{self.schema_name}.{fetch_config(TMAVERAGE_STATS_NAME, database)}"
+        self.SID = sid
+        self.DATABASE = database
 
-        self.tablespace_name=fetch_config(TABLESPACE_NAME, database)
+        self.DATA_SCHEMA = fetch_config(DATA_SCHEMAS, database, self)
+        self.CT_SCHEMA = fetch_config(CT_SCHEMAS, database, self)
 
-        self.telemetry_analog_conversions_name = fetch_config(TELEMETRYANALOGCONVERSIONS_DBS, database, {"<SID>", sid})
-        self.telemetry_item_definitions_name = fetch_config(TELEMETRYITEMDEFINITION_DBS, database, {"<SID>": sid})
+        self.TMANALOG_TABLE_NAME = fetch_config(TMANALOG_DBS, database, self)
+        self.TMAVERAGE_TABLE_NAME = fetch_config(TMAVERAGE_TABLE_NAME, database, self)
+        self.TMAVERAGE_STATS_NAME = fetch_config(TMAVERAGE_STATS_NAME, database, self)
+
+        self.TABLESPACE_NAME = fetch_config(TABLESPACE_NAME, database, self)
+
+        self.TELEMETRY_ANALOG_CONVERSIONS_NAME = fetch_config(TELEMETRYANALOGCONVERSIONS_DBS, database, self)
+        self.TELEMETRY_ITEM_DEFINITIONS_NAME = fetch_config(TELEMETRYITEMDEFINITION_DBS, database, self)
         
-        self.tmaverage_table_ddl = fetch_config(TMAVERAGE_TABLE_DDL, database, {
-            "<SCHEMA_NAME>": self.schema_name,
-            "<TMAVERAGE_TABLE_NAME>": self.tmaverage_table_name,
-            "<TABLESPACE_NAME>": self.tablespace_name
-        })
-        
-        TMAVERAGE_TABLE_DDL.replace("<SCHEMA_NAME>", self.schema_name).replace("<TMAVERAGE_TABLE_NAME>", self.tmaverage_table_name)
-        self.tmaverage_stats_ddl = self.tmaverage_stats_ddl.replace("<TABLESPACE_NAME>", self.tablespace_name)
-        self.tmaverage_table_check_columns = TMAVERAGE_TABLE_CHECK_COLUMNS.upper()
+        self.TMAVERAGE_TABLE_DDL = fetch_config(TMAVERAGE_TABLE_DDL, None, self)
+        self.TMAVERAGE_TABLE_CHECK_COLUMNS = TMAVERAGE_TABLE_CHECK_COLUMNS
 
-        self.tmaverage_stats_ddl = TMAVERAGE_STATS_DDL.replace("<SCHEMA_NAME>", self.schema_name).replace("<TMAVERAGE_STATS_NAME>", self.tmaverage_stats_name)
-        self.tmaverage_stats_ddl = self.tmaverage_stats_ddl.replace("<TABLESPACE_NAME>", self.tablespace_name)
-        self.tmaverage_stats_check_columns = TMAVERAGE_STATS_CHECK_COLUMNS.upper()
+        self.TMAVERAGE_STATS_DDL = fetch_config(TMAVERAGE_STATS_DDL, None, self)
+        self.TMAVERAGE_STATS_CHECK_COLUMNS = TMAVERAGE_STATS_CHECK_COLUMNS
 
-
-
+# TODO: Notes to self, need to figure out if we want to have TMAVERAGE_STATS on a separate tablespace 
+#       for EMA. If it gets put in the MISC schema, it will have to be on a different tablespace from 
+#       TMAVERAGE_SID1.
 
 # Only gets called directly by bash scripts to set the correct environment variables. 
 # Print out the variable assignments, and the bash script will execute them via `exec`.
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        print("ERROR: Must take database parameter.")
+        print("ERROR: Must take database and SystemID parameter.")
         exit(1)
 
     database = sys.argv[1]
     sid = sys.argv[2]
 
+    try:
+        int(sid)
+    except ValueError:
+        raise ValueError("SystemID must be an integer")
+
     conf=TMAverageConfigs(database, sid)
+    attributes = vars(conf)  # Gets dict of variables and their values
 
-    print(f"export tmaverage_table_name={conf.tmaverage_table_name}")
-    print(f"export tmaverage_stats_name={conf.tmaverage_stats_name}")
-    print(f"export tablespace_name={conf.tablespace_name}")
-
-    print(f"export tmanalog_table_name={conf.tmanalog_table_name}")
-    print(f"export schema_name={conf.schema_name}")
-
-    print(f"export telemetry_analog_conversions_name={conf.telemetry_analog_conversions_name}")
-    print(f"export telemetry_item_definitions_name={conf.telemetry_item_definitions_name}")
-
-    print(f"export tmaverage_table_ddl=\"{conf.tmaverage_table_ddl}\"")
-    print(f"export tmaverage_stats_ddl=\"{conf.tmaverage_stats_ddl}\"")
-    print(f"export tmaverage_table_check_columns=\"{conf.tmaverage_table_check_columns}\"")
-    print(f"export tmaverage_stats_check_columns=\"{conf.tmaverage_stats_check_columns}\"")
-
+    for attribute in attributes:
+        print(f"export {attribute.lower()}=\"{attributes[attribute]}\"")
