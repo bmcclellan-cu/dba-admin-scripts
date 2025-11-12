@@ -123,7 +123,7 @@ Notes:
        In this case the SCT times used together with TSL and TMD times is not an issue.
 *************************************************************************************************/
 
-CREATE OR REPLACE PACKAGE BODY onTheFlyDecom
+CREATE OR REPLACE PACKAGE BODY IXPE_MISC.onTheFlyDecom
 AS
 
 -- These options, and additional mission-specific options, are settable by calling the setOption
@@ -171,17 +171,21 @@ gblSequence NUMBER := 1;
 Procedure:  logOTFD
 
 Purpose:    Inserts a new row with a message to the onTheFlyDecom_errors temporary table, incrementing
-            a global counter indicating the order of events. The collateErrors function is used by 
-            selectNumericTlm to compact the errors such that identical error messages are not repeated.
+            a global counter indicating the order of events. If a log message is longer than 500 characters
+            (the current ONTHEFLYDECOM_ERRORS VARCHAR size), the message is split into multiple chunks and the 
+            sequence counter is not updated. 
+
+            The collateErrors function is run at the end of selectNumericTlm to compact the errors such that 
+            identical sequential error messages are not repeated.
 
 Input:      message -  VARCHAR2 The error message to log.
-                       It should start with "ERROR ", "WARNING " or "INFO ".
-            priority - NUMBER   How "important" the log message is:
+
+            priority - NUMBER   How "important" the log message is. Adds a prefix to the message and filters by gblDebugLevel:
                         0: ERROR            - Needs to be logged regardless of logging level
                         1: WARNING          - May represent a non-fatal error or issue
                         2: DEBUG            - Logs all actions taken, including all SQL run and most function calls made
                         3: VERBOSE DEBUG    - Logs all SQL, function calls, etc. (critically, this includes decomFromHexString, 
-                                              which gets called for every data point).
+                                              which gets called for every data point, which results in extremely verbose output).
 
 Notes:
     Rows in the onTheFlyDecom_errors temporary table are of the form sequence, message, occurrences.
@@ -226,13 +230,14 @@ END logOTFD;
 /*************************************************************************************************
 Procedure:  collateErrors
 
-Purpose:    Takes the log output in onTheFlyDecom_errors and deletes sequential entries with identical 
-            logging messages, incrementing the occurrences counter to reflect the number of errors. The 
-            lowest sequence is preserved. This is significantly more efficient than running an UPDATE
-            query for every message logged (especially when exceeding 10K messages for a single procedure call), 
-            and still allows for log compaction. This has no significant performance impact for low amounts of 
-            log output, and makes troubleshooting issues in the decom code (such as decomFromHexString) significantly 
-            less tedious.
+Purpose:    Takes the log output in onTheFlyDecom_errors and deletes sequential duplicate log entires,
+            updating the occurrences field to reflect the number of entires compacted. The lowest sequence 
+            number is preserved. This is run once at the end of selectNumericTlm to compact the log output
+            without losing the order of events or any log data. 
+
+    Note:   This is significantly more efficient than validating and updating the table rows at insert time
+            and has no significant performance impact during normal operations, and will only come into effect
+            when errors get logged or DEBUGLEVEL is set.
 
 Input:      None
 
@@ -723,7 +728,7 @@ IS
 BEGIN
     logOTFD('CSV2NestedTable: p_list=' || p_list, 2);
     
-    -- Validate input is not empty or just whitespace
+    -- Validate input is not empty, whitespace, or '-1'
     IF p_list IS NULL OR TRIM(p_list) = '' OR p_list = '-1' THEN
         logOTFD('CSV2NestedTable: Empty or invalid input list, returning default', 2);
         l_tab.EXTEND;
@@ -815,6 +820,16 @@ Purpose:    Does on-the-fly decom for one telemetry item over a time-range, with
             2.  Decommutates the hex data into a numeric type, using the offset, length and data type
 	            from the decom record.
 	        3.  Formats a row using SCT, ERT, ASCT and Value, and writes it to the global temporary table.
+
+
+TODO: Integrate docs update.
+The steps involved in retrieving and decomming are as follows:
+    1. Generate the SQL for the appropriate L0 query
+    2. Open a cursor for the query (Note: This does not query the data, data is only queried in the next step)
+    3. BULK COLLECT the data into a buffer table in memory up to a maximum of n_batch_rows rows
+    4. Loop through all rows and collect SCT, ERT, ASCT, and the decommuted value into temporary arrays
+    5. Use a FOREACH loop to insert all of the decommuted data into ONTHEFLYDECOM_RESULTS table as a bulk INSERT.
+
 Inputs:
    
     decomMap     - PL/SQL table based record containing one row from the TMDecom table.

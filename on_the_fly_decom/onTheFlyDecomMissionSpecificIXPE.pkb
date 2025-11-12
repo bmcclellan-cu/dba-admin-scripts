@@ -352,7 +352,8 @@ BEGIN
                           ', apid_in=' || apid_in ||
                           ', tlmId_in=' || tlmId_in || 
                           ', TMDQueryStartTime_in=' || TMDQueryStartTime_in ||
-                          ', TMDQueryStopTime_in=' || TMDQueryStopTime_in, 2
+                          ', TMDQueryStopTime_in=' || TMDQueryStopTime_in, 
+                          ', isLastTSLRow_in=', sys.diutil.bool_to_int(isLastTSLRow_in) , 2
     );
     name_value := ONTHEFLYDECOM.name_value_t( 
         ':systemId_in' => TO_CHAR(systemId_in),

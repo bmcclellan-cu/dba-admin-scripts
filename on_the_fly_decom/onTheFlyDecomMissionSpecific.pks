@@ -10,7 +10,7 @@ Usage:
      @<full_path>/onTheFlyDecomMissionSpecificEMA.pkb     -- compile the package body  
                    
 *************************************************************************************************/
-CREATE OR REPLACE PACKAGE onTheFlyDecomMissionSpecific
+CREATE OR REPLACE PACKAGE IXPE_MISC.onTheFlyDecomMissionSpecific
 AS 
     TYPE curType IS REF CURSOR; -- Weakly typed cursor
 
