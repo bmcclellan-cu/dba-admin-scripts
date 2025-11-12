@@ -2,6 +2,7 @@
 File:       onTheFlyDecomMissionSpecificEMM.pkb (package body for package: onTheFlyDecomMissionSpecific
 
 Purpose:    EMM-specific code for on-the-fly decom, called by the core package.
+            NOTE: This code is not currently being actively maintained.
   
 Revisions:
   mm/dd/yy who  description

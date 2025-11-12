@@ -123,7 +123,7 @@ Notes:
        In this case the SCT times used together with TSL and TMD times is not an issue.
 *************************************************************************************************/
 
-CREATE OR REPLACE PACKAGE BODY IXPE_MISC.onTheFlyDecom
+CREATE OR REPLACE PACKAGE BODY onTheFlyDecom
 AS
 
 -- These options, and additional mission-specific options, are settable by calling the setOption
