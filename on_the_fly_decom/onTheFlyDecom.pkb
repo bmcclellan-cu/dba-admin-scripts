@@ -239,6 +239,9 @@ Purpose:    Takes the log output in onTheFlyDecom_errors and deletes sequential 
             and has no significant performance impact during normal operations, and will only come into effect
             when errors get logged or DEBUGLEVEL is set.
 
+            This procedure will NOT compact split logs any differently, and will only compact sequential split
+            log messages if both halves are identical. 
+
 Input:      None
 
 Notes:
@@ -251,6 +254,7 @@ BEGIN
     -- and count how many consecutive occurrences there are
     MERGE INTO onTheFlyDecom_errors t
     USING (
+        -- Get the number of identical consecutive entires.
         SELECT 
             MIN(sequence) AS sequence,
             message,
@@ -259,18 +263,25 @@ BEGIN
             SELECT 
                 sequence,
                 message,
+                -- Partitions the table by message, preserving the sequence order, then gets the row number for each 
+                -- item in that partition (ROW_NUMBER() resets at the beginning of each partition). Subtracting this 
+                -- from the sequence, which is increasing each row, gives a single "group number" for each set of 
+                -- identical rows.
                 sequence - ROW_NUMBER() OVER (PARTITION BY message ORDER BY sequence) AS grp
             FROM onTheFlyDecom_errors
         )
-        GROUP BY message, grp
+        GROUP BY message, grp  -- Group by message in order to be able to have it in the select field.
     ) s
+    -- Take the results from the above query and match them according to the following conditions.
     ON (t.sequence = s.sequence AND t.message = s.message)
     WHEN MATCHED THEN
+    -- On a match, update the number of occurrences.
     UPDATE SET t.occurrences = s.cnt;
 
     -- Delete all rows except the first occurrence of each sequential group
     DELETE FROM onTheFlyDecom_errors t
     WHERE sequence NOT IN (
+        -- Get the minimum sequence number in each message group
         SELECT MIN(sequence)
         FROM (
             SELECT 
