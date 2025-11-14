@@ -17,7 +17,7 @@
 # Created on: July 21st, 2025
 # Modified on: November 10th, 2025 - RS
 ###############################################################
-usage="Usage: ./ProcessTMAverageData.sh [ -r (optional, only email on error) ] [ -o (optional, use OTFD) ] [ -e [ filename ] (absolute path filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL | filename] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
+usage="Usage: ./ProcessTMAverageData.sh [ -r (optional, only email on error) ] [ -o (optional, use OTFD) ] [ -e [ filename ] (absolute path filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [ system_id ] [TMID | ALL | filename] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
 example1="Example: ./ProcessTMAverageData.sh goldprod ALL 14 7 8"
 example2="         ./ProcessTMAverageData.sh -d goldprod ALL 12-JAN-23 14-JAN-23"
 
@@ -80,11 +80,13 @@ else
     export LD_LIBRARY_PATH=$ORACLE_HOME/lib
 fi
 
+export DB_EMAIL_LIST="Robert.Schmidt@lasp.colorado.edu"
+
 # Resolve the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Check number of arguments
-if [ $# -lt 4 ] || [ $# -gt 5 ]; then
+if [ $# -lt 5 ] || [ $# -gt 6 ]; then
     echo "$usage"
     echo "$example1"
     echo "$example2"
@@ -92,8 +94,9 @@ if [ $# -lt 4 ] || [ $# -gt 5 ]; then
 fi
 
 database=${1,,}
-tmid=${2}
-parallel_degree=${5^^}
+system_id=${2}
+tmid=${3}
+parallel_degree=${6}
 parallel_degree=${parallel_degree:-1}
 
 if [[ ! $parallel_degree =~ ^[0-9]+$ ]]; then
@@ -101,7 +104,12 @@ if [[ ! $parallel_degree =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-echo "Validating Input..."
+if [[ ! $system_id =~ ^[0-9]+$ ]]; then
+    echo "ERROR: System_ID must be a positive integer. Exiting..."
+    exit 1
+fi
+
+echo "Validating database Input..."
 
 export ORACLE_SID="$database"
 
@@ -127,7 +135,7 @@ tmaverage_table_name="";tmaverage_stats_name="";tablespace_name="";
 tmanalog_table_name="";telemetry_analog_conversions_name="";telemetry_item_definitions_name=""
 
 # Set TMAverage static values from helper script. If the database name is not supported, this will fail.
-var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID")
+var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID" "$system_id")
 if [ $? -ne 0 ]; then
     echo "$var_commands"
     echo "ERROR: Database is not supported by TMAverage. Exiting..."
@@ -200,19 +208,19 @@ fi
 # If date option is not given, then determine dates from offset and range
 if [ $date_opt -eq 0 ]; then
     # Ensure that both offset and range are integers
-    if [[ ! "$3" =~ ^-?[0-9]+$ ]] || [[ ! "$4" =~ ^-?[0-9]+$ ]]; then
+    if [[ ! "$4" =~ ^-?[0-9]+$ ]] || [[ ! "$5" =~ ^-?[0-9]+$ ]]; then
         echo "ERROR: Offset and range must both be integers. Exiting..."
         exit 1
     fi
 
     # Parse the offset and range and get a start and end date.
-    start_date=$(date -d "-$3 days" "+%d-%b-%y")
+    start_date=$(date -d "-$4 days" "+%d-%b-%y")
     # Subtract 1 from range, so that script processes $range days of data, as the script is inclusive
-    end_date=$(date -d "$start_date +$(($4-1)) days" "+%d-%b-%y")
+    end_date=$(date -d "$start_date +$(($5-1)) days" "+%d-%b-%y")
     echo "Using start date $start_date and end date $end_date"
 else
-    start_date=${3^^}
-    end_date=${4^^}
+    start_date=${4^^}
+    end_date=${5^^}
 fi
 
 # If using OTFD, check that OTFD packages are functional
@@ -231,7 +239,8 @@ if [ -n "$otfd_opt" ]; then
 fi
 
 select_tab_count=0
-
+IFS='.' read -r s tmaverage_tab <<< "$tmaverage_table_name"
+IFS='.' read -r s stats_tab <<< "$tmaverage_stats_name"
 IFS='.' read -r s telemetry_analog_conversions_tab <<< "$telemetry_analog_conversions_name"
 IFS='.' read -r s telemetry_item_definitions_tab <<< "$telemetry_item_definitions_name"
 IFS='.' read -r s tmanalog_table_tab <<< "$tmanalog_table_name"
@@ -239,7 +248,7 @@ IFS='.' read -r s tmanalog_table_tab <<< "$tmanalog_table_name"
 select_tables="'$telemetry_analog_conversions_tab', '$telemetry_item_definitions_tab', '$tmanalog_table_tab'"
 select_tab_count=$((select_tab_count+3))
 
-insert_tables="'$tmaverage_table_name', '$tmaverage_stats_name'"
+insert_tables="'$tmaverage_tab', '$stats_tab'"
 
 # Check for read access to ONTHEFLYDECOM tables
 if [[ -n "$otfd_opt" ]]; then
@@ -326,7 +335,7 @@ echo "Running... $SCRIPT_DIR/ProcessTMAverageData.py $otfd_opt $exclude_opt $dat
 
 # Execute the Python script with the prepared arguments
 echo "Running ProcessTMAverageData.py. See log output at /tmp/TMAverageLogs/"
-python "$SCRIPT_DIR/ProcessTMAverageData.py" $otfd_opt $exclude_opt "$database" "$tmid" "$start_date" "$end_date" "${parallel_degree}"
+python "$SCRIPT_DIR/ProcessTMAverageData.py" $otfd_opt $exclude_opt "$database" "$system_id" "$tmid" "$start_date" "$end_date" "${parallel_degree}"
 if [ $? -ne 0 ]; then
     echo "An error occurred while running ProcessTMAverageData.py. See log outputs at /tmp/TMAverageLogs/ for more information. Exiting..."
     exit 1

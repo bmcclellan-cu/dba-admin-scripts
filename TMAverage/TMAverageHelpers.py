@@ -56,15 +56,14 @@ TMANALOG_DBS = {
     "*":        "<DATA_SCHEMA>.TMANALOG_SID<SID>",
 }
 
-TMAVERAGE_TABLE_NAME = {
-    "emadev":   "<DATA_SCHEMA>.TMAVERAGE",
-    "*":        "<DATA_SCHEMA>.TMAVERAGE_SID<SID>"
+TMAVERAGE_TAB_NAME = {
+    "emadev":   "TMAVERAGE",
+    "*":        "TMAVERAGE_BEFORE_SID<SID>"
 }
 
-TMAVERAGE_STATS_NAME = {
-    "emadev":   "EMA_MISC.TMAVERAGE_STATS",     # (EMA) Single TMAVERAGE_STATS table in MISC
-    "*":        "<DATA_SCHEMA>.TMAVERAGE_STATS"
-}
+TMAVERAGE_TABLE_NAME = "<DATA_SCHEMA>.<TMAVERAGE_TAB_NAME>"
+
+TMAVERAGE_STATS_NAME = "<DATA_SCHEMA>.TMAVERAGE_STATS"
 
 TABLESPACE_NAME = {
     "emadev":   "<DATA_SCHEMA>_TMAVERAGE",      # (EMA) Separate TMAVERAGE tablespaces for each SID/Schema
@@ -89,7 +88,7 @@ TMAVERAGE_TABLE_DDL=f"""CREATE TABLE <TMAVERAGE_TABLE_NAME>
     MINIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
     MAXIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
     VALUE_COUNT NUMBER(7,0) NOT NULL ENABLE,
-    CONSTRAINT PK_<TMAVERAGE_TABLE_NAME> PRIMARY KEY (TMID, SCT_VTCW) ENABLE
+    CONSTRAINT PK_<TMAVERAGE_TAB_NAME> PRIMARY KEY (TMID, SCT_VTCW) ENABLE
 )
 ORGANIZATION INDEX PCTFREE 0 LOGGING
 TABLESPACE \\"<TABLESPACE_NAME>\\";"""
@@ -111,35 +110,6 @@ TMAVERAGE_STATS_DDL=f"""CREATE TABLE <TMAVERAGE_STATS_NAME> (
 TABLESPACE \\"<TABLESPACE_NAME>\\";"""
 TMAVERAGE_STATS_CHECK_COLUMNS="ROWS_READ ROWS_RETURNED"
 
-def fetch_config(static_config, config_key, tm_config):
-    """
-    Basic helper that handles default values for config items as well as replacing parts of the string on-the-fly.
-    """
-    if isinstance(static_config, dict):
-        try:
-            config_item = static_config[config_key]
-        except KeyError:
-            try:
-                config_item = static_config["*"] # Try to get default value instead.
-            except:
-                ValueError(f"ERROR: Config key {config_key} not supported. Database/SID passed is not valid.")
-    elif isinstance(static_config, str):
-        config_item = static_config
-    else:
-        raise ValueError("ERROR: Config must be of type dict or string")
-    
-    # Gets the configs that were populated so far.
-    attributes = vars(tm_config)
-
-    for key in attributes.keys():
-        config_item = config_item.replace(f"<{key}>", attributes[key])
-    
-    if "<" in config_item or ">" in config_item:
-        print("WARNING: Unreplaced substitution present in config: ", file=sys.stderr)
-        print(config_item, file=sys.stderr)
-    
-    return config_item
-
 class OTFDException(Exception):
     """
     Custom exception class for OTFD errors. Includes an array of rows from ONTHEFLYDECOM_ERRORS.
@@ -158,32 +128,59 @@ class TMAverageConfigs():
     def __init__(self, database: str, sid: str):
         # Check that database and sid are supported
         if not (database in SUPPORTED_DB_SIDS.keys() and int(sid) in SUPPORTED_DB_SIDS[database]):
-            raise ValueError(f"ERROR: Database {database} SID {sid} is not supported by TMAverage.")
+            raise ValueError(f"ERROR: Database {database} SID {sid} is not supported by TMAverage.\n"
+                             "Supported databases are: {str(tuple(SUPPORTED_DB_SIDS.keys()))}")
 
         self.SID = sid
         self.DATABASE = database
 
-        self.DATA_SCHEMA = fetch_config(DATA_SCHEMAS, database, self)
-        self.CT_SCHEMA = fetch_config(CT_SCHEMAS, database, self)
+        self.DATA_SCHEMA = self.parse_config(DATA_SCHEMAS, database)
+        self.CT_SCHEMA = self.parse_config(CT_SCHEMAS, database)
 
-        self.TMANALOG_TABLE_NAME = fetch_config(TMANALOG_DBS, database, self)
-        self.TMAVERAGE_TABLE_NAME = fetch_config(TMAVERAGE_TABLE_NAME, database, self)
-        self.TMAVERAGE_STATS_NAME = fetch_config(TMAVERAGE_STATS_NAME, database, self)
+        self.TMAVERAGE_TAB_NAME = self.parse_config(TMAVERAGE_TAB_NAME, database)
+        self.TMANALOG_TABLE_NAME = self.parse_config(TMANALOG_DBS, database)
+        self.TMAVERAGE_TABLE_NAME = self.parse_config(TMAVERAGE_TABLE_NAME, database)
+        self.TMAVERAGE_STATS_NAME = self.parse_config(TMAVERAGE_STATS_NAME, database)
 
-        self.TABLESPACE_NAME = fetch_config(TABLESPACE_NAME, database, self)
+        self.TABLESPACE_NAME = self.parse_config(TABLESPACE_NAME, database)
 
-        self.TELEMETRY_ANALOG_CONVERSIONS_NAME = fetch_config(TELEMETRYANALOGCONVERSIONS_DBS, database, self)
-        self.TELEMETRY_ITEM_DEFINITIONS_NAME = fetch_config(TELEMETRYITEMDEFINITION_DBS, database, self)
+        self.TELEMETRY_ANALOG_CONVERSIONS_NAME = self.parse_config(TELEMETRYANALOGCONVERSIONS_DBS, database)
+        self.TELEMETRY_ITEM_DEFINITIONS_NAME = self.parse_config(TELEMETRYITEMDEFINITION_DBS, database)
         
-        self.TMAVERAGE_TABLE_DDL = fetch_config(TMAVERAGE_TABLE_DDL, None, self)
+        self.TMAVERAGE_TABLE_DDL = self.parse_config(TMAVERAGE_TABLE_DDL, None)
         self.TMAVERAGE_TABLE_CHECK_COLUMNS = TMAVERAGE_TABLE_CHECK_COLUMNS
 
-        self.TMAVERAGE_STATS_DDL = fetch_config(TMAVERAGE_STATS_DDL, None, self)
+        self.TMAVERAGE_STATS_DDL = self.parse_config(TMAVERAGE_STATS_DDL, None)
         self.TMAVERAGE_STATS_CHECK_COLUMNS = TMAVERAGE_STATS_CHECK_COLUMNS
 
-# TODO: Notes to self, need to figure out if we want to have TMAVERAGE_STATS on a separate tablespace 
-#       for EMA. If it gets put in the MISC schema, it will have to be on a different tablespace from 
-#       TMAVERAGE_SID1.
+    def parse_config(self, static_config, config_key: str):
+        """
+        Uses the object variables already defined to replace placeholders in a newly added config item dynamically.
+        """
+        if isinstance(static_config, dict):
+            try:
+                config_item = static_config[config_key]
+            except KeyError:
+                try:
+                    config_item = static_config["*"] # Try to get default value instead.
+                except:
+                    ValueError(f"ERROR: Config key {config_key} not supported. Database/SID passed is not valid.")
+        elif isinstance(static_config, str):
+            config_item = static_config
+        else:
+            raise ValueError("ERROR: Config must be of type dict or string")
+        
+        # Gets the configs that were populated so far.
+        attributes = vars(self)
+
+        for key in attributes.keys():
+            config_item = config_item.replace(f"<{key}>", str(attributes[key]))
+        
+        if "<" in config_item or ">" in config_item:
+            print("WARNING: Unreplaced substitution present in config: ", file=sys.stderr)
+            print(config_item, file=sys.stderr)
+        
+        return config_item
 
 # Only gets called directly by bash scripts to set the correct environment variables. 
 # Print out the variable assignments, and the bash script will execute them via `exec`.

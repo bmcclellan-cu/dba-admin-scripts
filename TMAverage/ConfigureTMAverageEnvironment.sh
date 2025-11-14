@@ -72,10 +72,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 
 # Check and set parameters
-if [[ $user_opt -ne 0 && $# -eq 2 ]]; then
+if [[ $user_opt -ne 0 && $# -eq 3 ]]; then
     username="$2"
     password="$3"
-else    
+elif [[ $# -ne 1 ]]; then
     echo "Invalid parameters."
     echo "$usage"
     echo "$example1"
@@ -147,6 +147,11 @@ fi
 
 eval "$var_commands"
 
+# Split apart table names for helper scripts
+IFS="." read -r tmaverage_schema tmaverage_tab <<< "$tmaverage_table_name"
+IFS="." read -r stats_schema stats_tab <<< "$tmaverage_stats_name"
+
+
 # Create tablespace if path is specified
 if [ -n "$datafile_path" ]; then
     # Check that tablespace exists.
@@ -189,9 +194,6 @@ if [ $table_opt -ne 0 ]; then
         echo "Tablespace $tablespace_name does not exist. Please run script with -t flag to create. Exiting..."
         exit 1
     fi
-
-    # Split apart table name for helper scripts
-    read -r tmaverage_schema tmaverage_tab <<< "$tmaverage_table_name"
 
     # Check that L1A schema exists.
     tmaverage_schema_check=$("$HOME/common/oracle/CheckIfSchemaExists.sh" "$tmaverage_schema")
@@ -252,9 +254,6 @@ EOD
         echo "Table exists and is up-to-date. Continuing..."
     fi
 
-    # Split apart table name for helper scripts
-    read -r stats_schema stats_tab <<< "$tmaverage_stats_name"
-
     # Check that L1A schema exists.
     stats_schema_check=$("$HOME/common/oracle/CheckIfSchemaExists.sh" "$stats_schema")
     if [ $? -ne 0 ]; then
@@ -292,11 +291,11 @@ EOD
             exit 1
         fi
     else
-        echo "Table $schema_name.$tmaverage_stats_name already exists, checking most-recently-updated columns..."
+        echo "Table $tmaverage_stats_name already exists, checking most-recently-updated columns..."
        # Check most recent updates to the TMAVERAGE_STATS table. 
         for column in $tmaverage_stats_check_columns; do
             echo "Checking: $column"
-            column_check=$("$HOME/common/oracle/CheckIfColumnExists.sh" "$schema_name" "$tmaverage_stats_name" "$column")
+            column_check=$("$HOME/common/oracle/CheckIfColumnExists.sh" "$stats_schema" "$stats_tab" "$column")
             if [ $? -ne 0 ]; then
                 echo "$column_check"
                 echo "An error occurred while running CheckIfColumnExists.sh. Exiting..."
@@ -352,8 +351,8 @@ EOD
         exit 1
     fi
 
-    table1="${schema_name}.${tmaverage_table_name}"
-    table2="${schema_name}.${tmaverage_stats_name}"
+    table1="$tmaverage_table_name"
+    table2="$tmaverage_stats_name"
 
     echo "Granting required permissions to user $username:"
     read_write_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$table1,$table2" table ALL "$username" Y)

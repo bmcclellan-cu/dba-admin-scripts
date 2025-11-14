@@ -31,12 +31,7 @@ import numpy as np
 # Project imports
 from TMAverageHelpers import (
     OTFDException, 
-    TMANALOG_DBS, 
-    DB_SCHEMAS, 
-    TMAVERAGE_TABLE_NAME, 
-    TMAVERAGE_STATS_NAME, 
-    TELEMETRYITEMDEFINITION_DBS, 
-    TELEMETRYANALOGCONVERSIONS_DBS
+    TMAverageConfigs
 )
 
 # Global variable for the database connection (variable exists independently for each process and is persistent as long as the process exists.)
@@ -86,7 +81,7 @@ def get_value_from_file(file_path):
 
 def update_tmaverage_stats(
         cursor: oracledb.Cursor,
-        database: str,
+        config: TMAverageConfigs,
         start_time: datetime.datetime,
         time_duration: datetime.timedelta = None,
         failed: bool = None,
@@ -109,13 +104,13 @@ def update_tmaverage_stats(
     failed = 1 if failed else 0
     cancelled = 1 if cancelled else 0
 
-    select_sql = f"""SELECT COUNT(*) FROM {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} WHERE DATABASE_NAME=:database AND START_TIME=:start_time"""
+    select_sql = f"""SELECT COUNT(*) FROM {config.TMAVERAGE_STATS_NAME} WHERE DATABASE_NAME=:database AND START_TIME=:start_time"""
 
-    insert_sql = f"""INSERT INTO {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} 
+    insert_sql = f"""INSERT INTO {config.TMAVERAGE_STATS_NAME} 
     (DATABASE_NAME, START_TIME, TIME_RAN, FAILED, CANCELLED, ROWS_READ, ROWS_RETURNED, UNIQUE_CONSTRAINT_NUM, OTFD_ERROR_NUM, ERRORS) VALUES 
     (:database, :start_time, :time_ran, :failed, :cancelled, :rows_read, :rows_returned, :unique_constraint_num, :otfd_error_num, :errors)"""
 
-    update_sql = f"""UPDATE {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} SET 
+    update_sql = f"""UPDATE {config.TMAVERAGE_STATS_NAME} SET 
         TIME_RAN        = :time_ran, 
         FAILED          = :failed,
         CANCELLED       = :cancelled,
@@ -129,13 +124,13 @@ def update_tmaverage_stats(
 
     try:
         entry_count = cursor.execute(select_sql, 
-            database=database,
+            database=config.DATABASE,
             start_time=start_time,
         ).fetchone()[0]
 
         if entry_count == 0: # No TMAVERAGE_STATS entry, so insert one
             cursor.execute(insert_sql,
-                database=database,
+                database=config.DATABASE,
                 start_time=start_time,
                 time_ran=time_duration,
                 failed=failed,
@@ -149,7 +144,7 @@ def update_tmaverage_stats(
             cursor.connection.commit()
         else: # TMAVERAGE_STATS entry exists, so update.
             cursor.execute(update_sql,
-                database=database,
+                database=config.DATABASE,
                 start_time=start_time,
                 time_ran=time_duration,
                 failed=failed,
@@ -251,7 +246,7 @@ def fail_worker():
 
 
 def fetch_values_by_time_range(
-    database: str,
+    config: TMAverageConfigs,
     tmid,
     start_time_gps: int,
     end_time_gps: int,
@@ -269,11 +264,11 @@ def fetch_values_by_time_range(
     # This exists because AIMPROD's primary key index has a 1st column of SID,
     # and excluding it causes the optimizer not to use the index at all.
     sid_clause = ""
-    if database[:3] == "aim":
+    if config.DATABASE[:3] == "aim":
         sid_clause = " SID=1 AND "
 
     sql = f"""
-        SELECT SCT_VTCW, VALUE FROM {TMANALOG_DBS[database]} WHERE 
+        SELECT SCT_VTCW, VALUE FROM {config.TMANALOG_TABLE_NAME} WHERE 
         {sid_clause}
         (tmid = {tmid}) AND 
         (SCT_VTCW >= {start_time_gps} AND (SCT_VTCW < {end_time_gps}))
@@ -428,7 +423,10 @@ def fetch_otfd_values_by_time_range(
     )
 
 
-def fetch_analog_conversions_by_tmid(tmid, database):
+def fetch_analog_conversions_by_tmid(
+        tmid: int, 
+        config: TMAverageConfigs,
+        ):
     """
     Fetches a single analog conversion from the TelemetryAnalogConversion table. This table is not expected to have multiple entries,
     and the function only fetches the first one, if more than one is found.
@@ -438,7 +436,7 @@ def fetch_analog_conversions_by_tmid(tmid, database):
     cursor = db_connection.cursor()
 
     sql = f"""select C.c0,  C.c1,  C.c2,  C.c3,  C.c4,  C.c5,  C.c6,  C.c7 
-            FROM {TELEMETRYANALOGCONVERSIONS_DBS[database]} C 
+            FROM {config.TELEMETRY_ANALOG_CONVERSIONS_NAME} C 
             where C.tlmId = {tmid} order by C.segmentNumber"""
 
     logger.debug(sql)
@@ -465,7 +463,10 @@ def fetch_analog_conversions_by_tmid(tmid, database):
     return result
 
 
-def insert_tmaverage_rows(database: str, tmaverage_values: list):
+def insert_tmaverage_rows(
+        config: TMAverageConfigs,
+        tmaverage_values: list
+    ):
     """
     Attempts to insert the passed array into the TMAverage table. Returns the number of rows inserted if successful,
     and raises an exception if the process fails.
@@ -482,7 +483,7 @@ def insert_tmaverage_rows(database: str, tmaverage_values: list):
 
     cursor = db_connection.cursor()
 
-    sql = f"""INSERT INTO {DB_SCHEMAS[database]}.{TMAVERAGE_TABLE_NAME} 
+    sql = f"""INSERT INTO {config.TMAVERAGE_TABLE_NAME} 
         (tmid, SCT_VTCW, AVERAGE_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, VALUE_COUNT) 
         VALUES (:1, :2, :3, :4, :5, :6)"""
 
@@ -572,20 +573,17 @@ def convert_dt2gps(DTValue, isAim):
 
 def calculate_day_start_end_gps(
     date: datetime.datetime,
-    database: str,
+    config: TMAverageConfigs,
 ):
     """
     Gets the start and end times, in GPS for any given day.
     """
-    global db_connection
-
-    cursor = db_connection.cursor()
     # The 18_000_000 offset (18 seconds) exists to recreate how the IDL script for aimprod functioned
     # this is not strictly necessary, but is being recreated nonetheless.
     start_time_gps = (
         convert_dt2gps(
             f"{date.strftime('%d-%b-%y')} 12.00.00.000000000 AM",
-            database == "aimprod",
+            config.DATABASE == "aimprod",
         )
         - 18_000_000
     )
@@ -593,7 +591,7 @@ def calculate_day_start_end_gps(
     end_time_gps = (
         convert_dt2gps(
             f"{date.strftime('%d-%b-%y')} 11.59.59.999999999 PM",
-            database == "aimprod",
+            config.DATABASE == "aimprod",
         )
         - 18_000_000
     )
@@ -620,7 +618,7 @@ def calibrate(value, c):
 
 def process_values_by_tmid(
     tmid: int,
-    database: str,
+    config: TMAverageConfigs,
     start_date: datetime.datetime,
     is_otfd: bool,
 ):
@@ -643,7 +641,7 @@ def process_values_by_tmid(
 
     logger.info(f"Calculating start and end for date {start_date}.")
 
-    start_time_gps, end_time_gps = calculate_day_start_end_gps(start_date, database)
+    start_time_gps, end_time_gps = calculate_day_start_end_gps(start_date, config)
 
     # Fetch all data for the given date range.
     logger.info(
@@ -658,7 +656,7 @@ def process_values_by_tmid(
         )
     else:
         data = fetch_values_by_time_range(
-            database=database,
+            config=config,
             tmid=tmid,
             start_time_gps=start_time_gps,
             end_time_gps=end_time_gps,
@@ -679,7 +677,7 @@ def process_values_by_tmid(
     unique_bucket_ids = range(int(((end_time_gps - start_time_gps) / 300000000)))
 
     # Fetch calibration data, then apply to all values for the specific TMID.
-    calibration_data = fetch_analog_conversions_by_tmid(tmid, database)
+    calibration_data = fetch_analog_conversions_by_tmid(tmid, config)
 
     logger.info("Calibrating data...")
     # Apply the polynomial calibration every time, as long as it exists.
@@ -722,7 +720,7 @@ def process_values_by_tmid(
             )
         )
     try:
-        num_inserted = insert_tmaverage_rows(database, insertion_data)
+        num_inserted = insert_tmaverage_rows(config, insertion_data)
     except Exception as e:
         # This adds the number of rows that were read to any insert error, so that
         # the main process can still report how many rows were read before the insert error.
@@ -757,6 +755,7 @@ def main():
         help="filename for newline-separated TMIDs to exclude",
     )
     parser.add_argument("database", type=str)
+    parser.add_argument("system_id", type=int)
     parser.add_argument(
         "tmid",
         type=str,
@@ -779,9 +778,13 @@ def main():
     arguments = parser.parse_args()
 
     database = arguments.database.lower()
+    system_id = arguments.system_id
     tmid_input = arguments.tmid
     is_otfd = arguments.otfd
     parallel_degree = arguments.parallel_degree
+
+    # Once inputs are gathered, load TMAverage configs. This also checks if the database is supported.
+    config = TMAverageConfigs(database, system_id)
 
     # Configure the logger for the main thread
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -863,14 +866,6 @@ def main():
         # Error message is already printed by get_password_from_file
         exit(1)
 
-    # Validate database input, ensure that script has an entry in DB_SCHEMAS
-    if database not in DB_SCHEMAS.keys():
-        logger.critical(
-            f"Selected database is not supported by script. Supported databases "
-            f"are: {str(tuple(DB_SCHEMAS.keys()))}"
-        )
-        exit(1)
-
     # Connect to the database as a test to ensure credentials are valid.
     # Each worker process will connect to the DB individually.
     try:
@@ -898,10 +893,9 @@ def main():
     # Initialize the tmaverage_stats entry.
     update_tmaverage_stats(
         cursor,
-        database=database,
+        config=config,
         start_time=start_time
     )
-
 
     try:
         # If all tmids is specified, then query for them.
@@ -915,14 +909,14 @@ def main():
                 exclusion_clause = f" AND TLMID NOT IN ('{exclusion_list}')"
 
             tmids = cursor.execute(
-                f"SELECT DISTINCT TLMID from {TELEMETRYITEMDEFINITION_DBS[database]} WHERE dataType='U' OR dataType='I' OR dataType='F'{exclusion_clause}"
+                f"SELECT DISTINCT TLMID from {config.TELEMETRY_ITEM_DEFINITIONS_NAME} WHERE dataType='U' OR dataType='I' OR dataType='F'{exclusion_clause}"
             ).fetchall()
             tmids = [tmid[0] for tmid in tmids]
             tmids.sort()
             logger.info(f"There are {len(tmids)} unique tmids.")
     except:
         logger.exception(
-            f"An error occurred while fetching TMIDs from {TELEMETRYITEMDEFINITION_DBS[database]}. Exiting..."
+            f"An error occurred while fetching TMIDs from {config.TELEMETRY_ITEM_DEFINITIONS_NAME}. Exiting..."
         )
         cursor.close()
         connection.close()
@@ -953,7 +947,7 @@ def main():
         # Setup the process_values_by_tmid partial with the appropriate static arguments
         process_partial = partial(
             process_values_by_tmid,
-            database=database,
+            config=config,
             start_date=single_date,
             is_otfd=is_otfd,
         )
@@ -1073,7 +1067,7 @@ def main():
 
     update_tmaverage_stats(
         cursor=connection.cursor(),
-        database=database,
+        config=config,
         start_time=start_time,
         time_duration=duration,
         failed=critical_failure,
