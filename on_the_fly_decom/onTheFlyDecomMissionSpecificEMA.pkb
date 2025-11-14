@@ -6,6 +6,7 @@ Purpose:    EMA-specific code for on-the-fly decom, called by the core package.
 Revisions:
   mm/dd/yy who  description
   08/27/25 RS   Initial Version
+  11/13/25 RS   Logging updates
   
 Usage: 
   1. In sqlplus:
@@ -14,21 +15,21 @@ Usage:
 
 Notes:
   1. Contents (In order of appearance)          
-     FUNCTION  getVersion
-     PROCEDURE setOption
-     PROCEDURE clearOption
-     FUNCTION  getTableName
-     FUNCTION  getTimeColumnsL0
-     FUNCTION  getTimeColumnsL1
-     FUNCTION  getDecomIdentifier
-     PROCEDURE addToL0Query
-     PROCEDURE addToL1Query
-     PROCEDURE getDecomMapCur
-     PROCEDURE getTSLCur
-     PROCEDURE getDefinitionStartStopTimes
+    FUNCTION  getVersion
+    PROCEDURE setOption
+    PROCEDURE clearOption
+    FUNCTION  getTableName
+    FUNCTION  getTimeColumnsL0
+    FUNCTION  getTimeColumnsL1
+    FUNCTION  getDecomIdentifier
+    PROCEDURE addToL0Query
+    PROCEDURE addToL1Query
+    PROCEDURE getDecomMapCur
+    PROCEDURE getTSLCur
+    PROCEDURE getDefinitionStartStopTimes
      
   2. Mission Specific Global Variables:
-     These are optional inputs which can be set by calling setOption or clearOption.
+    <None>
      
   3. Compiler Errors:
      - A login.sql file can cause compiler errors.
@@ -73,10 +74,11 @@ END getVersion;
 Function:  setOption
 
 Purpose:    This function sets the specified mission-specific global variable to the specified value.
+            This is intended to be used as a helper for the ONTHEFLYDECOM.setOption procedure
 
 Input:      optionName  - String giving the name of the option, case insensitive.
             optionValue - String giving the value of the option; if the actual option is an integer,
-	                  convert it to a string first.
+                          convert it to a string first.
 Returns:    1=success, 0=failure			 
 *************************************************************************************************/
 FUNCTION setOption( optionName VARCHAR2,
@@ -100,6 +102,7 @@ END setOption;
 Function:  clearOption
 
 Purpose:    This function sets the specified mission-specific option to its default value.
+            This is intended to be used as a helper for the ONTHEFLYDECOM.clearOption procedure
 
 Input:      optionName  - String giving the name of the option, case insensitive.
 
@@ -126,6 +129,7 @@ END clearOption;
 Function:  getOptionsHelp
 
 Purpose:    This procedure returns an options help string.
+            This is intended to be used as a helper for the ONTHEFLYDECOM.setOption and clearOption procedures.
 
 *************************************************************************************************/
 FUNCTION getOptionsHelp
@@ -139,6 +143,7 @@ END getOptionsHelp;
 Function:   getTableName
 
 Purpose:    This function returns a table name constructed using the input type and systemId.
+            Differing missions have different table names and schema placements.
 
 Input:      type_in     - NUMBER Determines how the VCs will be converted into table names.
                              0 Indicates some instance of the L0_Packets table is desired.
@@ -248,7 +253,7 @@ Procedure:   addToL0Query
 Purpose:    Adds any mission-specific SQL to the 'where' clause of the L0 data query.
             This proc must exist, even if it does nothing. Called by queryL0.
 
-Input:      exeString   - VARCHAR2(500)
+Input:      exeString   - VARCHAR2
             systemId_in - NUMBER SID or schemaId, depending on mission.
 
 Output:     exeString   - May or may not have been updated.
@@ -268,7 +273,7 @@ Procedure:   addToL1Query
 Purpose:    Adds any mission-specific SQL to the 'where' clause of the L1 data query.
             This proc must exist, even if it does nothing. Called by queryL1.
 
-Input:      query       - VARCHAR2(500)
+Input:      query       - VARCHAR2
             systemId_in - NUMBER SID or schemaId, depending on mission.
 
 Output:     query       - May or may not have been updated.
@@ -283,7 +288,7 @@ BEGIN
 END addToL1Query;
 
 /*************************************************************************************************
-PROCEDURE: getDecomMapCur
+Procedure: getDecomMapCur
 
 Purpose:    Given a SID, APID, TLMID, start and stop time, opens a cursor containing all relevant decom maps.
             This is done due to differences in the TMDecom table location and structure (EMA has a separate 
@@ -294,7 +299,12 @@ Inputs:
     systemId_in          - The SID of the decom map.
     apid_in              - The APID of the decom map.
     TMDQueryStartTime_in - The beginning of the time period being queried for, inclusive.
-    TMDQueryStartTime_in - The end of the time period being queried for, inclusive.
+    TMDQueryStopTime_in  - The end of the time period being queried for, inclusive.
+    isLastTSLRow_in      - Is true if the relevant TSL row is the final one for the specific APID
+                           being queried for. Indicates that the end of the TMDecom query should
+                           be inclusive of the stop time, rather than exclusive. It is initially exclusive
+                           to avoid duplicate decom maps if their definitionStart values are in sequential 
+                           microseconds.
 
 Outputs:
 
@@ -320,8 +330,8 @@ BEGIN
                           ', apid_in=' || apid_in ||
                           ', tlmId_in=' || tlmId_in || 
                           ', TMDQueryStartTime_in=' || TMDQueryStartTime_in ||
-                          ', TMDQueryStopTime_in=' || TMDQueryStopTime_in
-                          ', isLastTSLRow_in=', sys.diutil.bool_to_int(isLastTSLRow_in) , 2
+                          ', TMDQueryStopTime_in=' || TMDQueryStopTime_in || 
+                          ', isLastTSLRow_in=' || sys.diutil.bool_to_int(isLastTSLRow_in) , 2
     );
     name_value := ONTHEFLYDECOM.name_value_t( 
         ':systemId_in' => TO_CHAR(systemId_in),
@@ -457,19 +467,22 @@ Outputs:
 
 Returns: 1=success, 0=failure
 
+Notes:
+  - EMA only allows for queries by ASCT, and inclusion of any other time query will fail here.
 *************************************************************************************************/
-FUNCTION getDefinitionStartStopTimes(   systemId_in IN NUMBER,
-                                        startSCT_in IN NUMBER,
-                                        stopSCT_in  IN NUMBER,
-                                        startERT_in IN NUMBER,
-                                        stopERT_in  IN NUMBER,
-                                        startASCT_in IN NUMBER,
-                                        stopASCT_in  IN NUMBER,
+FUNCTION getDefinitionStartStopTimes(   
+    systemId_in IN NUMBER,
+    startSCT_in IN NUMBER,
+    stopSCT_in  IN NUMBER,
+    startERT_in IN NUMBER,
+    stopERT_in  IN NUMBER,
+    startASCT_in IN NUMBER,
+    stopASCT_in  IN NUMBER,
 
-                                        definitionStartTime OUT NUMBER,
-                                        definitionStopTime OUT NUMBER,
-                                        definitionColumn OUT NUMBER)
-				      RETURN NUMBER
+    definitionStartTime OUT NUMBER,
+    definitionStopTime OUT NUMBER,
+    definitionColumn OUT NUMBER
+) RETURN NUMBER
 IS
 BEGIN
     ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: systemId_in=' || systemId_in ||

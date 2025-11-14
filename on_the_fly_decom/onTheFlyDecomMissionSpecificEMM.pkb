@@ -12,7 +12,7 @@ Usage:
   1. In sqlplus:
      @<full_path>/onTheFlyDecomMissionSpecific.pks     -- compile the package spec
      @<full_path>/onTheFlyDecomMissionSpecificEMM.pkb  -- compile the package body
-  
+
 Notes:
   1. Contents (In order of appearance)          
      FUNCTION  getVersion

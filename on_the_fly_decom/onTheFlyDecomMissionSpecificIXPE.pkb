@@ -7,7 +7,7 @@ Revisions:
   mm/dd/yy who  description
   10/19/23 SM   Initial version.
   09/11/25 RS   Updated for EMA main package updates
-  11/05/25 RS   Updated logging
+  11/13/25 RS   Updated logging
   
 Usage: 
   1. In sqlplus:
@@ -15,20 +15,20 @@ Usage:
      @<full_path>/onTheFlyDecomMissionSpecificIXPE.pkb  -- compile the package body
 
 Notes:
-  1. Contents (In order of appearance)          
-     FUNCTION  getVersion
-     PROCEDURE setOption
-     PROCEDURE clearOption
-     FUNCTION  getTableName
-     FUNCTION  getTimeColumnsL0
-     FUNCTION  getTimeColumnsL1
-     FUNCTION  getDecomIdentifier
-     PROCEDURE addToL0Query
-     PROCEDURE addToL1Query
-     PROCEDURE getDecomMapCur
-     PROCEDURE getTSLCur
-     PROCEDURE getDefinitionStartStopTimes
-     
+  1. Contents:
+    FUNCTION  getVersion
+    PROCEDURE setOption
+    PROCEDURE clearOption
+    FUNCTION  getTableName
+    FUNCTION  getTimeColumnsL0
+    FUNCTION  getTimeColumnsL1
+    FUNCTION  getDecomIdentifier
+    PROCEDURE addToL0Query
+    PROCEDURE addToL1Query
+    PROCEDURE getDecomMapCur
+    PROCEDURE getTSLCur
+    PROCEDURE getDefinitionStartStopTimes
+
   2. Mission Specific Global Variables:
      These are optional inputs which can be set by calling setOption or clearOption.
      gblTlmFileName:
@@ -42,8 +42,6 @@ Notes:
        Enter value for t:  (where t is the letter after the ampersand)
 
 *************************************************************************************************/
-
-
 
 CREATE OR REPLACE PACKAGE BODY IXPE_MISC.onTheFlyDecomMissionSpecific
 AS
@@ -68,8 +66,6 @@ IS
 BEGIN
     return 'IXPE 0.2';
 END getVersion;
-
-
 
 /*************************************************************************************************
 Function:  setOption
@@ -96,8 +92,6 @@ BEGIN
     END IF;
     RETURN 1;
 END setOption;
-
-
 
 /*************************************************************************************************
 Function:  clearOption
@@ -147,6 +141,7 @@ END getOptionsHelp;
 Function:   getTableName
 
 Purpose:    This function returns a table name constructed using the input type and systemId.
+            Differing missions have different table names and schema placements.
 
 Input:      type_in     - NUMBER Determines how the VCs will be converted into table names.
                              0 Indicates some instance of the L0_Packets table is desired.
@@ -186,8 +181,6 @@ BEGIN
 
 END getTableName;
 
-
-
 /*************************************************************************************************
 Function:   getTimeColumnsL0
 
@@ -210,8 +203,6 @@ BEGIN
     return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'null AS ASCT');
 END getTimeColumnsL0;
 
-
-
 /*************************************************************************************************
 Function:   getTimeColumnsL1
 
@@ -231,8 +222,6 @@ BEGIN
     return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'null AS ASCT');
 END getTimeColumnsL1;
 
-
-
 /************************************************************************************************* 
 Procedure:  getDecomIdentifier
 
@@ -248,15 +237,13 @@ BEGIN
     RETURN 'apid';
 END;
 
-
-
 /*************************************************************************************************
 Procedure:   addToL0Query
 
 Purpose:    Adds any mission-specific SQL to the 'where' clause of the L0 data query.
             This proc must exist, even if it does nothing. Called by queryL0.
 
-Input:      exeString   - VARCHAR2(500)
+Input:      exeString   - VARCHAR2
             systemId_in - NUMBER SID or schemaId, depending on mission.
 
 Output:     exeString   - May or may not have been updated.
@@ -282,15 +269,13 @@ BEGIN
     END IF;
 END addToL0Query;
 
-
-
 /*************************************************************************************************
 Procedure:   addToL1Query
 
 Purpose:    Adds any mission-specific SQL to the 'where' clause of the L1 data query.
             This proc must exist, even if it does nothing. Called by queryL1.
 
-Input:      query       - VARCHAR2(500)
+Input:      query       - VARCHAR2
             systemId_in - NUMBER SID or schemaId, depending on mission.
 
 Output:     query       - May or may not have been updated.
@@ -313,9 +298,8 @@ BEGIN
     END IF;
 END addToL1Query;
 
-
 /*************************************************************************************************
-PROCEDURE: getDecomMapCur
+Procedure: getDecomMapCur
 
 Purpose:    Given a SID, APID, TLMID, start and stop time, opens a cursor containing all relevant decom maps.
             This is done due to differences in the TMDecom table location and structure (EMA has a separate 
@@ -326,7 +310,12 @@ Inputs:
     systemId_in          - The SID of the decom map.
     apid_in              - The APID of the decom map.
     TMDQueryStartTime_in - The beginning of the time period being queried for, inclusive.
-    TMDQueryStartTime_in - The end of the time period being queried for, inclusive.
+    TMDQueryStopTime_in  - The end of the time period being queried for, inclusive.
+    isLastTSLRow_in      - Is true if the relevant TSL row is the final one for the specific APID
+                           being queried for. Indicates that the end of the TMDecom query should
+                           be inclusive of the stop time, rather than exclusive. It is initially exclusive
+                           to avoid duplicate decom maps if their definitionStart values are in sequential 
+                           microseconds.
 
 Outputs:
 
@@ -352,8 +341,8 @@ BEGIN
                           ', apid_in=' || apid_in ||
                           ', tlmId_in=' || tlmId_in || 
                           ', TMDQueryStartTime_in=' || TMDQueryStartTime_in ||
-                          ', TMDQueryStopTime_in=' || TMDQueryStopTime_in, 
-                          ', isLastTSLRow_in=', sys.diutil.bool_to_int(isLastTSLRow_in) , 2
+                          ', TMDQueryStopTime_in=' || TMDQueryStopTime_in || 
+                          ', isLastTSLRow_in=' || sys.diutil.bool_to_int(isLastTSLRow_in) , 2
     );
     name_value := ONTHEFLYDECOM.name_value_t( 
         ':systemId_in' => TO_CHAR(systemId_in),
@@ -395,8 +384,6 @@ BEGIN
               tlmId_in,                   -- :tlmId2_in (subquery)
               TMDQueryStartTime_in;           
 END getDecomMapCur;
-
-
 
 /*************************************************************************************************
 PROCEDURE: getTSLCur
@@ -468,8 +455,6 @@ BEGIN
               definitionStartTime_in; -- :definitionStartTime_in
 END getTSLCur;
 
-
-
 /*************************************************************************************************
 FUNCTION: getDefinitionStartStopTimes
 
@@ -504,18 +489,19 @@ Notes:
     decom maps to be used, i.e. from 1980/006 GPS epoch..current time the entire history 
 
 *************************************************************************************************/
-FUNCTION getDefinitionStartStopTimes(   systemId_in IN NUMBER,
-                                        startSCT_in IN NUMBER,
-                                        stopSCT_in  IN NUMBER,
-                                        startERT_in IN NUMBER,
-                                        stopERT_in  IN NUMBER,
-                                        startASCT_in IN NUMBER,
-                                        stopASCT_in IN NUMBER,
+FUNCTION getDefinitionStartStopTimes(   
+    systemId_in IN NUMBER,
+    startSCT_in IN NUMBER,
+    stopSCT_in  IN NUMBER,
+    startERT_in IN NUMBER,
+    stopERT_in  IN NUMBER,
+    startASCT_in IN NUMBER,
+    stopASCT_in IN NUMBER,
 
-	                                    definitionStartTime OUT NUMBER,
-				                        definitionStopTime OUT NUMBER,
-                                        definitionColumn OUT NUMBER)
-				      RETURN NUMBER
+    definitionStartTime OUT NUMBER,
+    definitionStopTime OUT NUMBER,
+    definitionColumn OUT NUMBER
+) RETURN NUMBER
 IS
 BEGIN
     ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: systemId_in=' || systemId_in ||
@@ -536,7 +522,6 @@ BEGIN
         RETURN 0;
     END IF;
 
-    
     -- If an ERT range was specified, use it as the time range for the queries.
     -- Otherwise assume SCT can be used for the time range when querying these tables.
     -- This presumes SCT and ERT are the same, or close enough.
