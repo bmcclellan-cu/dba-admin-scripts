@@ -268,10 +268,10 @@ def fetch_values_by_time_range(
         sid_clause = " SID=1 AND "
 
     sql = f"""
-        SELECT SCT_VTCW, VALUE FROM {config.TMANALOG_TABLE_NAME} WHERE 
+        SELECT {config.TABLE_TIME_COLUMN}, VALUE FROM {config.TMANALOG_TABLE_NAME} WHERE 
         {sid_clause}
         (tmid = {tmid}) AND 
-        (SCT_VTCW >= {start_time_gps} AND (SCT_VTCW < {end_time_gps}))
+        ({config.TABLE_TIME_COLUMN} >= {start_time_gps} AND ({config.TABLE_TIME_COLUMN} < {end_time_gps}))
     """
 
     logger.debug(sql)
@@ -331,6 +331,7 @@ def fetch_values_by_time_range(
 # script.
 # Returns a tuple of (results_len, results_values, and results_bucket_ids)
 def fetch_otfd_values_by_time_range(
+    config: TMAverageConfigs,
     tmid: int,
     start_time_gps: int,
     end_time_gps: int,
@@ -350,11 +351,16 @@ def fetch_otfd_values_by_time_range(
         # Call PSQL function to retrieve data (SID (always 1), tmid, START_ERT (unused), END_ERT (unused), START_GPS, END_GPS))
         cursor.callproc(
             f"ONTHEFLYDECOM.selectNumericTlm",
-            [1, tmid, -1, -1, start_time_gps, end_time_gps],
+            keyword_parameters={
+                "systemId_in": config.SID,
+                "tlmId_in": tmid,
+                f"start{config.OTFD_TIME_COLUMN}_in": start_time_gps,
+                f"stop{config.OTFD_TIME_COLUMN}_in": end_time_gps,
+            }
         )
         # Calling the function should lock the thread until it returns, at which point the results will be in ONTHEFLYDECOM_RESULTS
         otfd_results = cursor.execute(
-            "SELECT SCT, VALUE FROM ONTHEFLYDECOM_RESULTS"
+            f"SELECT {config.OTFD_TIME_COLUMN}, VALUE FROM ONTHEFLYDECOM_RESULTS"
         ).fetchall()
         # Check if any errors occurred
         otfd_error = cursor.execute("SELECT * FROM ONTHEFLYDECOM_ERRORS").fetchall()
@@ -484,7 +490,7 @@ def insert_tmaverage_rows(
     cursor = db_connection.cursor()
 
     sql = f"""INSERT INTO {config.TMAVERAGE_TABLE_NAME} 
-        (tmid, SCT_VTCW, AVERAGE_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, VALUE_COUNT) 
+        (tmid, {config.TABLE_TIME_COLUMN}, AVERAGE_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, VALUE_COUNT) 
         VALUES (:1, :2, :3, :4, :5, :6)"""
 
     logger.debug(sql)
@@ -650,6 +656,7 @@ def process_values_by_tmid(
 
     if is_otfd:
         data = fetch_otfd_values_by_time_range(
+            config=config,
             tmid=tmid,
             start_time_gps=start_time_gps,
             end_time_gps=end_time_gps,
@@ -692,14 +699,14 @@ def process_values_by_tmid(
     for bucket_id in unique_bucket_ids:
         bucket_mask = np.where(results_bucket_ids == bucket_id, True, False)
         bucket_values = results_values[bucket_mask]
-        sct_vtcw = int(
+        timestamp = int(
             bucket_id * 300_000_000 + start_time_gps + 150_000_000 + 18_000_000
         )  # Adds back 18 seconds to ensure that the SCT values are on 5-minute increments, emulating the behavior on AIM
 
         current_bucket_count = int(np.size(bucket_values))
 
         if current_bucket_count == 0:
-            insertion_data.append((int(tmid), sct_vtcw, 0, 0, 0, 0))
+            insertion_data.append((int(tmid), timestamp, 0, 0, 0, 0))
             continue
 
         # WARNING: The current version of the script uses a float 128 for the numpy array.
@@ -712,7 +719,7 @@ def process_values_by_tmid(
         insertion_data.append(
             (
                 int(tmid),
-                sct_vtcw,
+                timestamp,
                 current_bucket_average,
                 current_bucket_min,
                 current_bucket_max,

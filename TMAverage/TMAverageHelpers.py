@@ -40,6 +40,7 @@ DATA_SCHEMAS = {
     "emadev": "EMA_SCHEMA<SID>"  # (EMA) Data is separated by SID/Schema
 }
 
+# Primary metadata schemas.
 CT_SCHEMAS = {
     "aimprod": "AIM_CT_SC",
     "goldprod": "GOLD_CT",
@@ -49,6 +50,7 @@ CT_SCHEMAS = {
     "emadev": "EMA_CT",
 }
 
+# The location and name of TMAnalog. Depends on SID.
 TMANALOG_DBS = {
     "evep12c":  "<DATA_SCHEMA>.TMANALOG",
     "emadev":   "<DATA_SCHEMA>.TMANALOG",
@@ -56,43 +58,66 @@ TMANALOG_DBS = {
     "*":        "<DATA_SCHEMA>.TMANALOG_SID<SID>",
 }
 
+# The non-schema prefixed name of the TMAverage table. Separated out in order to derive
+# the primary key name from it effectively (specifically intended for testing, where multiple
+# TMAverage tables are created and compared)
 TMAVERAGE_TAB_NAME = {
     "emadev":   "TMAVERAGE",
-    "*":        "TMAVERAGE_BEFORE_SID<SID>"
+    "*":        "TMAVERAGE_SID<SID>"
 }
 
+# Full TMAverage table name.
 TMAVERAGE_TABLE_NAME = "<DATA_SCHEMA>.<TMAVERAGE_TAB_NAME>"
 
+# Full TMAverage stats name.
 TMAVERAGE_STATS_NAME = "<DATA_SCHEMA>.TMAVERAGE_STATS"
 
+# Name of the tablespace where TMAverage and TMAverage_Stats are stored.
 TABLESPACE_NAME = {
-    "emadev":   "<DATA_SCHEMA>_TMAVERAGE",      # (EMA) Separate TMAVERAGE tablespaces for each SID/Schema
-    "*":        "TMAVERAGE_SID<SID>",            # (Default) A single tablespace for all data
+    "emadev":   "<DATA_SCHEMA>_TMAVERAGE",
+    "*":        "TMAVERAGE_SID<SID>",
 }
 
+# TelemetryItemDefinition stores a list of all TMIDs, as well as their datatype.
 TELEMETRYITEMDEFINITION_DBS = {
     "*":  "<CT_SCHEMA>.TELEMETRYITEMDEFINITION",
 }
 
+# Defines polynomial conversions of the raw data into EU (Engineering Units). 
 TELEMETRYANALOGCONVERSIONS_DBS = {
     "emadev":   "<DATA_SCHEMA>.TMANALOGCONVERSIONS",   # (EMA) Separate analog conversions for each SID.
     "*":        "<CT_SCHEMA>.TELEMETRYANALOGCONVERSIONS",
 }
 
+# What time column to use based on database. EMA is using ASCT (Adjusted time) rather than SCT or ERT.
+# This is separated from OTFD_TIME_COLUMN because the table column name is SCT_VTCW rather than SCT.
+TABLE_TIME_COLUMN = {
+    "emadev": "ASCT",
+    "*": "SCT_VTCW"
+}
+
+OTFD_TIME_COLUMN = {
+    "emadev": "ASCT",
+    "*": "SCT"
+}
+
+# The DDL to create the TMAverage table. This requires TMAVERAGE_TAB_NAME to derive
+# the primary key constraint name so that duplicates indexes are not created during testing
 # When this is updated, update the tmaverage_table_check_columns variable as well.
 TMAVERAGE_TABLE_DDL=f"""CREATE TABLE <TMAVERAGE_TABLE_NAME>
 (
     TMID NUMBER(7,0) NOT NULL ENABLE,
-    SCT_VTCW NUMBER(16,0) NOT NULL ENABLE,
+    <TABLE_TIME_COLUMN> NUMBER(16,0) NOT NULL ENABLE,
     AVERAGE_VALUE FLOAT(126) NOT NULL ENABLE,
     MINIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
     MAXIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
     VALUE_COUNT NUMBER(7,0) NOT NULL ENABLE,
-    CONSTRAINT PK_<TMAVERAGE_TAB_NAME> PRIMARY KEY (TMID, SCT_VTCW) ENABLE
+    CONSTRAINT PK_<TMAVERAGE_TAB_NAME> PRIMARY KEY (TMID, <TABLE_TIME_COLUMN>) ENABLE
 )
 ORGANIZATION INDEX PCTFREE 0 LOGGING
 TABLESPACE \\"<TABLESPACE_NAME>\\";"""
-TMAVERAGE_TABLE_CHECK_COLUMNS=""
+# Should always check that the loaded DDL has the correct time column set.
+TMAVERAGE_TABLE_CHECK_COLUMNS="<TABLE_TIME_COLUMN>"
 
 # When this is updated, update the tmaverage_stats_check_columns variable as well.
 TMAVERAGE_STATS_DDL=f"""CREATE TABLE <TMAVERAGE_STATS_NAME> (
@@ -117,13 +142,17 @@ class OTFDException(Exception):
 
 class TMAverageConfigs():
     """
-    Class that parses and allows access to TMAverage config parameters. 
-    Is a single point through which database and SID-dependent alterations are made.
+    Class that parses and allows access to TMAverage config parameters. Each instance variable in this class
+    is used to substitute out the markers demarcated by <VARIABLE_NAME>, allowing for updates to a single 
+    parameter to cascade and update all dependent parts. For example, if a config contains the string 
+    "TEST_SCHEMA<SID>", then if the SID variable exists when that config is parsed, then the <SID> marker
+    gets replaced by the value of the variable.
 
     Note: This is necessary both so that there is a standard way to set the configs, but also so that
-          this data can be passed to the worker threads. Previously they just accessed the constants in
-          TMAverageHelpers.py, but now the constants needs to be evaluated at runtime, and this is a moderately
-          clean way to do it.
+          this data can be passed to the worker threads in a convenient manner. Previously they just 
+          accessed the constants in TMAverageHelpers.py, but now the configuration needs to be evaluated at 
+          runtime to handle multiple possible SIDs, and this allows for a single variable to be passed to 
+          the worker threads.
     """
     def __init__(self, database: str, sid: str):
         # Check that database and sid are supported
@@ -146,16 +175,19 @@ class TMAverageConfigs():
 
         self.TELEMETRY_ANALOG_CONVERSIONS_NAME = self.parse_config(TELEMETRYANALOGCONVERSIONS_DBS, database)
         self.TELEMETRY_ITEM_DEFINITIONS_NAME = self.parse_config(TELEMETRYITEMDEFINITION_DBS, database)
+
+        self.TABLE_TIME_COLUMN = self.parse_config(TABLE_TIME_COLUMN, database)
+        self.OTFD_TIME_COLUMN = self.parse_config(OTFD_TIME_COLUMN, database)
         
         self.TMAVERAGE_TABLE_DDL = self.parse_config(TMAVERAGE_TABLE_DDL, None)
-        self.TMAVERAGE_TABLE_CHECK_COLUMNS = TMAVERAGE_TABLE_CHECK_COLUMNS
+        self.TMAVERAGE_TABLE_CHECK_COLUMNS = self.parse_config(TMAVERAGE_TABLE_CHECK_COLUMNS, None)
 
         self.TMAVERAGE_STATS_DDL = self.parse_config(TMAVERAGE_STATS_DDL, None)
-        self.TMAVERAGE_STATS_CHECK_COLUMNS = TMAVERAGE_STATS_CHECK_COLUMNS
+        self.TMAVERAGE_STATS_CHECK_COLUMNS = self.parse_config(TMAVERAGE_STATS_CHECK_COLUMNS, None)
 
     def parse_config(self, static_config, config_key: str):
         """
-        Uses the object variables already defined to replace placeholders in a newly added config item dynamically.
+        Uses the instance variables already defined to replace placeholders in a newly added config item dynamically.
         """
         if isinstance(static_config, dict):
             try:
@@ -176,13 +208,13 @@ class TMAverageConfigs():
         for key in attributes.keys():
             config_item = config_item.replace(f"<{key}>", str(attributes[key]))
         
-        if "<" in config_item or ">" in config_item:
+        if "<" in config_item and ">" in config_item:
             print("WARNING: Unreplaced substitution present in config: ", file=sys.stderr)
             print(config_item, file=sys.stderr)
         
         return config_item
 
-# Only gets called directly by bash scripts to set the correct environment variables. 
+# Gets called directly by bash scripts to set the correct environment variables. 
 # Print out the variable assignments, and the bash script will execute them via `exec`.
 if __name__ == "__main__":
     if len(sys.argv) != 3:

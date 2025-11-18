@@ -24,9 +24,9 @@
 # Last Modified: November 10th, 2025 - RS
 ##########################################################################
 usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafile ] (optional, create TMAverage_SID1 tablespace) ] [ -b (optional, create TMAverage tables) ] [ -v (optional, create venv in tmaverage script directory ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ system_id ] [ username (optional) ] [ password (optional) ]"
-example1="Example: ./ConfigureTMAverageEnvironment.sh -t /ssd_internal/Robert/AIMPROD_TMAVERAGE/tmaverage_table.dbf"
-example2="         ./ConfigureTMAverageEnvironment.sh -u -o -v PROCESSTMIDTEST testPWD"
-    
+example1="Example: ./ConfigureTMAverageEnvironment.sh -t 1 /ssd_internal/Robert/AIMPROD_TMAVERAGE/tmaverage_table.dbf"
+example2="         ./ConfigureTMAverageEnvironment.sh -u -o -v 1 PROCESSTMIDTEST testPWD"
+
 user_opt=0
 otfd_opt=0
 venv_opt=0
@@ -71,11 +71,13 @@ password=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 
-# Check and set parameters
+# The -u option requires the SID, username, and password parameters.
 if [[ $user_opt -ne 0 && $# -eq 3 ]]; then
     username="$2"
     password="$3"
-elif [[ $# -ne 1 ]]; then
+
+    # The -o, and -b options need the SID parameter.
+elif [[ $# -ne 1 ]] && { [ $otfd_opt -eq 1 ] || [ $table_opt -eq 1 ]; }; then
     echo "Invalid parameters."
     echo "$usage"
     echo "$example1"
@@ -137,7 +139,7 @@ tmaverage_table_check_columns="";tmaverage_stats_check_columns=""
 var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID" "$system_id" 2>&1)
 if [ $? -ne 0 ]; then
     if [[ "$var_commands" == *"not supported by TMAverage"* ]]; then
-        echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage"
+        echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."
     else
         echo "$var_commands"
         echo "ERROR: An error occurred while parsing configs. Exiting..."
@@ -351,27 +353,42 @@ EOD
         exit 1
     fi
 
-    table1="$tmaverage_table_name"
-    table2="$tmaverage_stats_name"
+    tables="$tmaverage_table_name,$tmaverage_stats_name"
 
     echo "Granting required permissions to user $username:"
-    read_write_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$table1,$table2" table ALL "$username" Y)
+    read_write_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$tables" table ALL "$username" Y)
     if [ $? -ne 0 ]; then
         echo "$read_write_permissions"
-        echo "An error occurred while granting read-write permissions to tables $table1, $table2 on $username. Exiting..."
+        echo "An error occurred while granting read-write permissions to tables $tables on $username. Exiting..."
         exit 1
     fi
 
-    table1="$tmanalog_table_name"
-    table2="$telemetry_item_definitions_name"
-    table3="$telemetry_analog_conversions_name"
+    # TODO: Replace this with updated GrantNewPermissions.sh. TMANALOG is a view on EMA, and GrantNewPermissions.sh does not 
+    #       currently support adding permissions to views. Ticket DB-3350 is for the update.
+    table_permission_add=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+        set heading off
+        set feedback off
+        whenever oserror exit 1
+        whenever sqlerror exit 1
 
-    read_only_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$table1,$table2,$table3" table SELECT "$username" Y)
+        GRANT SELECT ON $tmanalog_table_name TO $username;
+        GRANT SELECT ON $telemetry_item_definitions_name TO $username;
+        GRANT SELECT ON $telemetry_analog_conversions_name TO $username;
+        exit;   
+EOD
+)
     if [ $? -ne 0 ]; then
-        echo "$read_only_permissions"
-        echo "An error occurred while granting read-only permission to the following tables $table1, $table2, $table3. Exiting..."
+        echo "$table_permission_add"
+        echo "An error occurred while adding permissions for $tmanalog_table_name, $telemetry_item_definitions_name, $telemetry_analog_conversions_name. Exiting..."
         exit 1
     fi
+
+    # read_only_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$table1,$table2,$table3" table SELECT "$username" Y)
+    # if [ $? -ne 0 ]; then
+    #     echo "$read_only_permissions"
+    #     echo "An error occurred while granting read-only permission to the following tables $table1, $table2, $table3. Exiting..."
+    #     exit 1
+    # fi
 
     if [ $otfd_opt -ne 0 ]; then
         echo "Granting user access to OTFD package & tables..."
@@ -404,20 +421,21 @@ EOD
             echo "An error occurred while granting access to the OTFD package to $username. Exiting..."
             exit 1
         fi
-        # Note: Not using GrantNewPermissions because it requires the misc schema name.
-        otfd_tables=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
-            set heading off
-            set feedback off
-            whenever oserror exit 1
-            whenever sqlerror exit 1
 
-            GRANT ALL ON ONTHEFLYDECOM_RESULTS TO $username;
-            GRANT ALL ON ONTHEFLYDECOM_ERRORS TO $username;
-EOD
-        )
+        # Get MISC schema for GrantNewPermissions.sh
+        misc_schema=$(GetSchemaName.sh -m -v)
+        if [ $? -ne 0 ]; then
+            echo "$misc_schema"
+            echo "An error occurred while getting the MISC schema name. Exiting..."
+            exit 1
+        fi
+        
+        tables="$misc_schema.ONTHEFLYDECOM_RESULTS,$misc_schema.ONTHEFLYDECOM_ERRORS"
+
+        otfd_tables=$("$HOME/common/oracle/GrantNewPermissions.sh" "$tables" table SELECT $username Y)
         if [ $? -ne 0 ]; then
             echo "$otfd_tables"
-            echo "An error occurred while granting access to the OTFD tables to $username. Exiting..."
+            echo "An error occurred while granting SELECT permissions to tables $tables on $username. Exiting..."
             exit 1
         fi
     fi

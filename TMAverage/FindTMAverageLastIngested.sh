@@ -69,7 +69,7 @@ tmaverage_table_name=""
 var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID" "$system_id" 2>&1)
 if [ $? -ne 0 ]; then
     if [[ "$var_commands" == *"not supported by TMAverage"* ]]; then
-        echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage"
+        echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."
     else
         echo "$var_commands"
         echo "ERROR: An error occurred while parsing configs. Exiting..."

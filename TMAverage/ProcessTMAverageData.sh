@@ -80,8 +80,6 @@ else
     export LD_LIBRARY_PATH=$ORACLE_HOME/lib
 fi
 
-export DB_EMAIL_LIST="Robert.Schmidt@lasp.colorado.edu"
-
 # Resolve the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -109,7 +107,7 @@ if [[ ! $system_id =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-echo "Validating database Input..."
+echo "Validating input..."
 
 export ORACLE_SID="$database"
 
@@ -135,10 +133,15 @@ tmaverage_table_name="";tmaverage_stats_name="";tablespace_name="";
 tmanalog_table_name="";telemetry_analog_conversions_name="";telemetry_item_definitions_name=""
 
 # Set TMAverage static values from helper script. If the database name is not supported, this will fail.
-var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID" "$system_id")
+# Set static values from helper script. If the database name is not supported, this will fail.
+var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID" "$system_id" 2>&1)
 if [ $? -ne 0 ]; then
-    echo "$var_commands"
-    echo "ERROR: Database is not supported by TMAverage. Exiting..."
+    if [[ "$var_commands" == *"not supported by TMAverage"* ]]; then
+        echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."
+    else
+        echo "$var_commands"
+        echo "ERROR: An error occurred while parsing configs. Exiting..."
+    fi
     exit 1
 fi
 
@@ -185,7 +188,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 if [[ "$test_login" != "Yes" ]]; then
-    echo "ERROR: .username or .passwd file in $SCRIPT_DIR is invalid. Please run './ConfigureTMAverageEnvironment.sh -u <username> <password>' to update. Exiting..."
+    echo "ERROR: .username or .passwd file in $SCRIPT_DIR is invalid. Please run './ConfigureTMAverageEnvironment.sh to update. Exiting..."
     exit 1
 fi
 
@@ -223,6 +226,22 @@ else
     end_date=${5^^}
 fi
 
+# Get MISC schema for GrantNewPermissions.sh
+misc_schema=$(GetSchemaName.sh -m -v)
+if [ $? -ne 0 ]; then
+    echo "$misc_schema"
+    echo "An error occurred while getting the MISC schema name. Exiting..."
+    exit 1
+fi
+
+# Get username to check for access
+username=$(<"$SCRIPT_DIR/.username")
+username=${username^^}
+
+# Check table permissions.
+select_tables="$telemetry_analog_conversions_name,$telemetry_item_definitions_name,$tmanalog_table_name"
+full_access_tables="$tmaverage_table_name,$tmaverage_stats_name"
+
 # If using OTFD, check that OTFD packages are functional
 if [ -n "$otfd_opt" ]; then
     otfd_status=$("$HOME/common/oracle/GetOTFDStatus.sh" "$ORACLE_SID")
@@ -236,86 +255,29 @@ if [ -n "$otfd_opt" ]; then
         echo "One or more OTFD Packages/tables do not exist/has compilation errors. See procedure status above. Exiting..."
         exit 1
     fi
+    select_tables="$select_tables,$misc_schema.ONTHEFLYDECOM_RESULTS,$misc_schema.ONTHEFLYDECOM_ERRORS"
+
 fi
-
-select_tab_count=0
-IFS='.' read -r s tmaverage_tab <<< "$tmaverage_table_name"
-IFS='.' read -r s stats_tab <<< "$tmaverage_stats_name"
-IFS='.' read -r s telemetry_analog_conversions_tab <<< "$telemetry_analog_conversions_name"
-IFS='.' read -r s telemetry_item_definitions_tab <<< "$telemetry_item_definitions_name"
-IFS='.' read -r s tmanalog_table_tab <<< "$tmanalog_table_name"
-
-select_tables="'$telemetry_analog_conversions_tab', '$telemetry_item_definitions_tab', '$tmanalog_table_tab'"
-select_tab_count=$((select_tab_count+3))
-
-insert_tables="'$tmaverage_tab', '$stats_tab'"
-
-# Check for read access to ONTHEFLYDECOM tables
-if [[ -n "$otfd_opt" ]]; then
-    select_tables+=", 'ONTHEFLYDECOM_RESULTS', 'ONTHEFLYDECOM_ERRORS'"
-    select_tab_count=$((select_tab_count+2))
-fi
-
-# Get username to check for access
-username=$(<"$SCRIPT_DIR/.username")
-username=${username^^}
 
 # Check SELECT permissions for read-only tables
-select_check=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
-    set heading off
-    set feedback off
-    whenever oserror exit 1
-    whenever sqlerror exit 1
-
-    SELECT COUNT(table_name) 
-    FROM dba_tab_privs 
-    WHERE 
-    grantee = '$username' AND
-    privilege = 'SELECT' AND
-    table_name in (${select_tables});
-    exit;
-EOD
-)
+select_check=$("$HOME/Robert/common/oracle/TestTablePermissions.sh" "$select_tables" "$username" SELECT)
 if [ $? -ne 0 ]; then
     echo "$select_check"
-    echo "An error occurred while checking SELECT permissions for user $username. Exiting..."
+    echo "An error occurred while running TestTablePermissions.sh to check SELECT permissions to $select_tables to $username. Exiting..."
     exit 1
-fi
-
-# Trim ALL whitespace, then check that all privileges are present
-select_check=$(echo "$select_check" | tr -d '[:space:]')
-if [[ $select_check != "$select_tab_count" ]]; then
-    echo "ERROR: User $username does not have SELECT permission for tables $select_tables. Please run ConfigureTMAverageEnvironment.sh to configure user. Exiting..."
+elif [[ "$select_check" == *"MISSING"* ]]; then
+    echo "ERROR: $username does not have SELECT permissions on $select_tables, or tables do not exist. Please run ConfigureTMAverageEnvironment.sh. Exiting..."
     exit 1
 fi
 
 # Check INSERT permissions for read-write tables
-insert_check=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
-    set heading off
-    set feedback off
-    whenever oserror exit 1
-    whenever sqlerror exit 1
-
-    SELECT COUNT(*) 
-    FROM dba_tab_privs 
-    WHERE 
-    grantee = '$username' AND
-    privilege = 'INSERT' AND
-    table_name in (${insert_tables});
-    exit;
-EOD
-)
+full_access_check=$("$HOME/Robert/common/oracle/TestTablePermissions.sh" "$full_access_tables" "$username" ALL)
 if [ $? -ne 0 ]; then
-    echo "$insert_check"
-    echo "An error occurred while checking INSERT permissions for user $username. Exiting..."
+    echo "$full_access_check"
+    echo "An error occurred while running TestTablePermissions.sh to check ALL permissions to $full_access_tables to $username. Exiting..."
     exit 1
-fi
-
-# Trim ALL whitespace, then check that all privileges are present
-insert_check=$(echo "$insert_check" | tr -d '[:space:]')
-if [[ "$insert_check" != "2" ]]; then
-    echo "ERROR: User $username does not have INSERT permission for tables $insert_tables, or the tables do not exist."
-    echo "Please run ConfigureTMAverageEnvironment.sh to configure user and confirm existence of the required tables. Exiting..."
+elif [[ "$full_access_check" == *"MISSING"* ]]; then
+    echo "ERROR: $username does not have ALL permissions on $full_access_tables, or tables do not exist. Please run ConfigureTMAverageEnvironment.sh. Exiting..."
     exit 1
 fi
 
@@ -331,7 +293,6 @@ elif [ "$check_tablespace" != "READ-WRITE" ]; then
 fi
 
 echo "Running... $SCRIPT_DIR/ProcessTMAverageData.py $otfd_opt $exclude_opt $database $tmid $start_date $end_date $parallel_degree"
-
 
 # Execute the Python script with the prepared arguments
 echo "Running ProcessTMAverageData.py. See log output at /tmp/TMAverageLogs/"
