@@ -11,7 +11,7 @@
 #        This script uses TMAverageHelpers.py to set various static parameters that vary by 
 #        database. Any updates to tmaverage configurations must be done in TMAverageHelpers.py
 # 
-#        For additional documentation on TMAverage, go here: https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
+#        For more detailed documentation go to https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
 # 
 # IMPORTANT: As a part of the TMAverage & TMAverage_Stats table checks, this script will validate 
 #            that the MOST RECENT DDL changes have been applied to the respective table. It is 
