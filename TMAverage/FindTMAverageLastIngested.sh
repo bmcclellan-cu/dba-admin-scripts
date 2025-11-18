@@ -7,7 +7,7 @@
 # 
 # Author: Robert Schmidt
 # Created: June 21st, 2025
-# Last Modified: November 10th, 2025 - RS
+# Last Modified: November 17th, 2025 - RS
 ###############################################################
 usage="Usage: ./FindTMAverageLastIngested.sh [ database ] [ (default 1) System_ID ]"
 example1="Example: ./FindTMAverageLastIngested.sh goldprod"

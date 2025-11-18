@@ -5,6 +5,8 @@
 # Notes:   The configuration details are database-dependent, and the script needs to be
 #          passed the database name in order to correctly output the appropriate bash.
 # 
+#          For more detailed documentation go to https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
+# 
 # IMPORTANT: The ConfigureTMAverageEnvironment.sh script runs checks to make sure the DDL is 
 #            up-to-date by checking the most recent DDL changes, which are indicated by the 
 #            tmaverage_table_check_columns and tmaverage_stats_check_columns variables. These
@@ -13,7 +15,7 @@
 # 
 # Author: Robert Schmidt
 # Created: August 25th, 2025
-# Last Modified: November 10th, 2025 - RS
+# Last Modified: November 17th, 2025 - RS
 ##########################################################################
 import sys
 

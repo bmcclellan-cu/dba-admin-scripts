@@ -11,6 +11,8 @@
 #        This script uses TMAverageHelpers.py to set various static parameters that vary by 
 #        database. Any updates to tmaverage configurations must be done in TMAverageHelpers.py
 # 
+#        For additional documentation on TMAverage, go here: https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
+# 
 # IMPORTANT: As a part of the TMAverage & TMAverage_Stats table checks, this script will validate 
 #            that the MOST RECENT DDL changes have been applied to the respective table. It is 
 #            assumed that all previous updates have been applied, and the the only check that is 
@@ -21,7 +23,7 @@
 # 
 # Author: Robert Schmidt
 # Created: June 6th, 2025
-# Last Modified: November 10th, 2025 - RS
+# Last Modified: November 17th, 2025 - RS
 ##########################################################################
 usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafile ] (optional, create TMAverage_SID1 tablespace) ] [ -b (optional, create TMAverage tables) ] [ -v (optional, create venv in tmaverage script directory ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ system_id ] [ username (optional) ] [ password (optional) ]"
 example1="Example: ./ConfigureTMAverageEnvironment.sh -t 1 /ssd_internal/Robert/AIMPROD_TMAVERAGE/tmaverage_table.dbf"
@@ -73,11 +75,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # The -u option requires the SID, username, and password parameters.
 if [[ $user_opt -ne 0 && $# -eq 3 ]]; then
+    system_id="$1"
     username="$2"
     password="$3"
 
     # The -o, and -b options need the SID parameter.
-elif [[ $# -ne 1 ]] && { [ $otfd_opt -eq 1 ] || [ $table_opt -eq 1 ]; }; then
+elif [[ $# -eq 1 ]] && { [ $otfd_opt -eq 1 ] || [ $table_opt -eq 1 ]; }; then
+    system_id="$1"
+
+    # The -v option requires no parameters.
+elif [[ $# -eq 0 ]] && [ $venv_opt -eq 1 ]; then
+    :
+else
     echo "Invalid parameters."
     echo "$usage"
     echo "$example1"
@@ -85,8 +94,8 @@ elif [[ $# -ne 1 ]] && { [ $otfd_opt -eq 1 ] || [ $table_opt -eq 1 ]; }; then
     exit 1
 fi
 
-system_id="$1"
-if ! [[ $system_id =~ ^[0-9]+$ ]]; then
+# If system_id is set, check it.
+if [ -n "$system_id" ] && ! [[ $system_id =~ ^[0-9]+$ ]]; then
     echo "ERROR: System_ID must be a valid integer. Exiting..."
     exit 1
 fi
@@ -130,29 +139,31 @@ if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
     exit 1
 fi
 
-# Set config variables to default values:
-tmaverage_table_name="";tmaverage_stats_name="";tablespace_name="";tmanalog_table_name="";data_schema=""
-telemetry_analog_conversions_name="";telemetry_item_definitions_name="";tmaverage_table_ddl="";tmaverage_stats_ddl=""
-tmaverage_table_check_columns="";tmaverage_stats_check_columns=""
+# If system_id is set, then get SID-dependent helper variables.
+if [ -n "$system_id" ]; then
+    # Set config variables to default values:
+    tmaverage_table_name="";tmaverage_stats_name="";tablespace_name="";tmanalog_table_name="";
+    telemetry_analog_conversions_name="";telemetry_item_definitions_name="";tmaverage_table_ddl="";tmaverage_stats_ddl=""
+    tmaverage_table_check_columns="";tmaverage_stats_check_columns=""
 
-# Set static values from helper script. If the database name is not supported, this will fail.
-var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID" "$system_id" 2>&1)
-if [ $? -ne 0 ]; then
-    if [[ "$var_commands" == *"not supported by TMAverage"* ]]; then
-        echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."
-    else
-        echo "$var_commands"
-        echo "ERROR: An error occurred while parsing configs. Exiting..."
+    # Set static values from helper script. Also checks if database is supported by script.
+    var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID" "$system_id" 2>&1)
+    if [ $? -ne 0 ]; then
+        if [[ "$var_commands" == *"not supported by TMAverage"* ]]; then
+            echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."
+        else
+            echo "$var_commands"
+            echo "ERROR: An error occurred while parsing configs. Exiting..."
+        fi
+        exit 1
     fi
-    exit 1
+
+    eval "$var_commands"
+
+    # Split apart table names for helper scripts
+    IFS="." read -r tmaverage_schema tmaverage_tab <<< "$tmaverage_table_name"
+    IFS="." read -r stats_schema stats_tab <<< "$tmaverage_stats_name"
 fi
-
-eval "$var_commands"
-
-# Split apart table names for helper scripts
-IFS="." read -r tmaverage_schema tmaverage_tab <<< "$tmaverage_table_name"
-IFS="." read -r stats_schema stats_tab <<< "$tmaverage_stats_name"
-
 
 # Create tablespace if path is specified
 if [ -n "$datafile_path" ]; then
