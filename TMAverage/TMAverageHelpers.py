@@ -60,12 +60,13 @@ TMANALOG_DBS = {
     "*":        "<DATA_SCHEMA>.TMANALOG_SID<SID>",
 }
 
+# TODO: Debug change
 # The non-schema prefixed name of the TMAverage table. Separated out in order to derive
 # the primary key name from it effectively (specifically intended for testing, where multiple
 # TMAverage tables are created and compared)
 TMAVERAGE_TAB_NAME = {
     "emadev":   "TMAVERAGE",
-    "*":        "TMAVERAGE_SID<SID>"
+    "*":        "TMAVERAGE_ROBERTDEV_SID<SID>"
 }
 
 # Full TMAverage table name.
@@ -89,6 +90,13 @@ TELEMETRYITEMDEFINITION_DBS = {
 TELEMETRYANALOGCONVERSIONS_DBS = {
     "emadev":   "<DATA_SCHEMA>.TMANALOGCONVERSIONS",   # (EMA) Separate analog conversions for each SID.
     "*":        "<CT_SCHEMA>.TELEMETRYANALOGCONVERSIONS",
+}
+
+# Contains the column to use for time-variant analog conversions. If conversions are not time-variant, 
+# contain an empty string.
+TIME_VARIANT_ANALOG_CONVERSION = {
+    "emadev":   "true",
+    "*":        ""
 }
 
 # What time column to use based on database. EMA is using ASCT (Adjusted time) rather than SCT or ERT.
@@ -177,6 +185,7 @@ class TMAverageConfigs():
 
         self.TELEMETRY_ANALOG_CONVERSIONS_NAME = self.parse_config(TELEMETRYANALOGCONVERSIONS_DBS, database)
         self.TELEMETRY_ITEM_DEFINITIONS_NAME = self.parse_config(TELEMETRYITEMDEFINITION_DBS, database)
+        self.TIME_VARIANT_ANALOG_CONVERSION = self.parse_config(TIME_VARIANT_ANALOG_CONVERSION, database)
 
         self.TABLE_TIME_COLUMN = self.parse_config(TABLE_TIME_COLUMN, database)
         self.OTFD_TIME_COLUMN = self.parse_config(OTFD_TIME_COLUMN, database)

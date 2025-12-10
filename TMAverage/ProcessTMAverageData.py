@@ -305,6 +305,7 @@ def fetch_values_by_time_range(
     results_len = len(results)  # Pre-allocates numpy array to prevent appends.
     results_values = np.zeros((results_len), dtype=np.float128)
     results_bucket_ids = np.zeros((results_len), dtype=np.uintc)
+    results_times = np.zeros((results_len), dtype=np.uint64) # Oracle NUMBER (0, 16)
 
     logger.info(f"Retrieved {results_len} records. Ingesting...")
 
@@ -316,6 +317,7 @@ def fetch_values_by_time_range(
         time = row[0]
         timeDelta = time - start_time_gps
         results_bucket_ids[row_number] = int(math.trunc(timeDelta / 300000000))
+        results_times[row_number] = time
 
         results_values[row_number] = row[1]
         row_number += 1
@@ -324,6 +326,7 @@ def fetch_values_by_time_range(
         results_len,
         results_values,
         results_bucket_ids,
+        results_times
     )
 
 
@@ -405,6 +408,7 @@ def fetch_otfd_values_by_time_range(
     results_len = len(otfd_results)
     results_values = np.zeros((results_len), dtype=np.float128)
     results_bucket_ids = np.zeros((results_len), dtype=np.uintc)
+    results_times = np.zeros((results_len), dtype=np.uint64) # Oracle NUMBER (0, 16)
 
     logger.info(f"Retrieved {results_len} records. Ingesting...")
 
@@ -416,6 +420,7 @@ def fetch_otfd_values_by_time_range(
         time = row[0]
         timeDelta = time - start_time_gps
         results_bucket_ids[row_number] = int(math.trunc(timeDelta / 300000000))
+        results_times[row_number] = time
 
         results_values[row_number] = row[1]
         row_number += 1
@@ -426,28 +431,44 @@ def fetch_otfd_values_by_time_range(
         results_len,
         results_values,
         results_bucket_ids,
+        results_times
     )
 
-
-def fetch_analog_conversions_by_tmid(
+# TODO: Update
+def fetch_analog_conversions(
+        start_time_gps: int,
+        end_time_gps: int,
         tmid: int, 
         config: TMAverageConfigs,
         ):
     """
-    Fetches a single analog conversion from the TelemetryAnalogConversion table. This table is not expected to have multiple entries,
-    and the function only fetches the first one, if more than one is found.
+    Fetches all relevant analog conversions from TelemetryAnalogConversion table. Depending on the config, this query may return 
+    multiple analog conversions that are time-variant. 
     """
     global db_connection
     logger = multiprocessing.get_logger()
     cursor = db_connection.cursor()
 
-    sql = f"""select C.c0,  C.c1,  C.c2,  C.c3,  C.c4,  C.c5,  C.c6,  C.c7 
-            FROM {config.TELEMETRY_ANALOG_CONVERSIONS_NAME} C 
-            where C.tlmId = {tmid} order by C.segmentNumber"""
+    if config.TIME_VARIANT_ANALOG_CONVERSION == "true":
+        sql = f"""select C.c0, C.c1, C.c2, C.c3, C.c4, C.c5, C.c6, C.c7, DEFINITIONSTART, LOWVALUE, HIGHVALUE
+                FROM {config.TELEMETRY_ANALOG_CONVERSIONS_NAME} C
+                where C.tlmId = {tmid} AND
+                DEFINITIONSTART <= {end_time_gps}
+                AND DEFINITIONSTART >= COALESCE((
+                    SELECT MAX(DEFINITIONSTART) FROM {config.TELEMETRY_ANALOG_CONVERSIONS_NAME}
+                    WHERE tlmId = {tmid} AND DEFINITIONSTART <= {start_time_gps}
+                ), 0)
+                ORDER BY C.DEFINITIONSTART DESC
+        """
+    else:
+        # If not time variant, then set DEFINITIONSTART to 0. 
+        sql = f"""select C.c0, C.c1, C.c2, C.c3, C.c4, C.c5, C.c6, C.c7, 0 AS DEFINITIONSTART, LOWVALUE, HIGHVALUE
+                FROM {config.TELEMETRY_ANALOG_CONVERSIONS_NAME} C 
+                where C.tlmId = {tmid}"""
 
     logger.debug(sql)
     try:
-        result = cursor.execute(sql).fetchone()
+        results = cursor.execute(sql).fetchall()
     except oracledb.DatabaseError as error:
         if str(error).find("ORA-00942") != -1:
             logger.fatal(
@@ -466,7 +487,7 @@ def fetch_analog_conversions_by_tmid(
             )
             raise error
 
-    return result
+    return results
 
 
 def insert_tmaverage_rows(
@@ -604,20 +625,26 @@ def calculate_day_start_end_gps(
 
     return (start_time_gps, end_time_gps)
 
-
-def calibrate(value, c):
+# TODO: Update
+def calibrate(value, calibration_set):
     """
     Helper function that is passed to numpy to calibrate the data. Is iterated over the numpy array.
+    Expects c to be an array of calibration sets from highest DEFINITIONSTART to lowest DEFINITIONSTART.
+    
+    calibration_sets:
+        calibration_set:
+            0-7: Polynomial coefficients
     """
+
     newValue = (
-        c[0]
-        + c[1] * value
-        + c[2] * value**2
-        + c[3] * value**3
-        + c[4] * value**4
-        + c[5] * value**5
-        + c[6] * value**6
-        + c[7] * value**7
+        calibration_set[0]
+        + calibration_set[1] * value
+        + calibration_set[2] * value**2
+        + calibration_set[3] * value**3
+        + calibration_set[4] * value**4
+        + calibration_set[5] * value**5
+        + calibration_set[6] * value**6
+        + calibration_set[7] * value**7
     )
     return newValue
 
@@ -672,6 +699,7 @@ def process_values_by_tmid(
     results_len = data[0]
     results_values = data[1]
     results_bucket_ids = data[2]
+    results_times = data[3]
 
     # If there is no data for the time range and tmid, then exit.
     if results_len == 0:
@@ -684,15 +712,52 @@ def process_values_by_tmid(
     unique_bucket_ids = range(int(((end_time_gps - start_time_gps) / 300000000)))
 
     # Fetch calibration data, then apply to all values for the specific TMID.
-    calibration_data = fetch_analog_conversions_by_tmid(tmid, config)
+    calibration_sets = fetch_analog_conversions(start_time_gps, end_time_gps, tmid, config)
 
-    logger.info("Calibrating data...")
-    # Apply the polynomial calibration every time, as long as it exists.
-    if calibration_data != None:
-        # Splices out the the polynomial coefficients, removes unnecessary data
-        results_values = np.apply_along_axis(
-            calibrate, -1, results_values, (calibration_data)
+    if len(calibration_sets) > 0:
+        logger.info("Calibrating data...")
+    else:
+        logger.info("No calibration required...")
+
+    # Make a copy of results_values to place the calibrated data into. If no correct calibration set exists
+    # for a given data point, it will default to the uncalibrated value.
+    calibrated_data = np.copy(results_values)
+
+    for i in range(len(calibration_sets)):
+        calibration_set = calibration_sets[i]
+        definition_start = calibration_set[8]
+        low_value = calibration_set[9]
+        high_value = calibration_set[10]
+
+        # The computed definition_end is an exclusive endpoint for this calibration set.
+        if i == len(calibration_sets)-1:
+            definition_end = None
+        else:
+            definition_end = calibration_sets[i+1][8]
+
+        # Determine what data is relevant for a given calibration set. The calibration set must be within the 
+        # domain of a given calibration set (from the definition_start of the set to the start of the next set).
+
+        # Generate a boolean mask for what values should be calibrated with this specific calibration set. 
+        calibration_set_mask = (results_times >= definition_start)
+
+        if definition_end: 
+            calibration_set_mask &= (results_times < definition_end)
+        if low_value:
+            calibration_set_mask &=  (low_value <= results_values)
+        if high_value:
+            calibration_set_mask &= (high_value >= results_values)
+        
+        # Get only the data relevant to the calibration set.
+        selected_data = results_values[calibration_set_mask]
+
+        calibrated_selection = np.apply_along_axis(
+            calibrate, -1, selected_data, (calibration_set)
         )
+
+        calibrated_data[calibration_set_mask] = calibrated_selection
+    
+    results_values = calibrated_data
 
     logger.info("Averaging data...")
     insertion_data = []

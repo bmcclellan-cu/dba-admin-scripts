@@ -80,6 +80,8 @@ else
     export LD_LIBRARY_PATH=$ORACLE_HOME/lib
 fi
 
+export DB_EMAIL_LIST="Robert.Schmidt@lasp.colorado.edu"
+
 # Resolve the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -227,70 +229,70 @@ else
 fi
 
 # Get MISC schema for GrantNewPermissions.sh
-misc_schema=$(GetSchemaName.sh -m -v)
-if [ $? -ne 0 ]; then
-    echo "$misc_schema"
-    echo "An error occurred while getting the MISC schema name. Exiting..."
-    exit 1
-fi
+# misc_schema=$(GetSchemaName.sh -m -v)
+# if [ $? -ne 0 ]; then
+#     echo "$misc_schema"
+#     echo "An error occurred while getting the MISC schema name. Exiting..."
+#     exit 1
+# fi
 
-# Get username to check for access
-username=$(<"$SCRIPT_DIR/.username")
-username=${username^^}
+# # Get username to check for access
+# username=$(<"$SCRIPT_DIR/.username")
+# username=${username^^}
 
-# Check table permissions.
-select_tables="$telemetry_analog_conversions_name,$telemetry_item_definitions_name,$tmanalog_table_name"
-full_access_tables="$tmaverage_table_name,$tmaverage_stats_name"
+# # Check table permissions.
+# select_tables="$telemetry_analog_conversions_name,$telemetry_item_definitions_name,$tmanalog_table_name"
+# full_access_tables="$tmaverage_table_name,$tmaverage_stats_name"
 
-# If using OTFD, check that OTFD packages are functional
-if [ -n "$otfd_opt" ]; then
-    otfd_status=$("$HOME/common/oracle/GetOTFDStatus.sh" "$ORACLE_SID")
-    if [ $? -ne 0 ]; then
-        echo "$otfd_status"
-        echo "An error occurred while checking OTFD table & package status. Exiting..."
-        exit 1
-    fi
-    if [[ "$otfd_status" == *"Does Not Exist"* ]] || [[ "$otfd_status" == *"Not Loaded"* ]] || [[ "$otfd_status" == *"Compilation Error"* ]]; then
-        echo "$otfd_status"
-        echo "One or more OTFD Packages/tables do not exist/has compilation errors. See procedure status above. Exiting..."
-        exit 1
-    fi
-    select_tables="$select_tables,$misc_schema.ONTHEFLYDECOM_RESULTS,$misc_schema.ONTHEFLYDECOM_ERRORS"
+# # If using OTFD, check that OTFD packages are functional
+# if [ -n "$otfd_opt" ]; then
+#     otfd_status=$("$HOME/common/oracle/GetOTFDStatus.sh" "$ORACLE_SID")
+#     if [ $? -ne 0 ]; then
+#         echo "$otfd_status"
+#         echo "An error occurred while checking OTFD table & package status. Exiting..."
+#         exit 1
+#     fi
+#     if [[ "$otfd_status" == *"Does Not Exist"* ]] || [[ "$otfd_status" == *"Not Loaded"* ]] || [[ "$otfd_status" == *"Compilation Error"* ]]; then
+#         echo "$otfd_status"
+#         echo "One or more OTFD Packages/tables do not exist/has compilation errors. See procedure status above. Exiting..."
+#         exit 1
+#     fi
+#     select_tables="$select_tables,$misc_schema.ONTHEFLYDECOM_RESULTS,$misc_schema.ONTHEFLYDECOM_ERRORS"
 
-fi
+# fi
 
-# Check SELECT permissions for read-only tables
-select_check=$("$HOME/Robert/common/oracle/TestTablePermissions.sh" "$select_tables" "$username" SELECT)
-if [ $? -ne 0 ]; then
-    echo "$select_check"
-    echo "An error occurred while running TestTablePermissions.sh to check SELECT permissions to $select_tables to $username. Exiting..."
-    exit 1
-elif [[ "$select_check" == *"MISSING"* ]]; then
-    echo "ERROR: $username does not have SELECT permissions on $select_tables, or tables do not exist. Please run ConfigureTMAverageEnvironment.sh. Exiting..."
-    exit 1
-fi
+# # Check SELECT permissions for read-only tables
+# select_check=$("$HOME/Robert/common/oracle/TestTablePermissions.sh" "$select_tables" "$username" SELECT)
+# if [ $? -ne 0 ]; then
+#     echo "$select_check"
+#     echo "An error occurred while running TestTablePermissions.sh to check SELECT permissions to $select_tables to $username. Exiting..."
+#     exit 1
+# elif [[ "$select_check" == *"MISSING"* ]]; then
+#     echo "ERROR: $username does not have SELECT permissions on $select_tables, or tables do not exist. Please run ConfigureTMAverageEnvironment.sh. Exiting..."
+#     exit 1
+# fi
 
-# Check INSERT permissions for read-write tables
-full_access_check=$("$HOME/Robert/common/oracle/TestTablePermissions.sh" "$full_access_tables" "$username" ALL)
-if [ $? -ne 0 ]; then
-    echo "$full_access_check"
-    echo "An error occurred while running TestTablePermissions.sh to check ALL permissions to $full_access_tables to $username. Exiting..."
-    exit 1
-elif [[ "$full_access_check" == *"MISSING"* ]]; then
-    echo "ERROR: $username does not have ALL permissions on $full_access_tables, or tables do not exist. Please run ConfigureTMAverageEnvironment.sh. Exiting..."
-    exit 1
-fi
+# # Check INSERT permissions for read-write tables
+# full_access_check=$("$HOME/Robert/common/oracle/TestTablePermissions.sh" "$full_access_tables" "$username" ALL)
+# if [ $? -ne 0 ]; then
+#     echo "$full_access_check"
+#     echo "An error occurred while running TestTablePermissions.sh to check ALL permissions to $full_access_tables to $username. Exiting..."
+#     exit 1
+# elif [[ "$full_access_check" == *"MISSING"* ]]; then
+#     echo "ERROR: $username does not have ALL permissions on $full_access_tables, or tables do not exist. Please run ConfigureTMAverageEnvironment.sh. Exiting..."
+#     exit 1
+# fi
 
-# Check tablespace write status
-check_tablespace=$("$HOME/common/oracle/CheckTablespaceReadStatus.sh" "$tablespace_name")
-if [ $? -ne 0 ]; then
-    echo "$check_tablespace"
-    echo "An error occurred while running CheckTablespaceReadStatus.sh. Exiting..."
-    exit 1
-elif [ "$check_tablespace" != "READ-WRITE" ]; then
-    echo "ERROR: Tablespace $tablespace_name must be in READ-WRITE mode (currently $check_tablespace). Exiting..."
-    exit 1
-fi
+# # Check tablespace write status
+# check_tablespace=$("$HOME/common/oracle/CheckTablespaceReadStatus.sh" "$tablespace_name")
+# if [ $? -ne 0 ]; then
+#     echo "$check_tablespace"
+#     echo "An error occurred while running CheckTablespaceReadStatus.sh. Exiting..."
+#     exit 1
+# elif [ "$check_tablespace" != "READ-WRITE" ]; then
+#     echo "ERROR: Tablespace $tablespace_name must be in READ-WRITE mode (currently $check_tablespace). Exiting..."
+#     exit 1
+# fi
 
 echo "Running... $SCRIPT_DIR/ProcessTMAverageData.py $otfd_opt $exclude_opt $database $tmid $start_date $end_date $parallel_degree"
 
