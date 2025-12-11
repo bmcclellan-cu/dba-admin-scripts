@@ -5,120 +5,116 @@ Purpose:    This contains the generic, non-mission-specific code used for on-the
             It works together with the mission-specific code in onTheFlyDecom<mission>.pkb.
 
             On-the-fly decom is the process of extracting telemetry point(s) from raw CCSDS
-	    packet(s) in the L0_Packets database table.  This is in contrast to querying
-	    the L1 tables: TManalog and TMdiscrete for telemetry points previously ingested
-	    by TDP (Telemetry Data Processing).
+            packet(s) in the L0_Packets database table.  This is in contrast to querying
+            the L1 tables: TManalog and TMdiscrete for telemetry points previously ingested
+            by TDP (Telemetry Data Processing).
 
 Revisions:
   mm/dd/yy who  description
   10/19/23 SM   Initial version.
   07/22/25 RS   Updated logging + fixed bug.
   08/27/25 RS   Updated for EMA
+  11/13/25 RS   Updated logging
 
 Methods:
-  logError             - The error logging function writes to the onTheFlyDecom_errors table.
-  setOption            - End-user application calls to set options, both generic and mission-specific.
-  clearOption          - End-user application calls to revert an option to its default value.
-  string_varray_to_csv - Converts a varray of up to 3 strings into CSV.
-  replaceBindVars      - Replaces ":bind_var" in a query with the value.  For debugging queries.
-  decomFromHexString   - Returns a NUMBER from a hex string, given offset, length and dataType.
-  CSV2NestedTable      - Converts a comma separated string of apids to a PL/SQL table of integer apids.
-  narrowStartStopTimes - Used so the data from L0/L1 queries with multiple TSL or TMD rows don't overlap.
-  queryL0              - Queries L0_Packets and decoms a telemetry item from each BLOB, as directed
-                         by one TMDecom record.  Inserts results into the onTheFlyDecom_results table.
-  queryL1              - Queries TManalog or TMdiscrete, inserts results into onTheFlyDecom_results.
-  selectNumericTlm     - The main telemetry retrieval procedure;  mostly generic code, with a few
-                         calls to mission-specific code.
+  selectNumericTlm      - The main telemetry retrieval procedure;  mostly generic code, with a few
+                          calls to mission-specific code.
+  setOption             - End-user application calls to set options, both generic and mission-specific.
+  clearOption           - End-user application calls to revert an option to its default value.
+  getVersion            - Get the version of both the generic and mission-specific packages.
+
+  narrowStartStopTimes  - Used so the data from L0/L1 queries with multiple TSL or TMD rows don't overlap.
+  queryL0               - Called by selectNumericTlm, queries L0_Packets and decoms telemetry items from the
+                          returned packets based on the entries in TMDecom.
+  decomFromHexString    - Returns a NUMBER from a hex string, given offset, length and dataType. 
+  queryL1               - Queries TManalog or TMdiscrete, inserts results into onTheFlyDecom_results.
+
+  CSV2NestedTable       - Converts a comma separated string of values to a PL/SQL table. Is used to parse the 
+                          'APID' global option.
+  string_varrayToCSV    - Converts a varray of up to 3 strings into a CSV. 
+  prepareDebugSQL       - Takes a mapping of bind variables to actual values as well as a query and replaces 
+                          bind variables with the values, as well as compacting whitespace. For logging queries.
+  logOTFD               - Logs to onTheFlyDecom_errors, as well as managing priority of logged messages based on 
+                          the set 'DEBUGLEVEL'
+
+Installation:
+  Open sqlplus and run the following commands. Note: The package specs must be compiled first!
+    @<full_path>/onTheFlyDecomMissionSpecific.pks     -- mission-specific package spec
+    @<full_path>/onTheFlyDecom.pks                    -- generic package spec
+    @<full_path>/onTheFlyDecomMissionSpecificIXPE.pkb -- mission-specific package body
+    @<full_path>/onTheFlyDecom.pkb                    -- generic package body
+    show errors                                       -- show compilation errors (no errors is preferable)
 
 Usage: 
-  1. In sqlplus:   If not already installed/compiled, do:
-     @<full_path>/onTheFlyDecomMissionSpecific.pks     -- mission-specific package spec
-     @<full_path>/onTheFlyDecomMissionSpecificIXPE.pkb -- mission-specific package body
-     @<full_path>/onTheFlyDecom.pks                    -- generic package spec
-     @<full_path>/onTheFlyDecom.pkb                    -- generic package body
-     show errors                                       -- show compilation errors
-     Be sure your login.sql file does *not* contain: "set autocommit on", otherwise
-     any data in the two tables will be deleted before you can query for it!
-     
-     Optional:
-     execute onTheFlyDecom.setOption('debugLevel','1');
-     execute onTheFlyDecom.setOption('testId','0');
+    Be sure your SQL client does *NOT* have autocommit enabled, as that will clear out ONTHEFLYDECOM_RESULTS
+    and ONTHEFLYDECOM_ERRORS immediately after the procedure returns. 
 
-     EMM:
-     This 1st query is faster than the 2nd, because it uses ERT only, which is the first column in the index
-     for emm_schema03.
-                                                    ERT 2021/008-22:56:59 2021/008-23:56:58
-                                                    |                 |
-     execute onTheFlyDecom.selectNumericTlm(3, 578, 1294181837338000, 1294185436338000, -1, -1); => 3600 pts
-     Other tlmIds:                             |
-     583 = FSA_OTIS GSEP5V, a 64-bit float     FSA_OTIS ACPTCNT apid=1536
-                                               								  
-                                                            SCT 2021/014-00   2021/014-01
-                                                            |                 |
-     execute onTheFlyDecom.selectNumericTlm(3, 578, -1, -1, 1294617618000000, 1294621218000000); => 3600 pts
+    Note: All results from onTheFlyDecom are returned into either ONTHEFLYDECOM_RESULTS or ONTHEFLYDECOM_ERRORS. 
+    No user-facing procedures will directly return data.
 
-     IXPE:                                               SCT 2023/111-19:20    2023/111-19:40
-                                                             |                 |
-     execute onTheFlyDecom.selectNumericTlm(1, 4118, -1, -1, 1366140018000000, 1366141218000000); => 1200 pts
-                                               |
-					       ADCS ADMAGA4AF, apid=100, dev & prod have same tlmId
-     show errors
-     select count(*) from onTheFlyDecom_results;
-     select * from onTheFlyDecom_results;
-     select ert,gps2dt(ert),value as sct,value from onTheFlyDecom_results;
-     select message from onTheFlyDecom_errors order by sequence;
-     select SCT, ERT, Value from onTheFlyDecom_results order by ERT, SCT;  -- The 'order by' *IS* necessary, per Test #4.
+    The primary procedure used to query data is selectNumericTlm, which is used as follows. Note that all of the time
+    parameters are technically optional, and can be replaced with -1 to avoid querying by them, but at least one of them
+    must be set. See documentation for the mission-specific package on what time fields are required. 
 
+    execute onTheFlyDecom.selectNumericTlm(<SID>, <TLMID>, <startERT>, <stopERT>, <startSCT>, <stopSCT>, <startASCT>, <stopASCT>);
+
+    SELECT * FROM onTheFlyDecom_results; -- Get the results from the query
+    SELECT * FROM onTheFlyDecom_errors;  -- Get errors/warnings/debug output based on 'DEBUGLEVEL' option.
+
+    You can set optional parameters using the setOption or clearOption procedures, which allows for both generic and 
+    mission-specific parameters to be set. Details on available options can be obtained by running setOption with empty parameters
+
+    execute onTheFlyDecom.setOption(<OptionName>, <OptionValue>);
+    execute onTheFlyDecom.clearOption(<OptionName>); -- Pass 'ALL' to clear all options.
 Notes:
   1. Overview:
      See the OnTheFlyDecom.txt document.
+     See OTFD Documentation: https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/219810895/On-The-Fly-Decom+OTFD
      
   2. Uses two Oracle global temporary tables:
      Oracle global temporary tables have the same name, but different contents for each connection.
      They must be created once by a DBA, like other permanent tables.
      The code clears these tables before each invocation of selectNumericTlm.
      The code also clears OnTheFlyDecom_errors before each invocation of setOption and clearOption.
-     a. The onTheFlyDecom_results table stores the results of selectNumericTlm.
-        Then the application (end-user) can query this table to get the data.
-     b. The onTheFlyDecom_errors table stores errors, and can also be queried by the end-user.
+     a. The onTheFlyDecom_results table stores the results of selectNumericTlm, which the application can
+        query to get the data.
+     b. The onTheFlyDecom_errors table stores errors/debug messages depending on the DEBUGLEVEL, and can also be 
+        queried by the end-user.
 
   3. Compiler Errors:
-     - If the ampersand character is present in a comment, in sqlplus will get this prompt
-       upon compiling, and some error messages:
+     - If the ampersand character is present in a comment, package compilation will fail and give the following prompt:
        Enter value for t:  (where t is the letter after the ampersand)
 
   4. Exception Handling and End-User Error Handling
-     - If you let an exception propagate out to the caller, then the onTheFlyDecom_errors table
-       gets emptied.  So have to catch all exceptions so that the end-user application can get
-       information from that table.
+     - If you let an exception propagate to the caller of the procedure, most SQL clients automatically rollback
+       the global temporary table state to before the procedure was called, clearing the onTheFlyDecom_errors and 
+       onTheFlyDecom_results table. All exceptions must be caught and handled so the end-user application can get
+       useful error messages.
      - The end user is expected to check the onTheFlyDecom_errors table after each call to
        selectNumericTlm, setOption and clearOption.  If the user has not increased the debug level
        over the default, then zero rows means no errors.  If the user has increased the debug level,
        and there are rows in the table, then the user should query the table to find out if any
-       of them start with "ERROR" or "WARNING", to determine the error status of the last called
+       of them start with "ERROR", "WARNING", "DEBUG", or "V-DEBUG", to determine the error status of the last called
        procedure.
      - The user-callable procedures do not return status, because output variables and function
        return values from stored procedures/functions are harder to program in some languages.
 
   5. ERT vs SCT:
-     - ERT (Earth Received Time) is wall clock time, present in telemetry wrappers from ground
-       stations.  SCT (Spacecraft Time) refers to the time in telemetry packets, converted to UTC.
-     - Data requests before launch often specify only an ERT range (for real-time data), or both an
-       ERT range and a SCT range (for playback data).  The ERT range is used by this code together
-       with the times in the TelemetryStorageLocation and TelemetryDecom table.   This does not work
-       well with playback data, because the ERT range is a relatively short range when the data was dumped,
-       but it contains a wider time range of data, whose SCT time-tags are before the dump time (assuming
-       SCT has been jammed to be near to ERT).  In the playback case, if there are any times in TSL or TMD
-       that are between the SCT start and ERT stop, the wrong records will probably be used.
-       This case is unlikely because in the case of TMdecom, it would also apply even without OTFD, and
-       at least on EMM, people were cognizant of it.  I.e. after a CT (decom map) release, don't dump
-       and process playback data which contains data with old definitions.
-       Q: What if we wanted to treat playback, real-time and EMM snorkel data differently w.r.t. ingesting
+     - ERT (Earth Received Time) is the wall clock time when the packet was received at a ground station. 
+       SCT (Spacecraft Time) refers to the time embedded in telemetry packets, converted to UTC. 
+       ASCT (Adjusted Spacecraft Time) is intended to be the wall-clock time the data was generated, accounting
+            and adjusting for jamming Spacecraft time into the future during testing.
+     - Data requests before launch often specify only an ERT range (or ASCT for EMA), or both an ERT range
+       and an SCT range (for playback data). getDefinitionStartStopTimes is used to determine what time input
+       to use to query the TelemetryStorageLocation and TMDecom tables. This may have issues with playback data
+       because ERT is a relatively short time period during which a large time range of data may have been received
+       at once. If SCT is jammed to be significantly different from ERT and queries using that SCT are made, the 
+       incorrect Decom Maps may be selected. After launch, this issue is fairly minor, as SCT should accurately 
+       reflect wall-clock time, and will roughly correlate with ERT.
+          
+    Q: What if we wanted to treat playback, real-time and EMM snorkel data differently w.r.t. ingesting
           into L0 or L1?  Possibilities:  TSL would need either more systemIds, or a new column extending
 	  systemId, like VCs.
-     - Data requests after launch specify only a SCT range, and the SCT times are like wall clock time,
-       because the spacecraft clock has been set so it's correlated to UTC.
-       In this case the SCT times used together with TSL and TMD times is not an issue.
 *************************************************************************************************/
 
 CREATE OR REPLACE PACKAGE BODY onTheFlyDecom
@@ -132,9 +128,8 @@ AS
 -- See the mission-specific onTheFlyDecom<mission>.pkb file for mission-specific options.
 
 -- If debug level is above 0, the L0 and L1 queries will have the monitor flag enabled, allowing for query performance to be measured.
--- Keep in mind that this does not apply for TMDecom/TelemetryStorageLocation queries, as those are unlikely to be performance bottlenecks
--- and use inline SQL, which cannot have those flags injected.
-gblDebugLevel      NUMBER := 0;           /* 0=silent,  1=verbose, 2=more verbose */
+-- Keep in mind that this does not apply for TMDecom/TelemetryStorageLocation queries, as those are unlikely to be performance bottlenecks.
+gblDebugLevel      NUMBER := 0;           /* 0=errors,  1=warning, 2=verbose debug, 3=very verbose debug */
 gblApids           VARCHAR2(128) := '-1'; /* comma-separated list of apids */
 gblDecomMapTimeGPS NUMBER := -1;          /* Overrides using start/stop times and TMdecom table for decom map time(s). */
 gblForceIsInL0     NUMBER := -1;          /* -1 = not in effect, 0 = isInL0=0, 1 = isInL0=1 */
@@ -162,78 +157,87 @@ TYPE tsl_row_t IS RECORD (
     apid            NUMBER
 );
 
--- Make a type for input to replaceBindVars.
-TYPE name_value_t IS TABLE OF VARCHAR2(64) INDEX BY VARCHAR2(64);
 /* sequence column (row counter) in onTheFlyDecom_errors. 
 Represents a single unique message. Duplicate sequence entries indicate a split message*/
 gblSequence NUMBER := 1;  
 
 /*************************************************************************************************
-Procedure:  string_varray_to_csv
-
-Purpose:    Converts the string_varray datatype to a csv for use in query creation.
-
-Input:      array_in - string_varray (VARRAY(3) OF VARCHAR(200)) The array to convert.
-*************************************************************************************************/
-FUNCTION string_varray_to_csv(array_in IN string_varray)
-RETURN VARCHAR2 IS
-    l_result VARCHAR2(32767);
-BEGIN
-    IF array_in IS NOT NULL THEN
-        FOR i IN 1 .. array_in.COUNT LOOP
-            IF i > 1 THEN
-                l_result := l_result || ',';
-            END IF;
-            l_result := l_result || array_in(i);
-        END LOOP;
-    END IF;
-
-    RETURN l_result;
-END string_varray_to_csv;
-
-/*************************************************************************************************
-Procedure:  logError
+Procedure:  logOTFD
 
 Purpose:    Inserts a new row with a message to the onTheFlyDecom_errors temporary table, incrementing
-            a global counter indicating the order of events. The collateErrors function is used by 
-            selectNumericTlm to compact the errors such that identical error messages are not repeated.
+            a global counter indicating the order of events. If a log message is longer than 500 characters
+            (the current ONTHEFLYDECOM_ERRORS VARCHAR size), the message is split into multiple chunks and the 
+            sequence counter remains the same for each chunk of the message. 
 
-Input:      message - VARCHAR2 The error message to log.
-                      It should start with "ERROR ", "WARNING " or "INFO ".
+            The collateErrors function is run at the end of selectNumericTlm to compact the errors such that 
+            identical sequential error messages are not repeated.
+
+Input:      message -  VARCHAR2 The error message to log.
+
+            priority - NUMBER   How "important" the log message is. Adds a prefix to the message and filters by gblDebugLevel:
+                        0: ERROR            - Needs to be logged regardless of logging level
+                        1: WARNING          - May represent a non-fatal error or issue
+                        2: DEBUG            - Logs all actions taken, including all SQL run and most function calls made
+                        3: VERBOSE DEBUG    - Logs all SQL, function calls, etc. (critically, this includes decomFromHexString, 
+                                              which gets called for every data point, which results in extremely verbose output).
 
 Notes:
     Rows in the onTheFlyDecom_errors temporary table are of the form sequence, message, occurrences.
 *************************************************************************************************/
-PROCEDURE logError(msg VARCHAR2)
+PROCEDURE logOTFD(msg VARCHAR2, priority NUMBER)
 IS
     messageRow VARCHAR2(500);
+    messagePrefix VARCHAR2(10) := '';
     rowLength  NUMBER := 500;
     rowStart     NUMBER := 1;
 BEGIN
-    LOOP
-        EXIT WHEN rowStart >= LENGTH(msg);
+    -- Determine the appropriate prefix based on the priority
+    CASE priority
+        WHEN 0 THEN
+            messagePrefix := 'ERROR: ';
+        WHEN 1 THEN
+            messagePrefix := 'WARNING: ';
+        WHEN 2 THEN
+            messagePrefix := 'DEBUG: ';
+        WHEN 3 THEN
+            messagePrefix := 'V-DEBUG: ';
+        ELSE
+            messagePrefix := '';
+    END CASE;
+    -- Only log if the logging level is high enough to allow it
+    IF (priority <= gblDebugLevel) THEN
+        LOOP
+            EXIT WHEN rowStart >= LENGTH(msg);
 
-        messageRow := SUBSTR(msg, rowStart, rowLength);
-        rowStart := rowStart + rowLength;
-        INSERT INTO ONTHEFLYDECOM_ERRORS (sequence, message, occurrences) VALUES (gblSequence, messageRow, 1);
-    END LOOP;
-    gblSequence := gblSequence + 1;
+            -- Get the next available 490 characters and prefix the appropriate prefix.
+            messageRow := messagePrefix || SUBSTR(msg, rowStart, rowLength-10);
+            rowStart := rowStart + rowLength;
+            INSERT INTO ONTHEFLYDECOM_ERRORS (sequence, message, occurrences) VALUES (gblSequence, messageRow, 1);
+        END LOOP;
+        -- Only increase the sequence counter once per full message logged.
+        gblSequence := gblSequence + 1;
+    END IF;
 EXCEPTION
     WHEN others THEN
-        DBMS_OUTPUT.PUT_LINE('Error in logError: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
+        DBMS_OUTPUT.PUT_LINE('Error in logOTFD: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
         DBMS_OUTPUT.PUT_LINE('Attempted message logged: ' || msg);
-
-END logError;
+END logOTFD;
 
 
 /*************************************************************************************************
 Procedure:  collateErrors
 
-Purpose:    If gblDebugLevel is 0, takes the errors currently in the onTheFlyDecom_errors table and 
-            deletes errors with identical error messages, incrementing an occurrences counter to reflect
-            the number of errors. The lowest sequence is preserved, such that the order that the errors 
-            initially occurred in is preserved. This was done to the inefficiency of incrementing said
-            counter throughout runtime when displaying 80K+ errors.
+Purpose:    Takes the log output in onTheFlyDecom_errors and deletes sequential duplicate log entires,
+            updating the occurrences field to reflect the number of entires compacted. The lowest sequence 
+            number is preserved. This is run once at the end of selectNumericTlm to compact the log output
+            without losing the order of events or any log data. 
+
+    Note:   This is significantly more efficient than validating and updating the table rows at insert time
+            and has no significant performance impact during normal operations, and will only come into effect
+            when errors get logged or gblDebugLevel is set.
+
+            This procedure will NOT compact split logs any differently, and will only compact sequential split
+            log messages if both halves are identical. 
 
 Input:      None
 
@@ -242,42 +246,95 @@ Notes:
 *************************************************************************************************/
 PROCEDURE collateErrors IS
 BEGIN
-    if (gblDebugLevel = 0) THEN
-        MERGE INTO onTheFlyDecom_errors t
-        USING (
-            SELECT message, COUNT(*) AS cnt
+    logOTFD('collateErrors: gblDebugLevel=' || gblDebugLevel, 2);
+    -- First, identify the start of each sequential group of identical messages
+    -- and count how many consecutive occurrences there are
+    MERGE INTO onTheFlyDecom_errors t
+    USING (
+        -- Get the number of identical consecutive entires.
+        SELECT 
+            MIN(sequence) AS sequence,
+            message,
+            COUNT(*) AS cnt
+        FROM (
+            SELECT 
+                sequence,
+                message,
+                -- Partitions the table by message, preserving the sequence order, then gets the row number for each 
+                -- item in that partition (ROW_NUMBER() resets at the beginning of each partition). Subtracting this 
+                -- from the sequence, which is increasing each row, gives a single "group number" for each set of 
+                -- identical rows.
+                sequence - ROW_NUMBER() OVER (PARTITION BY message ORDER BY sequence) AS grp
             FROM onTheFlyDecom_errors
-            GROUP BY message
-        ) s
-        ON (t.message = s.message)
-        WHEN MATCHED THEN
-        UPDATE SET t.occurrences = s.cnt;
+        )
+        GROUP BY message, grp  -- Group by message in order to be able to have it in the select field.
+    ) s
+    -- Take the results from the above query and match them according to the following conditions.
+    ON (t.sequence = s.sequence AND t.message = s.message)
+    WHEN MATCHED THEN
+    -- On a match, update the number of occurrences.
+    UPDATE SET t.occurrences = s.cnt;
 
-        DELETE FROM onTheFlyDecom_errors t
-        WHERE sequence NOT IN (
-            SELECT MIN(sequence)
+    -- Delete all rows except the first occurrence of each sequential group
+    DELETE FROM onTheFlyDecom_errors t
+    WHERE sequence NOT IN (
+        -- Get the minimum sequence number in each message group using the same partitioning logic as 
+        -- above.
+        SELECT MIN(sequence)
+        FROM (
+            SELECT 
+                sequence,
+                message,
+                sequence - ROW_NUMBER() OVER (PARTITION BY message ORDER BY sequence) AS grp
             FROM onTheFlyDecom_errors
-            GROUP BY message
-        );
-    END IF;
+        )
+        GROUP BY message, grp
+    );
 EXCEPTION
     WHEN others THEN
-        DBMS_OUTPUT.PUT_LINE('Error in collateErrors: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
+        logOTFD('collateErrors: others exception ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
 END collateErrors;
+
+
+/*************************************************************************************************
+Procedure:  string_varrayToCSV
+
+Purpose:    Converts the string_varray datatype to a CSV for use in query creation.
+
+Input:      array_in - string_varray (VARRAY(3) OF VARCHAR(200)) The array to convert.
+*************************************************************************************************/
+FUNCTION string_varrayToCSV(array_in IN string_varray)
+RETURN VARCHAR2 IS
+    l_result VARCHAR2(32767);
+BEGIN
+    -- Unable to inline-unpack the string_varray, so logs the unpacked array once the procedure returns.
+    logOTFD('string_varrayToCSV called with array_in=<not_unpackable>', 2);
+    IF array_in IS NOT NULL THEN
+        FOR i IN 1 .. array_in.COUNT LOOP
+            IF i > 1 THEN
+                l_result := l_result || ',';
+            END IF;
+            l_result := l_result || array_in(i);
+        END LOOP;
+    END IF;
+    logOTFD('string_varrayToCSV completed string_varray unpack, value is ' || l_result, 2);
+    RETURN l_result;
+END string_varrayToCSV;
 
 /*************************************************************************************************
 Procedure:  getVersion
 
 Purpose:    This procedure writes the version in a log message to the onTheFlyDecom_errors temporary table.
-
 *************************************************************************************************/
 PROCEDURE getVersion
 IS
     missionSpecificVersion VARCHAR2(128);
 BEGIN
+    -- Note: Steve Monk previously had issues with the truncate command, but recent testing has not been able to duplicate those issues.
+    EXECUTE IMMEDIATE 'TRUNCATE TABLE ONTHEFLYDECOM_ERRORS';
     missionSpecificVersion := onTheFlyDecomMissionSpecific.getVersion();
-    logError( 'INFO multimission version: 0.2.1');
-    logError( 'INFO mission-specific version: ' || missionSpecificVersion);
+    logOTFD( 'INFO multimission version: 0.2.2', -1);
+    logOTFD( 'INFO mission-specific version: ' || missionSpecificVersion, -1);
 END getVersion;
 
 /*************************************************************************************************
@@ -285,12 +342,13 @@ Procedure:  setOption
 
 Purpose:    This procedure sets the specified global variable to the specified value.
             Generic option variables are in this package.  Mission-specific ones are in
-	        onTheFlyDecom<mission>.pkb  Once set, an option stays in effect for the life of the
-	        database connection, unless it is set back to the default by clearOption().
+	        onTheFlyDecomMissionSpecific<mission>.pkb  Once set, an option stays in effect 
+            for the life of the database connection, unless it is set back to the default 
+            by clearOption().
 
 Input:      optionName  - String giving the name of the option, case insensitive.
             optionValue - String giving the value of the option; if the actual option is an integer,
-	                  convert it to a string first.
+	                      convert it to a string first.
 *************************************************************************************************/
 PROCEDURE setOption( optionName VARCHAR2, optionValue VARCHAR2)
 IS
@@ -299,9 +357,8 @@ IS
     optionsHelp VARCHAR2(128) := '';
 BEGIN
     -- Clear the temp table in which the errors are stored.
-    -- Don't use truncate, doesn't work;  only the last row inserted is still there upon return.
-    
-    EXECUTE IMMEDIATE 'delete from onTheFlyDecom_errors';
+    -- Note: Steve Monk previously had issues with the truncate command, but recent testing has not been able to duplicate those issues.
+    EXECUTE IMMEDIATE 'TRUNCATE TABLE ONTHEFLYDECOM_ERRORS';
     gblSequence := 1;
 
     upperCaseOptionName := UPPER( optionName);
@@ -316,22 +373,23 @@ BEGIN
     ELSIF (upperCaseOptionName = 'FORCEISINL1') THEN
         gblForceIsInL1 := TO_NUMBER(optionValue);
     ELSE
-        status := onTheFlyDecomMissionSpecific.setOption( optionName, optionValue);
-	IF (status != 1) THEN
-            logError( 'WARNING setOption: Unsupported option: ' || optionName);
-            logError( 'INFO multimission options are: DEBUGLEVEL: 0|1|2, APIDS: "xx[,yy[,zz]]" etc., ' ||
-	              'DECOMMAPTIMEGPS: nnnnnn, FORCEISINL0: 0|1, FORCEISINL1: 0|1');
+        status := onTheFlyDecomMissionSpecific.setOption(optionName, optionValue);
+        IF (status != 1) THEN
             optionsHelp := onTheFlyDecomMissionSpecific.getOptionsHelp;
-	    logError( 'INFO ' || optionsHelp);
-	END IF;
+            logOTFD('setOption: Unsupported option: ' || optionName || chr(10) || 
+                    'multimission options are: DEBUGLEVEL: 0|1|2, APIDS: "xx[,yy[,zz]]" etc., ' ||
+                    'DECOMMAPTIMEGPS: nnnnnn, FORCEISINL0: 0|1, FORCEISINL1: 0|1' || chr(10) ||
+                    'missionspecific options are: ' || optionsHelp, 0
+            );
+        END IF;
     END IF;
     RETURN;
 
     EXCEPTION
     WHEN INVALID_NUMBER THEN
-        logError('ERROR setOption: invalid number: optionName=' || optionName || ', optionValue=' || optionValue);
+        logOTFD('setOption: invalid number: optionName=' || optionName || ', optionValue=' || optionValue, 0);
     WHEN others THEN
-        logError('ERROR setOption: others exception: optionName=' || optionName || ', optionValue=' || optionValue);
+        logOTFD('setOption: others exception: optionName=' || optionName || ', optionValue=' || optionValue, 0);
 
 END setOption;
 
@@ -350,45 +408,53 @@ PROCEDURE clearOption( optionName VARCHAR2)
 IS
     upperCaseOptionName VARCHAR2(128) := '';
     status NUMBER;
+    optionsHelp VARCHAR2(128) := '';
 BEGIN
     -- Clear the temp table in which the errors are stored.
-    -- Don't use truncate, doesn't work;  only the last row inserted is still there upon return.
-    
-    EXECUTE IMMEDIATE 'delete from onTheFlyDecom_errors';
+    -- Note: Steve Monk previously had issues with the truncate command, but recent testing has not been able to duplicate those issues.
+    EXECUTE IMMEDIATE 'TRUNCATE TABLE ONTHEFLYDECOM_ERRORS';
     gblSequence := 1;
 
     upperCaseOptionName := UPPER( optionName);
-    IF    (upperCaseOptionName = 'DEBUGLEVEL') THEN
-        gblDebugLevel := 0;
-    ELSIF (upperCaseOptionName = 'APIDS') THEN
-        gblApids := '-1';
-    ELSIF (upperCaseOptionName = 'DECOMMAPTIMEGPS') THEN
-        gblDecomMapTimeGPS := -1;
-    ELSIF (upperCaseOptionName = 'FORCEISINL0') THEN
-        gblForceIsInL0 := -1;
-    ELSIF (upperCaseOptionName = 'FORCEISINL1') THEN
-        gblForceIsInL1 := -1;
-    ELSIF (upperCaseOptionName = 'ALL') THEN
-        gblDebugLevel := 0;
-        gblApids := '-1';
-        gblDecomMapTimeGPS := -1;
-        gblForceIsInL0 := -1;
-        gblForceIsInL1 := -1;
-        status := onTheFlyDecomMissionSpecific.clearOption( optionName);
-    ELSE
-        status := onTheFlyDecomMissionSpecific.clearOption( optionName);
-	IF (status != 1) THEN
-            logError( 'WARNING clearOption: Unsupported option: ' || optionName);
-	END IF;
-    END IF;
+    CASE upperCaseOptionName
+        WHEN 'APIDS' THEN
+            gblApids := '-1';
+        WHEN 'DECOMMAPTIMEGPS' THEN
+            gblDecomMapTimeGPS := -1;
+        WHEN 'FORCEISINL0' THEN
+            gblForceIsInL0 := -1;
+        WHEN 'FORCEISINL1' THEN
+            gblForceIsInL1 := -1;
+        WHEN 'ALL' THEN
+            gblDebugLevel := 0;
+            gblApids := '-1';
+            gblDecomMapTimeGPS := -1;
+            gblForceIsInL0 := -1;
+            gblForceIsInL1 := -1;
+            status := onTheFlyDecomMissionSpecific.clearOption('ALL');
+        ELSE
+            status := onTheFlyDecomMissionSpecific.clearOption( optionName);
+            IF (status != 1) THEN
+                optionsHelp := onTheFlyDecomMissionSpecific.getOptionsHelp;
+                logOTFD('clearOption: Unsupported option: ' || optionName || chr(10) || 
+                        'multimission options are: DEBUGLEVEL: 0|1|2, APIDS: "xx[,yy[,zz]]" etc., ' ||
+                        'DECOMMAPTIMEGPS: nnnnnn, FORCEISINL0: 0|1, FORCEISINL1: 0|1' || chr(10) ||
+                        'missionspecific options are: ' || optionsHelp, 0
+                );
+            END IF;
+    END CASE;
     RETURN;
 END clearOption;
 
 /*************************************************************************************************
-Function:   replaceBindVars
+Function:   prepareDebugSQL
 
-Purpose:    Replaces occurrences of a string within another string, with the provided value.
+Purpose:    Replaces occurrences of a bind variable an SQL statement with the provided value.
             Does this for all the name/values provided in the associative array input.
+            Additionally compacts the whitespace for the SQL statement for easier logging.
+            Note that if one of the inputted array bind variables is a substring of another,
+            the order of the mappings will determine which one is applied. Ensure that the first
+            mapping is for the longer string to avoid partial replacements.
 
 Example:    If query_str is: "select * from table where apid = :my_apid" and the input array
             has an element: (":my_apid","1"), then the output string is:
@@ -404,7 +470,7 @@ Input:      query_str      - Typically a query string with bind variables in it.
 Returns:    query_str with each name string in name_value_in replaced by the corresponding value string.
 
 **************************************************************************************************/
-FUNCTION replaceBindVars(
+FUNCTION prepareDebugSQL(
     query_str IN VARCHAR2,
     name_value IN name_value_t)
     RETURN VARCHAR2
@@ -412,7 +478,13 @@ IS
     name VARCHAR2(64);
     result VARCHAR2(1000);
 BEGIN
-    result := query_str;
+    -- SQL only gets logged if debug level is 2 or greater, otherwise don't bother the string processing.
+    IF(gblDebugLevel < 2) THEN
+        return '';
+    END IF;
+    -- Do not log unless V-DEBUG is set. The whole point of the procedure is to cleanup the logged output.
+    logOTFD('prepareDebugSQL: query_str=' || query_str || ', name_value=<not_unpackable>', 3);
+    result := REGEXP_REPLACE(query_str, '[[:space:]]+', ' '); -- Compacts the SQL into a single line (cleans up the log output)
     name := name_value.FIRST;
     WHILE name IS NOT NULL LOOP
         -- Replace all occurrences of name by value.
@@ -420,7 +492,13 @@ BEGIN
 	name := name_value.NEXT(name);
     END LOOP;
     return result;
-END replaceBindVars;
+    
+EXCEPTION
+    WHEN others THEN
+        logOTFD('prepareDebugSQL: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+        return query_str;  -- Return original query on error
+END prepareDebugSQL;
+
 
 /*************************************************************************************************
 Function:   decomFromHexString
@@ -453,11 +531,12 @@ Returns:    1=success, 0=failure
 
 History:
   mm/dd/yy Who  What
-  03/07/25 RS   Fixed bug with BITAND, added overflow check.
-  02/23/23 SM   Added error handling.
-  01/15/20 JH   Comment and output reformatting.
   06/07/19 SM   Initial version.
-  
+  01/15/20 JH   Comment and output reformatting.
+  02/23/23 SM   Added error handling.
+  03/07/25 RS   Fixed bug with BITAND, added overflow check.
+  11/05/25 RS   Updated logging.
+
 Notes:
   1. Decommutation:
      Decommutation means to extract bits from some location in a bit stream, and put them
@@ -484,54 +563,50 @@ IS
     nBytes INTEGER;
     mask NUMBER;
     bitIsSet BOOLEAN;
-    errMsg VARCHAR2(500) := 'decomFromHexString: Error! ';
-    message VARCHAR2(500) := '';
 BEGIN
+    -- This gets called especially often and WILL clog up debugging, so it has priority 3.
+    logOTFD('decomFromHexString: hexString_in=' || hexString_in || ', bitOffset_in=' || bitOffset_in || ', bitLength_in=' || bitLength_in || ', dataType_in=' || dataType_in, 3);
 
     -- First, the inputs are validated -----------------------------------------------------------
-
     IF hexString_in = '' THEN
-        errMsg := errMsg || 'Input hex string is empty!';
+        logOTFD('decomFromHexString: Input hex string is empty!', 0);
         return 0;
     END IF;
 
     nBytes := LENGTH( hexString_in)/2; -- Get the number of bytes in hexString_in
 
     IF MOD( LENGTH( hexString_in), 2) != 0 THEN
-        errMsg := errMsg || 'Input hex string does not have an even number of characters: ' || hexString_in;
+        logOTFD('decomFromHexString: Input hexString_in (' || hexString_in || ') does not have an even number of characters', 0);
         return 0;
     END IF;
 
     IF nBytes > 8 THEN
-        errMsg := errMsg || 'Input hex string longer than 8 bytes! nBytes = ' || nBytes;
+        logOTFD('decomFromHexString: Input nBytes(' || nBytes || ') greater than 8 bytes!', 0);
         return 0;
     END IF;
 
     IF bitOffset_in < 0 or bitOffset_in > (nBytes*8 - 1) THEN
-        errMsg := errMsg || 'Input bitOffset is invalid: ' || bitOffset_in;
+        logOTFD('decomFromHexString: Input bitOffset(' || bitOffset_in || ') is invalid', 0);
         return 0;
     END IF;
 
     IF (bitOffset_in + bitLength_in) > (nBytes*8) THEN
-        errMsg := errMsg || 'Error: Input bitOffset + bitLength (' ||
-	          bitOffset_in || ' + ' || bitLength_in || ') exceeds length of hex string: ' ||
-                  nBytes*8;
+        logOTFD('decomFromHexString: Input bitOffset(' || bitOffset_in || ') + bitLength(' || bitLength_in || ')  exceeds length of hex string(' || nBytes*8 || ')', 0);
         return 0;
     END IF;
 
-    IF (dataType_in != 'F') and (dataType_in != 'I') and (dataType_in != 'U') and 
-       (dataType_in != 'D') THEN
-        errMsg := errMsg || 'Unsupported input dataType: ' || dataType_in;
+    IF (dataType_in != 'F') and (dataType_in != 'I') and (dataType_in != 'U') and (dataType_in != 'D') THEN
+        logOTFD('decomFromHexString: Unsupported input dataType(' || dataType_in || ')', 0);
         return 0;
     END IF;
 
     IF (dataType_in = 'F') THEN
         IF (bitLength_in != 32) and (bitLength_in != 64) THEN
-            errMsg := errMsg || 'Invalid bitLength = ' || bitLength_in || ' for dataType=F';
+            logOTFD('decomFromHexString: Invalid bitLength(' || bitLength_in || ') for dataType=F', 0);
             return 0;
         END IF;
         IF bitOffset_in != 0 THEN
-            errMsg := errMsg || 'Input bitOffset must be 0 for ' || 'dataType=F';
+            logOTFD('decomFromHexString: Input bitOffset(' || bitOffset_in || ') must be 0 for dataType=F', 0);
             return 0;
         END IF;
     END IF;
@@ -545,7 +620,7 @@ BEGIN
             valueAsNumber := TO_NUMBER( UTL_RAW.CAST_TO_BINARY_FLOAT( HEXTORAW( hexString_in), 1));
    	    EXCEPTION
 	    WHEN others THEN
-	        errMsg := errMsg || 'Cannot convert bits to float';
+            logOTFD('decomFromHexString: Failed to convert bits to FLOAT', 0);
 	        return 0;
 	END;
     ELSIF dataType_in = 'F' and bitLength_in = 64 and nBytes = 8 THEN
@@ -555,7 +630,7 @@ BEGIN
             valueAsNumber := TO_NUMBER( UTL_RAW.CAST_TO_BINARY_DOUBLE( HEXTORAW( hexString_in), 1));
 	    EXCEPTION
 	    WHEN others THEN
-	        errMsg := errMsg || 'Cannot convert bits to double';
+            logOTFD('decomFromHexString: Failed to convert bits to DOUBLE', 0);
 	        return 0;
 	END;
     ELSE
@@ -568,7 +643,7 @@ BEGIN
             valueAsNumber := TO_NUMBER( hexString_in, 'XXXXXXXXXXXXXXXX');
         EXCEPTION
         WHEN others THEN
-            errMsg := errMsg || 'Cannot convert bits directly to number';
+            logOTFD('decomFromHexString: Failed to convert bits directly to NUMBER', 0);
             return 0;
         END;
         -- 'valueAsNumber' can be thought of as a 64-bit unsigned integer
@@ -610,7 +685,7 @@ BEGIN
     -- to be invalid, and are discarded.
     IF valueAsNumber > 1e125 OR valueAsNumber < -1e125 THEN
         IF gblDebugLevel > 0 THEN
-            logError('WARNING: Numeric overflow detected, dropping record with hex ' || hexString_in);
+            logOTFD('decomFromHexString: Numeric overflow detected, dropping record with hex ' || hexString_in, 1);
         END IF;
         valueAsNumber := NULL;
         return 0;
@@ -619,9 +694,6 @@ BEGIN
     -- The bits are now set correctly for an unsigned integer
     -- If dataType is signed integer, and the MSB bit is set, then we want to interpret the bits as a negative number
     -- The correct negative value is returned by the expression:  (valueAsNumber - 2^bitLength_in)
-    message := 'ValueAsNumber : ' || TO_CHAR(valueAsNumber);
-    message := message || ', Hexstring_in : ' || hexString_in;
-
     IF dataType_in = 'I' THEN
         -- Only attempt to BITAND if the value is an int, otherwise the operation may fail.
         bitIsSet := (BITAND(valueAsNumber, POWER(2,bitLength_in-1)) != 0);
@@ -634,7 +706,7 @@ BEGIN
 
     EXCEPTION
     WHEN others THEN
-        logError('ERROR decomFromHexString: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM || ' with: ' || message);
+        logOTFD('decomFromHexString: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
         return 0;
 
 END decomFromHexString;
@@ -657,7 +729,6 @@ History:
 
 Notes:
     Source: https://www.oratechinfo.co.uk/delimited_lists_to_collections.html
-
 *************************************************************************************************/
 FUNCTION CSV2NestedTable
     (p_list IN VARCHAR2)
@@ -667,15 +738,38 @@ IS
     l_comma_index  PLS_INTEGER;
     l_index        PLS_INTEGER := 1;
     l_tab          nestedTable_typ := nestedTable_typ();
+    l_element      VARCHAR2(100);
 BEGIN
+    logOTFD('CSV2NestedTable: p_list=' || p_list, 2);
+    
+    -- Validate input is not empty, whitespace, or '-1'
+    IF p_list IS NULL OR TRIM(p_list) = '' OR p_list = '-1' THEN
+        logOTFD('CSV2NestedTable: Empty or invalid input list, returning default', 2);
+        l_tab.EXTEND;
+        l_tab(1) := -1;
+        RETURN l_tab;
+    END IF;
+    
     LOOP
         l_comma_index := INSTR(l_string, ',', l_index);
         EXIT WHEN l_comma_index = 0;
         l_tab.EXTEND;
-        l_tab(l_tab.COUNT) := TO_NUMBER(SUBSTR(l_string, l_index, l_comma_index - l_index));
+        l_element := SUBSTR(l_string, l_index, l_comma_index - l_index);
+        BEGIN
+            l_tab(l_tab.COUNT) := TO_NUMBER(l_element);
+        EXCEPTION
+            WHEN VALUE_ERROR OR INVALID_NUMBER THEN
+                logOTFD('CSV2NestedTable: Failed to convert element "' || l_element || '" to number', 0);
+                CONTINUE;
+        END;
         l_index := l_comma_index + 1;
     END LOOP;
     RETURN l_tab;
+    
+EXCEPTION
+    WHEN others THEN
+        logOTFD('CSV2NestedTable: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+        RETURN nestedTable_typ(-1);
 END CSV2NestedTable;
 
 /*************************************************************************************************
@@ -706,6 +800,12 @@ PROCEDURE narrowStartStopTimes(
     queryStopTime  OUT NUMBER)
 IS
 BEGIN
+    logOTFD('narrowStartStopTimes: startTime=' || startTime ||
+            ', stopTime=' || stopTime ||
+            ', TSLStartTime=' || TSLStartTime ||
+            ', TSLStopTime=' || TSLStopTime, 2
+    );
+
     IF (TSLStartTime = -1) THEN
         queryStartTime := startTime;
     ELSIF (TSLStartTime > startTime) THEN
@@ -728,23 +828,28 @@ END narrowStartStopTimes;
 PROCEDURE: queryL0
 
 Purpose:    Does on-the-fly decom for one telemetry item over a time-range, with a single decom record.
-            1.  Queries the L0_Packets table's 'packet' column (a BLOB), which contains the raw packet,
-                and extracts the range of hex characters (using Oracle built-in rawtohex) containing the
-	            desired telemetry item.
-            2.  Decommutates the hex data into a numeric type, using the offset, length and data type
-	            from the decom record.
-	        3.  Formats a row using SCT, ERT, ASCT and Value, and writes it to the global temporary table.
+            The steps involved in retrieving and decomming are as follows:
+                1. Generate the SQL for the appropriate L0 query
+                    - The generated query selects all relevant packets in L0_Packets, extracting a range of hexadecimal characters
+                    using Oracle's built-in 'rawtohex' function.
+                2. Open a cursor for the query (Note: This does not query the data, data is only queried in the next step)
+                3. BULK COLLECT the data into a buffer table in memory up to a maximum of n_batch_rows rows
+                4. Loop through all rows and collect SCT, ERT, ASCT, and the decommuted value into temporary arrays
+                    - Decommutates the hex data into an oracle NUMBER datatype, using the offset (a bit shift off the hex range)
+                    length, and data type. (decomFromHexString).
+                5. Use a FOREACH loop to insert all of the decommuted data into ONTHEFLYDECOM_RESULTS table as a bulk INSERT.
+
 Inputs:
    
-    decomMap     - PL/SQL table based record containing one row from the TMDecom table.
-    startERT_in  - Starting earth received time in GPS microseconds.  -1 if not used.
-    stopERT_in   - Stopping earth received time in GPS microseconds.  -1 if not used.
-    startSCT_in  - Starting spacecraft in GPS microseconds.    -1 if not used.
-    stopSCT_in   - Stopping spacecraft in GPS microseconds.    -1 if not used.
-    startASCT_in - Starting adjusted spacecraft time in GPS microseconds.  -1 if not used.
-    stopASCT_in  - Stopping adjusted spacecraft time in GPS microseconds.  -1 if not used.
-    doInclusiveQuery - true = include stop time, false = don't include stop time
-    definitionColumn - Column that is being scanned along with decom maps. (0: SCT, 1: ERT, 2: ASCT)
+    decomMap            - PL/SQL table based record containing one row from the TMDecom table.
+    startERT_in         - Starting earth received time in GPS microseconds.         -1 if not used.
+    stopERT_in          - Stopping earth received time in GPS microseconds.         -1 if not used.
+    startSCT_in         - Starting spacecraft in GPS microseconds.                  -1 if not used.
+    stopSCT_in          - Stopping spacecraft in GPS microseconds.                  -1 if not used.
+    startASCT_in        - Starting adjusted spacecraft time in GPS microseconds.    -1 if not used.
+    stopASCT_in         - Stopping adjusted spacecraft time in GPS microseconds.    -1 if not used.
+    doInclusiveQuery    - true = include stop time, false = don't include stop time
+    definitionColumn    - Column that is being scanned along with decom maps.       (0: SCT, 1: ERT, 2: ASCT)
 *************************************************************************************************/
 PROCEDURE queryL0
     (decomMap IN tmdecom_row_t,
@@ -771,33 +876,37 @@ IS
                         -- 'U' = unsigned integer
                         -- 'I' = signed integer
                         -- 'D' = discrete, output as an unsigned integer (no negative states!)
+    
+    -- Used to stitch together the query for L0_PACKETS.
+    exeString        VARCHAR2(1000);
+    exeStringPart1   VARCHAR2(500);
+    exeStringPart2   VARCHAR2(500);
 
+    -- Is set based on if doInclusiveQuery is set. True: <=, False: <
+    booleanOpString  VARCHAR2(10);
+
+    name_value name_value_t;    -- Mapping of name to value for each of the bind variables in the query.
+    monitor_value VARCHAR2(20); -- This string is set to inject the monitor flag into SQL queries made.
+    status NUMBER;              -- Temp variable for status checks
+
+    -- Number of rows per BULK COLLECT
     n_batch_rows CONSTANT NUMBER := 100;
 
-    -- row structure returned by the query for times and hex string from the L0_Packets table.
+    -- Row structure returned by the query for times and hex string from the L0_Packets table.
     TYPE result_row_t IS RECORD( SCT NUMBER(16),
                                  ERT NUMBER(16),
                                  ASCT NUMBER(16),
                                  hexString VARCHAR(16));
 
-    -- Temp variable for holding each row as it is decommed.
+    -- PL/SQL table to hold the L0_Packets query results before decomming.
     row result_row_t;
-    -- PL/SQL table of these rows.
     TYPE result_table_t IS TABLE OF result_row_t INDEX BY PLS_INTEGER;
     result_table result_table_t;
 
-    -- array of numeric values, the results of decomming from hex strings
-    TYPE value_arr_t IS VARRAY(n_batch_rows) OF NUMBER;
-    value_arr value_arr_t := value_arr_t();
-
-    -- arrays for SCT, ERT, and ASCT
-    ert_arr value_arr_t := value_arr_t();
-    sct_arr value_arr_t := value_arr_t();
-    asct_arr value_arr_t := value_arr_t();
-
-    -- the cursor for the query for times and hex string from L0_Packets.
+    -- Cursor for the L0_Packets query.
     c curType;
 
+    -- Temporary variables used to hold values during runtime
     hexString VARCHAR2(16);
     i NUMBER;
     byteOffset NUMBER;
@@ -807,47 +916,52 @@ IS
     nBytes NUMBER;
     nHexChars NUMBER;
     valueAsNumber NUMBER;
-    SCT NUMBER;
-    ERT NUMBER;
-    nRows NUMBER := 0;
-    nValues NUMBER := 0;
-    status NUMBER;
-    debugString      VARCHAR2(1000);
-    exeString        VARCHAR2(1000);
-    exeStringPart1   VARCHAR2(500);
-    exeStringPart2   VARCHAR2(500);
-    booleanOpString  VARCHAR2(10);
-    name_value name_value_t;
-    decom_error EXCEPTION;
 
-    decom_identifier VARCHAR2(10); -- Designates whether APID or DMID is being used for queries
+    -- Arrays for SCT, ERT, ASCT, and decommed values. These are populated once each BULK COLLECT
+    -- and inserted in a single context switch.
+    TYPE value_arr_t IS VARRAY(n_batch_rows) OF NUMBER;
+    value_arr value_arr_t := value_arr_t();
+    ert_arr value_arr_t := value_arr_t();
+    sct_arr value_arr_t := value_arr_t();
+    asct_arr value_arr_t := value_arr_t();
 
-    select_time_columns string_varray; -- Currently supports a maximum of 4 columns to select by. SCT, ERT, ASCT.
+    -- Summary Statistics
+    nRows NUMBER := 0;          -- # of rows successfully inserted
+    nValues NUMBER := 0;        -- # of values returned for each BULK COLLECT
+    nFailedDecom NUMBER := 0;   -- # of failed decommutations
+
+    -- Determines what columns get retrieved from L0 and what placeholder to use if they are not present. 
+    -- Expects to get them in the order SCT, ERT, ASCT.
+    select_time_columns string_varray; -- Note: string_varray is a custom datatype that supports a max of 3 items.
     select_time_columns_string VARCHAR2(200);
-
     sct_time_column VARCHAR2(20);
     ert_time_column VARCHAR2(20);
     asct_time_column VARCHAR2(20);
 
-    where_clauses string_varray; 
-    where_clause_index NUMBER := 1;  -- VARRAY indexing starts at 1
-
-    monitor_value VARCHAR2(20); -- This string is set to inject the monitor flag into SQL queries made.
+    decom_identifier VARCHAR2(10); -- Designates whether APID or DMID is being used for queries
 BEGIN
+    logOTFD('queryL0: tmdecom_row_t=<not_unpackable>, startSCT_in=' || startSCT_in || 
+            ', stopSCT_in=' || stopSCT_in || 
+            ', startERT_in=' || startERT_in || 
+            ', stopERT_in=' || stopERT_in || 
+            ', startASCT_in=' || startASCT_in || 
+            ', stopASCT_in=' || stopASCT_in, 2
+    );
+
     -- Get the table name
     tableName := onTheFlyDecomMissionSpecific.getTableName(0, decomMap.systemId);
 
     -- Get the mapping of time columns onto SCT, ERT, and ASCT. This varies mission-to-mission, as column names may vary 
     -- or not exist at all. If a column is not queryable, a 'null AS column_name' is expected, and querying by that column 
-    -- will fail before this point.
+    -- will fail before queryL0 is called.
     select_time_columns := onTheFlyDecomMissionSpecific.getTimeColumnsL0;
-    select_time_columns_string := string_varray_to_csv(select_time_columns);
+    select_time_columns_string := string_varrayToCSV(select_time_columns);
 
     sct_time_column := select_time_columns(1);
     ert_time_column := select_time_columns(2);
     asct_time_column := select_time_columns(3);
 
-    -- Determine if dmid or apid are being used to identify the packets
+    -- Determine if dmid or apid are being used to identify the packet structure
     decom_identifier := ONTHEFLYDECOMMISSIONSPECIFIC.getDecomIdentifier;
 
     apid      := decomMap.apid;
@@ -865,17 +979,11 @@ BEGIN
     byteOffset := byteOffset + 1;  -- starts with 1 for dbms_lob.substr()
     
     IF (gblDebugLevel >= 1) THEN
-	-- Make an associative array to tell replaceBindVars the variable names to replace with actual values
-        -- in the query.  This is for a debug string.
+        -- Make an associative array to tell prepareDebugSQL the variable names to replace with actual values
+        -- in the query. This is used only for debugging
         name_value := name_value_t( ':nBytes'      => TO_CHAR(nBytes),
                                     ':byteOffset'  => TO_CHAR(byteOffset),
-                                    ':apid'        => TO_CHAR(apid),
-                                    ':startERT_in' => TO_CHAR(startERT_in),
-                                    ':stopERT_in'  => TO_CHAR(stopERT_in),
-                                    ':startSCT_in' => TO_CHAR(startSCT_in),
-                                    ':stopSCT_in'  => TO_CHAR(stopSCT_in),
-                                    ':startASCT_in' => TO_CHAR(startASCT_in),
-                                    ':stopASCT_in'  => TO_CHAR(stopASCT_in));
+                                    ':apid'        => TO_CHAR(apid));
         
         monitor_value := ' /*+ monitor */ ';
     END IF;
@@ -888,7 +996,6 @@ BEGIN
     --                from L0_Packets_SID1 where apid=120 and SCT_VTCW >= 1396656018000000 and
     --                SCT_VTCW <= 1397520018000000 length >= 85 order by ERT, SCT_VTCW
     -- We found that the parallel flag has no noticeable impact on queries we expect to see, and as such has been removed.
-
 
     -- The following determines if the end point of the time query is included or not.
     -- Only the last of a series of abutted queries uses inclusive, the others are exclusive.
@@ -906,8 +1013,8 @@ BEGIN
     exeStringPart2 := 'length >= (:byteOffset-1 + :nBytes)';
 
     -- I am forgoing bind variables currently due to how many permutations of queries are possible 
-    -- (6 different queries, and 3 possible definitionColumn values), which makes using bind variables effectively 
-    -- difficult. After testing with TMAverage, performance is not impacted by this change.
+    -- (6 permutations of timestamps, and 3 possible definitionColumn values), which makes using bind variables verbose
+    -- and confusing. Testing indicates that this implementation does not significantly reduce performance.
     CASE definitionColumn
         WHEN 0 THEN
             exeStringPart2 := exeStringPart2 || ' AND ' || sct_time_column || ' >= ' || startSCT_in ||' AND ' || sct_time_column || booleanOpString || stopSCT_in;
@@ -937,18 +1044,11 @@ BEGIN
 
     -- Add anything mission-specific to the query.
     onTheFlyDecomMissionSpecific.addToL0Query( exeStringPart1, decomMap.systemId);
-
     exeString := exeStringPart1 || exeStringPart2;
 
-    -- If this version of OTFD will be made compatible with IXPE, EMA, etc., it might be useful to wrap the base query as follows. This would 
-    -- allow for standard column names using aliases while still being able to reference the aliases in the where clause. This appears to have 
-    -- little impact on performance.
-    -- exeString := 'SELECT * FROM (' || exeString || ') inner_table WHERE ASCT >= :startASCT_in AND ASCT ' || booleanOpString || ' :stopASCT_in';
-
-    -- Log the composed query if debug level is high enough
-    IF (gblDebugLevel >= 1) THEN        
-        -- debugString := replaceBindVars( exeString, name_value);
-        logError('INFO debugString=' || exeString);
+    -- Replace the bind variables and log the finished query if debug level is high enough
+    IF (gblDebugLevel >= 2) THEN
+        logOTFD('queryL0: ' || prepareDebugSQL(exeString, name_value), 2);
     END IF;
 
     open c for exeString using nBytes, byteOffset, apid, byteOffset, nBytes;
@@ -985,11 +1085,14 @@ BEGIN
                 sct_arr(nValues)   := row.SCT;
                 asct_arr(nValues)   := row.ASCT;
             ELSIF (valueAsNumber IS NULL) THEN
-                CONTINUE; -- Ignore any null values, which are a result of near-infinite values/invalid floating point values.
+                -- Ignore any null values, which are a result of near-infinite values/invalid floating point values.
+                -- The selectNumericTlm function will log an appropriate warning. This is not a failure of OTFD, and replicates
+                -- the behavior of ingestion into L1 tables.
+                CONTINUE;
 	        ELSE
-		        debugString := 'Error occurred with apid=' || TO_CHAR(apid) || ', offset=' || TO_CHAR(byteOffset) ||
-		               ':' || TO_CHAR(bitOffsetInSubstring) || ', dataType=' || dataType;
-	            logError( 'INFO ' || debugString);
+	            logOTFD('queryL0: ' || 'Error occurred with apid=' || TO_CHAR(apid) || ', offset=' || TO_CHAR(byteOffset) ||
+		               ':' || TO_CHAR(bitOffsetInSubstring) || ', dataType=' || dataType, 0);
+	            nFailedDecom := nFailedDecom + 1;
 	        END IF;
         END LOOP;
 
@@ -1002,22 +1105,20 @@ BEGIN
             INSERT INTO onTheFlyDecom_results (SCT, ERT, ASCT, VALUE) VALUES (sct_arr(indx), ert_arr(indx), asct_arr(indx), value_arr(indx));
         
         nRows := nRows + nValues; -- Increment the row counter 
-    END LOOP;
+    END LOOP;    
+    CLOSE c;
 
-    IF (gblDebugLevel >= 1) THEN
-        debugString := 'queryL0: inserted ' || nRows || ' rows into onTheFlyDecom_results table.';
-        logError( 'INFO ' || debugString);
+    logOTFD('queryL0: inserted ' || nRows || ' rows into onTheFlyDecom_results table.', 2);
+    
+    IF nFailedDecom > 0 THEN
+        logOTFD('queryL0: ' || nFailedDecom || ' decommutations failed or returned invalid values', 0);
     END IF;
 
-    CLOSE c;
     RETURN;
 
     EXCEPTION
-    WHEN decom_error THEN
-        logError('ERROR queryL0: No provided ERT or SCT time range');
-        RETURN;
     WHEN others THEN
-        logError('ERROR queryL0: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
+        logOTFD('queryL0: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
         RETURN;
 END queryL0;
 
@@ -1026,31 +1127,30 @@ END queryL0;
 /*************************************************************************************************
 Procedure:  queryL1
 
-Purpose:   Queries the appropriate L1 table (TManalog or TMdiscrete) for the L1 data, and
-           inserts the data into the temporary table.
-           The end points of the time range are included.
+Purpose:    Queries the appropriate L1 table (TManalog or TMdiscrete) for the L1 data, and
+            inserts the data into the temporary table.
+            The steps involved in retrieving the data are as follows:
+                1. Determine what table to query based on data type and mission-specific table names.
+                2. Use the passed definitionColumn parameter to to narrow the start and stop times to 
+                   the TSL start and stop times, as well as determine which column to apply doInclusiveQuery
+                   to.
+                3. Run the INSERT INTO - SELECT query to return the results to onTheFlyDecom_results.
 
 Inputs:    These are mostly the same inputs as selectNumericTlm.
-           start/stop times which are -1 are not used
-    systemId_in       - NUMBER SID or schemaId, depending on mission.     
-    tlmId_in          - NUMBER Same as TMID.       
-    startERT_in       - NUMBER Starting earth received time in GPS microseconds.
-    stopERT_in        - NUMBER Stopping earth received time in GPS microseconds.  
-    startSCT_in       - NUMBER Starting spacecraft time in GPS microseconds.   
-    stopSCT_in        - NUMBER Stopping spacecraft time in GPS microseconds.   
-    startASCT_in - Starting adjusted spacecraft time in GPS microseconds.  -1 if not used.
-    stopASCT_in  - Stopping adjusted spacecraft time in GPS microseconds.  -1 if not used.
-    TSLRowStartTime   - NUMBER TelemetryStorageLocation start time
-    TSLRowStopTime    - NUMBER TelemetryStorageLocation stop time
-    dataType          - VARCHAR
-    doInclusiveQuery  - BOOLEAN
-    definitionColumn - Column that is being scanned along with decom maps. (0: SCT, 1: ERT, 2: ASCT)
-    
-    When called from within the TSL loop, TSLRowStart/StopTimes are passed in, and dealt with
-    by the logic.  When there is no TSL loop (no TSL row), set TSLRowStart/StopTimes to -1's.
-    
-Outputs: None
 
+    systemId_in         - NUMBER SID or schemaId, depending on mission.     
+    tlmId_in            - NUMBER Same as TMID.       
+    startERT_in         - NUMBER Starting earth received time in GPS microseconds.      -1 if not used.
+    stopERT_in          - NUMBER Stopping earth received time in GPS microseconds.      -1 if not used.
+    startSCT_in         - NUMBER Starting spacecraft time in GPS microseconds.          -1 if not used.
+    stopSCT_in          - NUMBER Stopping spacecraft time in GPS microseconds.          -1 if not used.
+    startASCT_in        - NUMBER Starting adjusted spacecraft time in GPS microseconds. -1 if not used.
+    stopASCT_in         - NUMBER Stopping adjusted spacecraft time in GPS microseconds. -1 if not used.
+    TSLRowStartTime     - NUMBER TelemetryStorageLocation start time
+    TSLRowStopTime      - NUMBER TelemetryStorageLocation stop time
+    dataType            - VARCHAR
+    doInclusiveQuery    - BOOLEAN
+    definitionColumn    - Column that is being scanned along with decom maps. (0: SCT, 1: ERT, 2: ASCT)
 *************************************************************************************************/
 PROCEDURE queryL1
     (systemId_in IN NUMBER,
@@ -1068,28 +1168,42 @@ PROCEDURE queryL1
     definitionColumn IN NUMBER)  -- Column to apply doInclusiveQuery on, as well as the column to narrow to TSL record.
 IS
     exeString VARCHAR2(500); -- This string contains sql commands to be executed
-    debugString VARCHAR2(500);
-    tableName VARCHAR2(200);
-    name_value name_value_t;
+    tableName VARCHAR2(200); -- Name of the L1 table. This varies between missions and is pulled from the mission-specific code.
+    name_value name_value_t; -- Mapping of bind variable names to values for debug output.
 
+    -- Is set based on if doInclusiveQuery is set. True: <=, False: <
     booleanOpString VARCHAR(2);
 
     -- Contain the bounds for the definition column.
     queryStart NUMBER;
     queryStop NUMBER; 
 
-    countBefore NUMBER;
-    countAfter NUMBER;
-
-    select_time_columns string_varray;
+    -- Determines what columns get retrieved from L0 and what placeholder to use if they are not present. 
+    -- Expects to get them in the order SCT, ERT, ASCT.
+    select_time_columns string_varray; -- Note: string_varray is a custom datatype that supports a max of 3 items.
     select_time_columns_string VARCHAR2(200);
-
     sct_time_column VARCHAR2(20);
     ert_time_column VARCHAR2(20);
     asct_time_column VARCHAR2(20);
 
+    -- Contains either a monitor flag or an empty string based on debug level.
     monitor_value VARCHAR2(20); 
 BEGIN
+    logOTFD('queryL1: systemId_in=' || systemId_in || 
+            ', tlmId_in=' || tlmId_in ||
+            ', startERT_in=' || startERT_in || 
+            ', stopERT_in=' || stopERT_in ||
+            ', startSCT_in=' || startSCT_in || 
+            ', stopSCT_in=' || stopSCT_in ||
+            ', startASCT_in=' || startASCT_in || 
+            ', stopASCT_in=' || stopASCT_in ||
+            ', TSLRowStartTime=' || TSLRowStartTime ||
+            ', TSLRowStopTime=' || TSLRowStopTime ||
+            ', dataType=' || dataType ||
+            ', doInclusiveQuery=' || sys.diutil.bool_to_int(doInclusiveQuery) ||
+            ', definitionColumn=' || definitionColumn, 2
+    );
+
     IF (datatype != 'D') THEN
         -- Query TManalog
         tableName := onTheFlyDecomMissionSpecific.getTableName(1, systemId_in);
@@ -1102,23 +1216,23 @@ BEGIN
     END IF;
 
     IF (gblDebugLevel >= 1) THEN
-	-- Make an associative array to tell replaceBindVars the variable names to replace with actual values
+        -- Make an associative array to tell prepareDebugSQL the variable names to replace with actual values
         -- in the query.  This is for a debug string.  Query start/stop times are added later.
-        name_value := name_value_t( ':tlmId_in' => TO_CHAR(tlmId_in));
+        name_value := name_value_t( ':tlmId_in' => TO_CHAR(tlmId_in));  -- This is the only bind var in use currently. Everything else is string-concatenated in.
 
         monitor_value := ' /*+ monitor */ ';
     END IF;		
 
     select_time_columns := onTheFlyDecomMissionSpecific.getTimeColumnsL1;
-    select_time_columns_string := string_varray_to_csv(select_time_columns);
+    select_time_columns_string := string_varrayToCSV(select_time_columns);
 
     sct_time_column := select_time_columns(1);
     ert_time_column := select_time_columns(2);
     asct_time_column := select_time_columns(3);    
 
     -- Define the invariant part of the query.
-    exeString := 'INSERT INTO onTheFlyDecom_results (SCT, ERT, ASCT, Value) ' ||
-                 'SELECT ' || monitor_value || select_time_columns_string || ', Value from ' || tableName ||
+    exeString := ' INSERT INTO onTheFlyDecom_results (SCT, ERT, ASCT, Value) ' ||
+                 ' SELECT ' || monitor_value || select_time_columns_string || ', Value from ' || tableName ||
 		         ' WHERE TMID = :tlmId_in';
 
     IF doInclusiveQuery THEN
@@ -1126,9 +1240,6 @@ BEGIN
     ELSE
         booleanOpString := '<';
     END IF;
-
-    -- Note: I'm testing forgoing bind variables for this part, as there are many possible inputs, and the which values need to be 
-    --       queried by will vary significantly.
 
     -- Narrow by the definition column used for TSL fetch, and query by the rest if provided.
     CASE definitionColumn
@@ -1164,206 +1275,218 @@ BEGIN
     -- Add anything mission-specific to the query, such as testId or tlmFileName.
     onTheFlyDecomMissionSpecific.addToL1Query(exeString, systemId_in);
 
-    IF (gblDebugLevel >= 1) THEN
-        logError( 'INFO ' || exeString);
-        logError( 'INFO startASCT_in='||startASCT_in||', stopASCT_in'||stopASCT_in);
-        logError( 'INFO TSLRowStartTime='||TSLRowStartTime||', TSLRowStopTime='||TSLRowStopTime);
-    END IF;
+    logOTFD('queryL1: ' || prepareDebugSQL(exeString, name_value), 2);
 
     -- Insert the values.
     EXECUTE IMMEDIATE exeString USING IN tlmId_in;
 
-    IF (gblDebugLevel >= 1) THEN
-        logError( 'INFO queryL1: inserted ' || sql%Rowcount || ' rows into onTheFlyDecom_results table.');
+    logOTFD('queryL1: inserted ' || sql%Rowcount || ' rows into onTheFlyDecom_results table.', 2);
+    
+    -- Warn if no rows were returned
+    IF sql%Rowcount = 0 THEN
+        logOTFD('queryL1: Warning - Query returned 0 rows for tlmId=' || tlmId_in || 
+                ', systemId=' || systemId_in || 
+                ', queryStart=' || queryStart || 
+                ', queryStop=' || queryStop, 1);
     END IF;
     
     RETURN;
     
+EXCEPTION
+    WHEN others THEN
+        logOTFD('queryL1: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM || 
+                ' for tlmId=' || tlmId_in || ', systemId=' || systemId_in, 0);
+        RETURN;
 END queryL1;
-
 
 
 /*************************************************************************************************
 Procedure:  selectNumericTlm  
 
-Purpose:    Gets requested data from either the L0 table, L1 table, or both. 
-            Stores this data into a temporary table.
+Purpose:    Primary end-user interface for onTheFlyDecom. Gets requested data from either the L0 table,
+            the L1 table, or both, depending on the entries in TSL and TMDecom. Stores this data into 
+            onTheFlyDecom_results.
 
 Inputs:      
     systemId_in     - NUMBER SID or schemaId, depending on mission.     
     tlmId_in        - NUMBER Same as TMID.       
-    startERT_in   - NUMBER GPS timestamp for start of query. Specific column is mission-defined. Typically ERT.
-    stopERT_in    - NUMBER GPS timestamp for end of query. Specific column is mission-defined. Typically ERT.
-    startSCT_in   - NUMBER GPS timestamp for start of query. Specific column is mission-defined. Typically SCT.  
-    stopSCT_in    - NUMBER GPS timestamp for end of query. Specific column is mission-defined. Typically SCT.  
-    startASCT_in - Starting adjusted spacecraft time in GPS microseconds.  -1 if not used.
-    stopASCT_in  - Stopping adjusted spacecraft time in GPS microseconds.  -1 if not used.
-
-Outputs: 
-    Returns a string of the format: 
-    '<Number of rows written>, <Error message 1>\n <Error message two>\n...'
+    startERT_in     - NUMBER Starting earth received time in GPS microseconds.      -1 if not used.
+    stopERT_in      - NUMBER Stopping earth received time in GPS microseconds.      -1 if not used.
+    startSCT_in     - NUMBER Starting spacecraft time in GPS microseconds.          -1 if not used.
+    stopSCT_in      - NUMBER Stopping spacecraft time in GPS microseconds.          -1 if not used.
+    startASCT_in    - NUMBER Starting adjusted spacecraft time in GPS microseconds. -1 if not used.
+    stopASCT_in     - NUMBER Stopping adjusted spacecraft time in GPS microseconds. -1 if not used.
 
 Notes:
-  1. Input Times:
-     ERT time, SCT time, or both can be used to specify the time range of the desired telemetry..
-     If the user specifies a testId, the input times are ignored, and the testId is translated
-     into ERT start and stop times.
+    1. Input Times:
+        Any combination of ERT time, SCT time, or ASCT time can be used to query OTFD, depending on
+        mission-specific compatibility requirements. Some mission-specific options can allow for queries
+        to be performed on other parameters, such as testId and filename.
   2. Algorithm:
-     A. Initialization
-          Sets desired time ranges and sets up apid_list_in
-     B. Gets all the rows from TelemetryStorageLocation which contain the user's ERT range
-        (or SCT range, if only a SCT range was specified).
-          First main block, queries the TSL table for rows in the desired time range
-     C. Loops through and processes the TelemetryStorageLocation rows
-          First main loop, everything after this will happen for one processed row 
-          in the TSL table.
-     D. Gets the decom map(s) for this tlmId and time-range of the TSL row
-          Second main block, gets all TMdecom rows that have the same apid as the TSL row
-          and is in the time range.
-     E. If isInL1, does query for data, using dataType from first TMdecom row, continues to
-        next TSL row, and skips F.
-     F. Otherwise (inInL0) loops through the decom map(s) for this tlmId, calls queryL0 for each one.
-        Note: this is written assuming TMDecom does not have any near duplicate records, which could
-	plausibly be present just to record a new version.  If we decide to include such records,
-	would have to change this code to look ahead, detect near duplicates, and adjust start/stop
-	times accordingly.
+    A. Initialization
+        Clear Global Temporary Tables, determine what time range to use to query TelemetryStorageLocation 
+        and TMDecom, get datatype for TLMID, and parse the 'APID' optional parameter if set.
+    
+    B. Get TelemetryStorageLocation rows and process them
+        Using the results from getDefinitionStartStopTimes, retrieve all relevant TSL rows. If none are
+        returned, call queryL1 as a fallback.
+        Iterate through each row, determining what time range each is valid for, and retrieve
+        the relevant TMDecom rows if applicable. If the row indicates the data is located in an L1 table, 
+        call queryL1.
+
+    C. Get TMDecom rows and process them
+        After getting all relevant TMDecom rows for a given TSL entry, iterate through each, determine
+        the effective time range, and call queryL0 for each.
 
 *************************************************************************************************/
 PROCEDURE selectNumericTlm
     (systemId_in IN NUMBER,
     tlmId_in IN NUMBER,
-    startSCT_in IN NUMBER,
-    stopSCT_in IN NUMBER,
-    startERT_in IN NUMBER,
-    stopERT_in IN NUMBER,
-    startASCT_in IN NUMBER,
-    stopASCT_in IN NUMBER)
+    startERT_in IN NUMBER DEFAULT -1,
+    stopERT_in IN NUMBER DEFAULT -1,
+    startSCT_in IN NUMBER DEFAULT -1,
+    stopSCT_in IN NUMBER DEFAULT -1,
+    startASCT_in IN NUMBER DEFAULT -1,
+    stopASCT_in IN NUMBER DEFAULT -1
+    )
 IS
-    exeString VARCHAR2(500);    -- This string contains sql commands to be executed
+    -- Determined from the query input, is based on what time column to use to query TSL and TMDecom
+    -- EMA uses ASCT as the timestamp for their column, while most other missions use ERT with SCT as 
+    -- a fallback.
     definitionStartTime NUMBER;
     definitionStopTime NUMBER;
-    definitionColumn NUMBER;
+    definitionColumn NUMBER;    -- 1: SCT, 2: ERT, 3: ASCT
+
+    -- An array of APIDs set by the gblAPIDs flag.
     apidArray nestedTable_typ;
-    time_error EXCEPTION;
+    -- Custom exception if mission-specific code is unable to determine the correct definition time column.
+    -- or if user did not input a required time field.
     definition_error EXCEPTION;
+    -- Datatype of the TLMID. Supported: U, I, F, D
     dataType VARCHAR2(1);
+    -- Temp variable to get returned status of helper functions
     status NUMBER;
 
+    -- Cursors for TMDecom and TelemetryStorageLocation queries.
     tmd_cursor curType;
     tsl_cursor curType;
 BEGIN 
+    logOTFD('selectNumericTlm: systemId_in=' || systemId_in || 
+            ', tlmId_in=' || tlmId_in || 
+            ', startSCT_in=' || startSCT_in || 
+            ', stopSCT_in=' || stopSCT_in || 
+            ', startERT_in=' || startERT_in || 
+            ', stopERT_in=' || stopERT_in || 
+            ', startASCT_in=' || startASCT_in || 
+            ', stopASCT_in=' || stopASCT_in, 2
+    );
+    -- A: Initialize procedure: Clear tables, validate inputs, handle APID logic.
 
-    -- STEP A: Initialization --------------------------------------------------------------------
-
-    -- Clear the temp tables in which the results and errors are stored.
-    -- TODO: Determine if the below comment is correct. My testing indicates it may not be correct.
-    --       Using TRUNCATE should be significantly faster than using DELETE FROM.
-    -- Previous comment:
-    --       Don't use truncate, doesn't work;  only the last row inserted is still there upon return.
-
-    -- EXECUTE IMMEDIATE 'TRUNCATE TABLE EMA_MISC.onTheFlyDecom_results';
-    -- EXECUTE IMMEDIATE 'TRUNCATE TABLE EMA_MISC.ONTHEFLYDECOM_ERRORS';
-    EXECUTE IMMEDIATE 'DELETE FROM ONTHEFLYDECOM_RESULTS';
-    EXECUTE IMMEDIATE 'DELETE FROM ONTHEFLYDECOM_ERRORS';
+    -- Note: Steve Monk previously had issues with the truncate command, but recent testing has not been able to duplicate those issues.
+    EXECUTE IMMEDIATE 'TRUNCATE TABLE onTheFlyDecom_results';
+    EXECUTE IMMEDIATE 'TRUNCATE TABLE onTheFlyDecom_errors';
     gblSequence := 1;
     
-    -- In case we return early with an error, create a cursor to read the empty results table.
-    -- Later if the data needs to be sorted, we'll re-create it with a sort clause.
+    -- Determines which field to use for the time range, and returns which column to iterate over for
+    -- TelemetryStorageLocation and TMDecom rows. This is typically the ERT range of the query, but 
+    -- may also be an SCT range or altered by options such as testID. 
+    status := onTheFlyDecomMissionSpecific.getDefinitionStartStopTimes( 
+        systemId_in,
+        startSCT_in, stopSCT_in,
+        startERT_in, stopERT_in,
+        startASCT_in, stopASCT_in,
 
-    -- Set the time range for the queries to TelemetryStorageLocation and TMdecom.
-    -- Usually this is the ERT range of the queries.
-    -- For EMM it may be the ERT range of a test, if no ERT range was input, but a testId was input.
-    -- It may also be a SCT range, for flight data where SCT is commensurate with ERT.
+        definitionStartTime,
+        definitionStopTime,
+        definitionColumn
+    );
 
-    status := onTheFlyDecomMissionSpecific.getDefinitionStartStopTimes( systemId_in,
-	                                                                    startSCT_in, stopSCT_in,
-                                                                        startERT_in, stopERT_in,
-                                                                        startASCT_in, stopASCT_in,
-
-                                                                        definitionStartTime,
-									                                    definitionStopTime,
-                                                                        definitionColumn);
     IF (status != 1) THEN
         raise definition_error;
     END IF;
+    
+    logOTFD('selectNumericTlm: definitionStartTime=' || definitionStartTime || 
+            ', definitionStopTime=' || definitionStopTime || 
+            ', definitionColumn=' || definitionColumn, 2);
 
     IF (gblDecomMapTimeGPS != -1) THEN
-        logError( 'INFO gblDecomMapTimeGPS = ' || TO_CHAR( gblDecomMapTimeGPS));
+        logOTFD( 'selectNumericTlm: gblDecomMapTimeGPS = ' || TO_CHAR( gblDecomMapTimeGPS), 2);
     END IF;
 
     -- Initialize apidArray
     apidArray := CSV2NestedTable( gblApids);
 
-    -- STEP B: Get all the TelemetryStorageLocation rows which overlap the time range found above  -------
+    -- Determine the datatype and check validity. This is static. 
+    EXECUTE IMMEDIATE 'SELECT dataType from TelemetryItemDefinition WHERE tlmId = ' || tlmId_in
+        INTO dataType;
+    
+    logOTFD('selectNumericTlm: Retrieved dataType=' || dataType || ' for tlmId=' || tlmId_in, 2);
 
-    -- Define the query to get rows from TelemetryStorageLocation.
-    -- Coalesce is used here, which will output either the results of the select statement, or 0
+    -- Check that dataType is in the supported set: unsigned or signed int, float or discrete.
+    -- We don't support strings by design.
+    IF (NOT ((dataType = 'U') OR (dataType = 'I') OR (dataType = 'F') OR (dataType = 'D'))) THEN
+        logOTFD('selectNumericTlm: unsupported dataType for tlmId=' || tlmId_in || ': ' || dataType, 0);
+        RETURN;
+    END IF;
+
+    -- B: Get TelemetryStorageLocation rows:
+
     -- Subsequent logic depends on order by clause including apid, for when multiple apids are present.
 
-    -- Define a table for the above query's results.
-    DECLARE TYPE TSL_typ IS TABLE OF tsl_row_t INDEX BY PLS_INTEGER;
-    TSLRows TSL_typ;
+    -- PL/SQL block for iterating through TSL and TMDecom rows
+    DECLARE 
+        -- Define a table for the above query's results.
+        TYPE TSL_typ IS TABLE OF tsl_row_t INDEX BY PLS_INTEGER;
+        TSLRows TSL_typ;
 
-    -- Declare all other variables
-    TSLRowStartTime NUMBER;
-    TSLRowStopTime NUMBER;
-    TMDRowStartTime NUMBER;
-    TMDRowStopTime NUMBER;
-    TMDQueryStartTime NUMBER;
-    TMDQueryStopTime NUMBER;
-    isInL1 BOOLEAN;
-    isInL0 BOOLEAN;
-    isLastTSLRow BOOLEAN;
-    isLastTMDRow BOOLEAN;
-    doInclusiveQuery BOOLEAN;
-    
+        TSLRowStartTime NUMBER;
+        TSLRowStopTime NUMBER;
+        TMDRowStartTime NUMBER;
+        TMDRowStopTime NUMBER;
+        TMDQueryStartTime NUMBER;
+        TMDQueryStopTime NUMBER;
+        isInL1 BOOLEAN;
+        isInL0 BOOLEAN;
+        isLastTSLRow BOOLEAN;
+        isLastTMDRow BOOLEAN;
+        doInclusiveQuery BOOLEAN;
     BEGIN
-        -- Fetch TelemetryStorageLocationRows
+        -- Creates a cursor for the TelemetryStorageLocation table using the mission-specific code. This is primarily because
+        -- EMA has a different decom-id system which needs to be accounted for. Note that this MUST return a cursor with the 
+        -- ORDER BY clause 'ORDER BY definitionStart, apid'. 
         onTheFlyDecomMissionSpecific.getTSLCur(systemId_in, tlmId_in, definitionStartTime, definitionStopTime, tsl_cursor);
         FETCH tsl_cursor BULK COLLECT INTO TSLRows;
         CLOSE tsl_cursor;
+        
+        logOTFD('selectNumericTlm: Fetched ' || TSLRows.COUNT || ' TelemetryStorageLocation rows', 2);
 
         IF TSLRows.COUNT = 0 THEN
-
-            DBMS_OUTPUT.PUT_LINE( 'No TSL rows exist, must be a derived item; querying L1...');
-	    
-            -- No TSL rows exist, so must be a derived item or other non-packetized item,
-	        -- which are only stored in the L1 tables.   Query TelemetryItemDefinition
-	        -- for the dataType, then call queryL1.
-
-            EXECUTE IMMEDIATE 'SELECT dataType from TelemetryItemDefinition WHERE tlmId = ' || tlmId_in
-                              INTO dataType;
-
-            -- Check that dataType is in the supported set: unsigned or signed int, float or discrete.
-	        -- We don't support strings by design.
-
-            IF (NOT ((dataType = 'U') OR (dataType = 'I') OR (dataType = 'F') OR (dataType = 'D'))) THEN
-                logError('ERROR unsupported dataType for tlmId=' || tlmId_in || ': ' || dataType);
-                RETURN;
-            END IF;
-
+            -- No TSL rows exist, so must be a derived item or other non-packetized item, which are only stored in the L1 tables.
+            logOTFD('selectNumericTlm: No TSL rows exist, must be a derived item; querying L1...', 2);
             queryL1( systemId_in, tlmId_in, startERT_in, stopERT_in, startSCT_in, stopSCT_in, startASCT_in, stopASCT_in,
 	             -1, -1, dataType, true, definitionColumn);
 	        RETURN;
-
         END IF;
 
-        -- STEP C: Loop through and process the TelemetryStorageLocation rows ------------------
-
         FOR i IN 1 .. TSLRows.COUNT LOOP
-            -- NOTE pl/sql arrays and tables start at index one, not zero
+            -- NOTE: PL/SQL arrays and tables start at index one, not zero
+            logOTFD('selectNumericTlm: Processing TSL row ' || i || ' of ' || TSLRows.COUNT || 
+                    ', definitionStart=' || TSLRows(i).definitionStart || 
+                    ', apid=' || TSLRows(i).apid || 
+                    ', isInL0=' || TSLRows(i).isInL0 || 
+                    ', isInL1=' || TSLRows(i).isInL1, 2);
 
             -- If an option is in effect to override isInL0 and/or isInL1, do so.
 	        -- This is only used in testing.
             IF (gblForceIsInL0 != -1) THEN
 	            IF (TSLRows(i).isInL0 != gblForceIsInL0) THEN
-		            logError('INFO changing TSLRows(' || TO_CHAR(i) || ').isInL0 to ' || TO_CHAR( gblForceIsInL0));
+		            logOTFD('selectNumericTlm: changing TSLRows(' || TO_CHAR(i) || ').isInL0 to ' || TO_CHAR( gblForceIsInL0), 2);
 		        END IF;
 	            TSLRows(i).isInL0 := gblForceIsInL0;
 	        END IF;
             IF (gblForceIsInL1 != -1) THEN
 	            IF (TSLRows(i).isInL1 != gblForceIsInL1) THEN
-		            logError('INFO changing TSLRows(' || TO_CHAR(i) || ').isInL1 to ' || TO_CHAR( gblForceIsInL1));
+		            logOTFD('selectNumericTlm: changing TSLRows(' || TO_CHAR(i) || ').isInL1 to ' || TO_CHAR( gblForceIsInL1), 2);
 		        END IF;
 	            TSLRows(i).isInL1 := gblForceIsInL1;
 	        END IF;
@@ -1381,15 +1504,16 @@ BEGIN
                 isInL1 := FALSE;
             END IF;
 
-            -- Skip this row and continue with the next row if both isInL0=0 and isInL1=0 (an end marker).
+            -- Skip this row and warn if both isInL0=0 and isInL1=0.
             IF (isInL0 = false AND isInL1 = false) THEN
+                logOTFD('selectNumericTlm: TSL Row starting at ' || TSLRows(i).definitionStart || ' reports false for isInL0 and isInL1. Skipping...', 1);
                 CONTINUE;
             END IF;
 
             -- Set isLastTSLRow to true if this is the last TSL row for this apid.
             -- This controls whether the end time of the query is inclusive or exclusive.
             -- a. We want exclusive for all except the last row, so that we don't get duplicates in the
-            --    onTheFlyDecom_results table.
+            --    onTheFlyDecom_results or TMDecom table.
             -- b. We want exclusive for an end marker too, so we don't decom from a packet whose ERT
             --    exactly equals the definitionStart of the end marker.
             --    An end marker (isInL0=0, isInL1=0) exists for a telemetry item which is no longer
@@ -1431,29 +1555,41 @@ BEGIN
             TSLRowStopTime := definitionStopTime;
             FOR j IN i+1 .. TSLRows.COUNT LOOP
                 IF TSLRows(j).apid = TSLRows(i).apid THEN
-                            TSLRowStopTime := TSLRows(j).definitionStart;
+                    TSLRowStopTime := TSLRows(j).definitionStart;
+                    EXIT;
                 END IF;
             END LOOP;
         END IF;
+        
+        logOTFD('selectNumericTlm: TSL row ' || i || ' adjusted times: ' || 
+                'TSLRowStartTime=' || TSLRowStartTime || 
+                ', TSLRowStopTime=' || TSLRowStopTime, 2);
 
-
-        -- STEP D: Get the decom rows applicable to this tlmId and to the time range of the TSL row. ---------
+         -- C: Get the decom rows applicable to this tlmId and to the time range of the TSL row.
 
         -- Normally the TSL row start/stop times are used as the end points of the following query.
         -- But if the user specified gblDecomMapTimeGPS, then that time is used for both end points,
         -- and the query yields the record whose definitionStart is closest to gblDecomMapTimeGPS
         -- but before or equal to gblDecomMapTimeGPS.
-
         IF (gblDecomMapTimeGPS = -1) THEN
             TMDQueryStartTime := TSLRowStartTime;
             TMDQueryStopTime  := TSLRowStopTime;
         ELSE
             TMDQueryStartTime := gblDecomMapTimeGPS;
             TMDQueryStopTime  := gblDecomMapTimeGPS;
+            logOTFD('selectNumericTlm: Using gblDecomMapTimeGPS override for TMD query times', 2);
         END IF;
-        -- Get data from TMDecom.  For L0 queries, this gives the offset, size and dataType
-        -- of the telemetry item, for use in OTFD.  For L1 queries, this gives the dataType,
-        -- for choosing between TManalog or TMdiscrete.
+
+        -- In order to prevent duplicate TMDecom rows from being retrieved, only the final TMD query is inclusive of the end time. 
+        -- The rest of the queries are only inclusive on the start timestamp, which is the same as the end timestamp for the previous query.
+        IF isLastTSLRow THEN
+            logOTFD('selectNumericTlm: Reached final TSL row for APID ' || TSLRows(i).apid || ' TMDecom query now includes end of range.', 2);
+        END IF;
+        
+        logOTFD('selectNumericTlm: Querying TMDecom with times: ' || 
+                'TMDQueryStartTime=' || TMDQueryStartTime || 
+                ', TMDQueryStopTime=' || TMDQueryStopTime, 2);
+        
 
         -- Make a table of tmdecom rows.
         DECLARE TYPE TMD_typ IS TABLE OF tmdecom_row_t INDEX BY PLS_INTEGER;
@@ -1464,52 +1600,42 @@ BEGIN
         tmpRowsWritten NUMBER;
 
         BEGIN
-            -- Fetch TMDecom rows
-            onTheFlyDecomMissionSpecific.getDecomMapCur(systemId_in, TSLRows(i).apid, tlmId_in, TMDQueryStartTime, TMDQueryStopTime, tmd_cursor);
+            -- Get data from TMDecom.  For L0 queries, this gives the offset and size of the telemetry item
+            -- (datatype is ignored, TelemetryItemDefinition is used).
+            onTheFlyDecomMissionSpecific.getDecomMapCur(systemId_in, TSLRows(i).apid, tlmId_in, TMDQueryStartTime, TMDQueryStopTime, isLastTSLRow, tmd_cursor);
             FETCH tmd_cursor BULK COLLECT INTO TMDRows; 
             CLOSE tmd_cursor;
+            
+            logOTFD('selectNumericTlm: Fetched ' || TMDRows.COUNT || ' TMDecom rows for apid=' || TSLRows(i).apid, 2);
 
-            IF (TMDRows.COUNT = 0) THEN
-                CONTINUE;
-            END IF;
-
-            -- Check that dataType is allowed.  In particular, this API does not allow strings,
-		    -- partly because the onTheFlyDecom_results VALUE column is numeric, not a string type.
-
-                dataType := TMDRows(1).dataType;
-	        IF (NOT ((dataType = 'U') OR (dataType = 'I') OR (dataType = 'F') OR (dataType = 'D'))) THEN
-	            logError('ERROR unsupported dataType for tlmId=' || tlmId_in || ': ' || dataType);
-	            CONTINUE;
-	        END IF;
-
-            -- STEP E: If isInL1, query for data.
-
-            -- SM Note: if isInL1, then we don't need a separate data query for every TMDecom record.
-            -- The TMDecom records are largely irrelevant, since the data has already been decommed,
-            -- even if the telemetry item has been moved around and multiple TMDecom records exist.
-            -- We only need one row to determine the table (TManalog or TMdiscrete) for the query.
-            -- We do not support the case where a dataType changes between discrete and analog
-            -- during the user's time range, so that the data is located in 2 different tables.
-            -- Data analysis code downstream from this database retrieval layer is unlikely to either.
-        
             IF (isInL1 = true) THEN
-		        queryL1( systemId_in, tlmId_in, startERT_in, stopERT_in, startSCT_in, stopSCT_in, startASCT_in, stopASCT_in,
+                logOTFD('selectNumericTlm: Taking L1 path for TSL row ' || i || ', querying L1 tables', 2);
+		        queryL1(systemId_in, tlmId_in, startERT_in, stopERT_in, startSCT_in, stopSCT_in, startASCT_in, stopASCT_in,
 		             TSLRowStartTime, TSLRowStopTime, dataType, isLastTSLRow, definitionColumn);
-			    
                 CONTINUE;  -- to next TSL row
             END IF;  -- isInL1 = true
 
+            -- If not in L1 and no TMDecom rows found, skip TSL row.
+            IF (TMDRows.COUNT = 0) THEN
+                logOTFD('selectNumericTlm: No TMDecom rows returned for Start Time ' || TMDQueryStartTime || ' and End Time ' || TMDQueryStopTime, 1);
+                CONTINUE;
+            END IF;
 
 		    -- If we got this far, then we're querying from L0 and doing on-the-fly decom.
-            -- STEP F: Loop through the decom map(s) for this tlmId --------------------------
-
+		    logOTFD('selectNumericTlm: Taking L0 path for TSL row ' || i || ', performing on-the-fly decom', 2);
+		    
             TSLRowApid := TSLRows(i).apid;
 
             FOR j in 1 .. TMDRows.COUNT LOOP
             -- Continue with the next row if startBit=-1 (an end marker)
 		    -- This shouldn't happen because is should be true that isInL0=0 and isInL1=0.
 		    -- This is just for extra robustness in case TSL and TMD don't both have end markers.
+		    
+                logOTFD('selectNumericTlm: Processing TMD row ' || j || ' of ' || TMDRows.COUNT || 
+                        ' for TSL row ' || i || ', definitionStart=' || TMDRows(j).definitionStart, 2);
+		    
                 IF (TMDRows(j).startBit = -1) THEN
+                    logOTFD('selectNumericTlm: TMDecom row Starting at ' || TMDRows(i).definitionStart || ' is an end marker (startBit -1). Skipping...', 2);
                     CONTINUE;
                 END IF;
 
@@ -1519,7 +1645,6 @@ BEGIN
                 -- table.  Both isLastTMDRow and isLastTSLRow must be true for the query to be inclusive
                 -- of the end time;  otherwise we are still piecing together multiple abutting queries,
                 -- and want them to be exclusive of the end time until the last one.
-	    
 	            IF (j = TMDRows.COUNT) THEN
 	                isLastTMDRow := true;
 	            ELSE
@@ -1527,18 +1652,16 @@ BEGIN
                 END IF;
                 doInclusiveQuery := (isLastTSLRow AND isLastTMDRow);
 
-		        IF (gblDebugLevel >= 2) THEN
-                    logError('INFO isLastTSLRow = ' || (case when isLastTSLRow = true then 'true' else 'false' end) ||
-		             ', isLastTMDRow = ' || (case when isLastTMDRow = true then 'true' else 'false' end) ||
-			            ', doInclusiveQuery = ' || (case when doInclusiveQuery = true then 'true' else 'false' end));
-	            END IF;
+                logOTFD('selectNumericTlm: isLastTSLRow = ' || sys.diutil.bool_to_int(isLastTSLRow) ||
+                        ', isLastTMDRow = ' || sys.diutil.bool_to_int(isLastTMDRow) ||
+                        ', doInclusiveQuery = ' || sys.diutil.bool_to_int(doInclusiveQuery), 
+                2);
 			     
                 -- Get start and stop times for this TMD row.  Adjust these times so they're within the range
                 -- of the TSL record, because we don't want to query outside the TSL record's range.
                 -- Also if this is the last TMD record, widen the stop time to be the TSL stop time, because
-                -- the TMD record is valid until at least then.
-                -- If the user specified gblDecomMapTimeGPS, then set the one and only TMD row's start time 
-                -- to the TSL start time.
+                -- the TMD record is valid until at least then. If the user specified gblDecomMapTimeGPS, 
+                -- then set the one and only TMD row's start time to the TSL start time.
                 IF (TMDRows(j).definitionStart < TSLRowStartTime) THEN
                     TMDRowStartTime := TSLRowStartTime;
                 ELSE
@@ -1556,13 +1679,19 @@ BEGIN
                 ELSE
                     TMDRowStopTime := TMDRows(j+1).definitionStart;
                 END IF;
+                
+                logOTFD('selectNumericTlm: TMD row ' || j || ' adjusted times: ' || 
+                        'TMDRowStartTime=' || TMDRowStartTime || 
+                        ', TMDRowStopTime=' || TMDRowStopTime, 2);
 
-                -- STEP F) Get the data from L0 ---------------------------------------
                 -- This makes a call back to the mission-specific code.
 
                 IF ((apidArray(1) = -1) OR ((apidArray(1) != -1) AND (TSLRowApid MEMBER OF apidArray))) THEN
                     -- Use definitionColumn to determine which time column to restrict by decom map and which ones to 
                     -- 'loosely bound' the query (0: SCT, 1: ERT, 2: ASCT). 
+                    
+                    logOTFD('selectNumericTlm: Calling queryL0 for apid=' || TSLRowApid || 
+                            ', definitionColumn=' || definitionColumn, 2);
 
                     CASE definitionColumn
                         WHEN 0 THEN
@@ -1572,45 +1701,40 @@ BEGIN
                         WHEN 2 THEN 
                             queryL0(TMDRows(j), startSCT_in, stopSCT_in, startERT_in, stopERT_in, TMDRowStartTime, TMDRowStopTime, doInclusiveQuery, definitionColumn);
                     END CASE;
+                ELSE
+                    logOTFD('selectNumericTlm: Skipping apid=' || TSLRowApid || ' due to apid filter', 2);
                 END IF;
-            END LOOP;  -- loop through TMdecom rows
+            END LOOP;  -- end loop through TMdecom rows
             EXCEPTION
                 WHEN NO_DATA_FOUND THEN
-                    logError('ERROR selectNumericTlm: ' || 'No TMDecom rows found for time range ' || 
-                              TSLRowStartTime || ' - ' || TSLRowStopTime);
+                    logOTFD('selectNumericTlm: ' || 'No TMDecom rows found for time range ' || TSLRowStartTime || ' - ' || TSLRowStopTime, 0);
                 WHEN others THEN
-                    logError('ERROR selectNumericTlm: fetch block: others exception: ' ||
-		              SQLCODE || ' -ERROR- ' || SQLERRM);
+                    logOTFD('selectNumericTlm: fetch block: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
             END;    
         END LOOP;  -- end loop through TelemetryStorageLocation rows
 
+        logOTFD('selectNumericTlm: Completed processing all TSL rows, calling collateErrors', 2);
         collateErrors();
 
         RETURN;
 
     EXCEPTION
         WHEN NO_DATA_FOUND THEN
-            LogError('ERROR selectNumericTlm: No telemetryStorageLocation ' ||
-                     'rows found for time range ' || definitionStartTime || ' - ' || definitionStopTime);
+            logOTFD('selectNumericTlm: No telemetryStorageLocation rows found for time range ' || definitionStartTime || ' - ' || definitionStopTime, 0);
             collateErrors();
             RETURN;
     END;
 
     EXCEPTION
-        WHEN time_error THEN
-            logError('ERROR selectNumericTlm: Invalid or missing time range');
-            collateErrors();
-            RETURN;
         WHEN definition_error THEN
-            logError('ERROR selectNumericTlm: Definition Error. Input parameters invalid.');
+            logOTFD('selectNumericTlm: Definition Error. Input parameters invalid.', 0);
             collateErrors();
             RETURN;
         WHEN others THEN
-            logError('ERROR selectNumericTlm: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM);
+            logOTFD('selectNumericTlm: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
             collateErrors();
             RETURN;
 
 END selectNumericTlm;
 END onTheFlyDecom;
 /
-
