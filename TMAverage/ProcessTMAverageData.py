@@ -434,7 +434,6 @@ def fetch_otfd_values_by_time_range(
         results_times
     )
 
-# TODO: Update
 def fetch_analog_conversions(
         start_time_gps: int,
         end_time_gps: int,
@@ -449,6 +448,8 @@ def fetch_analog_conversions(
     logger = multiprocessing.get_logger()
     cursor = db_connection.cursor()
 
+    # Note that if the conversion is segmented and the segments overlap, the highest SEGMENTNUMBER will take priority
+    # due to being last in the returned data.
     if config.TIME_VARIANT_ANALOG_CONVERSION == "true":
         sql = f"""select C.c0, C.c1, C.c2, C.c3, C.c4, C.c5, C.c6, C.c7, DEFINITIONSTART, LOWVALUE, HIGHVALUE
                 FROM {config.TELEMETRY_ANALOG_CONVERSIONS_NAME} C
@@ -458,13 +459,15 @@ def fetch_analog_conversions(
                     SELECT MAX(DEFINITIONSTART) FROM {config.TELEMETRY_ANALOG_CONVERSIONS_NAME}
                     WHERE tlmId = {tmid} AND DEFINITIONSTART <= {start_time_gps}
                 ), 0)
-                ORDER BY C.DEFINITIONSTART DESC
+                ORDER BY C.SEGMENTNUMBER ASC
         """
     else:
         # If not time variant, then set DEFINITIONSTART to 0. 
         sql = f"""select C.c0, C.c1, C.c2, C.c3, C.c4, C.c5, C.c6, C.c7, 0 AS DEFINITIONSTART, LOWVALUE, HIGHVALUE
                 FROM {config.TELEMETRY_ANALOG_CONVERSIONS_NAME} C 
-                where C.tlmId = {tmid}"""
+                where C.tlmId = {tmid}
+                ORDER BY DC.SEGMENTNUMBER ASC
+        """
 
     logger.debug(sql)
     try:
@@ -625,7 +628,6 @@ def calculate_day_start_end_gps(
 
     return (start_time_gps, end_time_gps)
 
-# TODO: Update
 def calibrate(value, calibration_set):
     """
     Helper function that is passed to numpy to calibrate the data. Is iterated over the numpy array.
@@ -716,12 +718,9 @@ def process_values_by_tmid(
 
     if len(calibration_sets) > 0:
         logger.info("Calibrating data...")
+        logger.info(f"With datasets: {str(calibration_sets)}") # DEBUG
     else:
         logger.info("No calibration required...")
-
-    # Make a copy of results_values to place the calibrated data into. If no correct calibration set exists
-    # for a given data point, it will default to the uncalibrated value.
-    calibrated_data = np.copy(results_values)
 
     for i in range(len(calibration_sets)):
         calibration_set = calibration_sets[i]
@@ -729,12 +728,14 @@ def process_values_by_tmid(
         low_value = calibration_set[9]
         high_value = calibration_set[10]
 
-        # The computed definition_end is an exclusive endpoint for this calibration set.
-        if i == len(calibration_sets)-1:
-            definition_end = None
+        # Get next-largest DEFINITIONSTART (note that there can be multiple records with the same DEFINITIONSTART for segmented
+        # calibrations)
+        future_sets = [c_set[8] for c_set in calibration_sets if c_set[8] > definition_start]
+        if len(future_sets) > 0:
+            definition_end = min(future_sets)
         else:
-            definition_end = calibration_sets[i+1][8]
-
+            definition_end = None
+        
         # Determine what data is relevant for a given calibration set. The calibration set must be within the 
         # domain of a given calibration set (from the definition_start of the set to the start of the next set).
 
@@ -743,11 +744,16 @@ def process_values_by_tmid(
 
         if definition_end: 
             calibration_set_mask &= (results_times < definition_end)
+
+        # IMPORTANT: Currently low_value and high_value are defined as non-decimal NUMBERs in the oracle database. 
+        #            as a result, the items in results_values get implicitly cast to ints before comparison. I believe
+        #            this is is *probably* the intended usage, as both ends are being interpreted as inclusive, but this may
+        #            be incorrect.
         if low_value:
             calibration_set_mask &=  (low_value <= results_values)
         if high_value:
             calibration_set_mask &= (high_value >= results_values)
-        
+                
         # Get only the data relevant to the calibration set.
         selected_data = results_values[calibration_set_mask]
 
@@ -755,9 +761,7 @@ def process_values_by_tmid(
             calibrate, -1, selected_data, (calibration_set)
         )
 
-        calibrated_data[calibration_set_mask] = calibrated_selection
-    
-    results_values = calibrated_data
+        results_values[calibration_set_mask] = calibrated_selection
 
     logger.info("Averaging data...")
     insertion_data = []

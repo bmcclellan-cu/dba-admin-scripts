@@ -60,13 +60,11 @@ TMANALOG_DBS = {
     "*":        "<DATA_SCHEMA>.TMANALOG_SID<SID>",
 }
 
-# TODO: Debug change
 # The non-schema prefixed name of the TMAverage table. Separated out in order to derive
-# the primary key name from it effectively (specifically intended for testing, where multiple
-# TMAverage tables are created and compared)
+# the primary key name from it effectively without needing to truncate the schema name from it.
 TMAVERAGE_TAB_NAME = {
     "emadev":   "TMAVERAGE",
-    "*":        "TMAVERAGE_ROBERTDEV_SID<SID>"
+    "*":        "TMAVERAGE_SID<SID>"
 }
 
 # Full TMAverage table name.

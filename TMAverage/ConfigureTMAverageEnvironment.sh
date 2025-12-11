@@ -1,31 +1,27 @@
 #!/bin/bash
 #
-# Purpose: This script creates the TMAverage tablespace and table in the L1A schema,
-#          as well as (optionally) a user with the required permissions to populate the
-#          table.
+# Purpose:  This script creates the TMAverage tablespace and table in the L1A schema,
+#           as well as (optionally) a user with the required permissions to populate the
+#           table.
 # 
-# Notes: The L1A schema must exist in order for this script to work. 
-#        The script defaults to assuming that the analog table is TMANALOG_SID1, but can be
-#        overwritten for cases where the table is different.
+# Notes:    This script uses TMAverageHelpers.py to set various static parameters that vary by 
+#           database. Any updates to tmaverage configurations must be done in TMAverageHelpers.py
 # 
-#        This script uses TMAverageHelpers.py to set various static parameters that vary by 
-#        database. Any updates to tmaverage configurations must be done in TMAverageHelpers.py
+#           For more detailed documentation go to https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
 # 
-#        For more detailed documentation go to https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
-# 
-# IMPORTANT: As a part of the TMAverage & TMAverage_Stats table checks, this script will validate 
-#            that the MOST RECENT DDL changes have been applied to the respective table. It is 
-#            assumed that all previous updates have been applied, and the the only check that is 
-#            performed is for the most recent modifications. This check must be updated every time 
-#            the DDL is updated, and the respective variables in TMAverageHelpers.py must be updated:
-#            tmaverage_table_check_columns, tmaverage_stats_check_columns.
+# IMPORTANT:    As a part of the TMAverage & TMAverage_Stats table checks, this script will validate 
+#               that the MOST RECENT DDL changes have been applied to the respective table. It is 
+#               assumed that all previous updates have been applied, and the the only check that is 
+#               performed is for the most recent modifications. This check must be updated every time 
+#               the DDL is updated, and the respective variables in TMAverageHelpers.py must be updated:
+#               tmaverage_table_check_columns, tmaverage_stats_check_columns.
 # 
 # 
 # Author: Robert Schmidt
 # Created: June 6th, 2025
 # Last Modified: November 17th, 2025 - RS
 ##########################################################################
-usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafile ] (optional, create TMAverage_SID1 tablespace) ] [ -b (optional, create TMAverage tables) ] [ -v (optional, create venv in tmaverage script directory ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ system_id ] [ username (optional) ] [ password (optional) ]"
+usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafile ] (optional, create TMAverage tablespace) ] [ -b (optional, create TMAverage tables) ] [ -v (optional, create venv in tmaverage script directory ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ system_id ] [ username (optional) ] [ password (optional) ]"
 example1="Example: ./ConfigureTMAverageEnvironment.sh -t 1 /ssd_internal/Robert/AIMPROD_TMAVERAGE/tmaverage_table.dbf"
 example2="         ./ConfigureTMAverageEnvironment.sh -u -o -v 1 PROCESSTMIDTEST testPWD"
 
@@ -375,7 +371,7 @@ EOD
     fi
 
     # TODO: Replace this with updated GrantNewPermissions.sh. TMANALOG is a view on EMA, and GrantNewPermissions.sh does not 
-    #       currently support adding permissions to views. Ticket DB-3350 is for the update.
+    #       currently support adding permissions to views. This update will be addressed in DB-3350.
     table_permission_add=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
         set heading off
         set feedback off
