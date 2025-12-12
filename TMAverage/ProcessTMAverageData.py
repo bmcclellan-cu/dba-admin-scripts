@@ -863,7 +863,9 @@ def main():
     parallel_degree = arguments.parallel_degree
 
     # Get the whole string of arguments the script was run with to save to TMAverage_Stats.
-    run_params = " ".join(sys.argv[1:])
+    # Adding -d option to allow for a direct copy and paste over the .sh script to re-create run 
+    # because the inputs to python are always dates.
+    run_params = "-d " + " ".join(sys.argv[1:])
 
     # Once inputs are gathered, load TMAverage configs. This also checks if the database is supported.
     config = TMAverageConfigs(database, system_id)
