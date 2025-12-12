@@ -19,6 +19,8 @@
 ##########################################################################
 import sys
 
+TMAVERAGE_VERSION = "1.0"
+
 # Dictionary of databases and SIDs that the script is designed for. Any attempt 
 # to run any TMAverage scripts on SIDs or databases not listed here will fail and 
 # display an appropriate error message.
@@ -169,6 +171,8 @@ class TMAverageConfigs():
         if not (database in SUPPORTED_DB_SIDS.keys() and int(sid) in SUPPORTED_DB_SIDS[database]):
             raise ValueError(f"ERROR: Database {database} SID {sid} is not supported by TMAverage.\n"
                              "Supported databases are: {str(tuple(SUPPORTED_DB_SIDS.keys()))}")
+
+        self.VERSION = TMAVERAGE_VERSION
 
         self.SID = sid
         self.DATABASE = database
