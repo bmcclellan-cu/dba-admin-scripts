@@ -205,7 +205,7 @@ class TMAverageConfigs():
                 try:
                     config_item = static_config["*"] # Try to get default value instead.
                 except:
-                    ValueError(f"ERROR: Config key {config_key} not supported. Database/SID passed is not valid.")
+                    raise ValueError(f"ERROR: Config key {config_key} not supported. Database/SID passed is not valid.")
         elif isinstance(static_config, str):
             config_item = static_config
         else:

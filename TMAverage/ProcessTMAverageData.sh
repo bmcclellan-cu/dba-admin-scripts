@@ -72,6 +72,7 @@ if [ -f /export/home/oracle/.bashrc ]; then
     source /export/home/oracle/.bashrc
     if [ $? -ne 0 ]; then
         echo "An error occurred while sourcing /export/home/oracle/.bashrc. Exiting..."
+        exit 1
     fi
 else
     export DB_EMAIL_LIST="Brian.McClellan@lasp.colorado.edu Jackson.Cockrum@lasp.colorado.edu Robert.Schmidt@lasp.colorado.edu Bryan.Turns@lasp.colorado.edu"
@@ -178,7 +179,7 @@ if [ ! -f "$SCRIPT_DIR/.username" ] || [ ! -f "$SCRIPT_DIR/.passwd" ]; then
     exit 1
 fi
 
-# Validate that username and password are valid. (NOTE: Currently pointing to personal repo, will update when PR is merged.)
+
 username=$(<"$SCRIPT_DIR/.username")
 password=$(<"$SCRIPT_DIR/.passwd")
 test_login=$("$HOME/common/oracle/TestOracleUserLogin.sh" "$username" "$password")
@@ -260,7 +261,7 @@ if [ -n "$otfd_opt" ]; then
 fi
 
 # Check SELECT permissions for read-only tables
-select_check=$("$HOME/Robert/common/oracle/TestTablePermissions.sh" "$select_tables" "$username" SELECT)
+select_check=$("$HOME/common/oracle/TestTablePermissions.sh" "$select_tables" "$username" SELECT)
 if [ $? -ne 0 ]; then
     echo "$select_check"
     echo "An error occurred while running TestTablePermissions.sh to check SELECT permissions to $select_tables to $username. Exiting..."
@@ -271,7 +272,7 @@ elif [[ "$select_check" == *"MISSING"* ]]; then
 fi
 
 # Check INSERT permissions for read-write tables
-full_access_check=$("$HOME/Robert/common/oracle/TestTablePermissions.sh" "$full_access_tables" "$username" ALL)
+full_access_check=$("$HOME/common/oracle/TestTablePermissions.sh" "$full_access_tables" "$username" ALL)
 if [ $? -ne 0 ]; then
     echo "$full_access_check"
     echo "An error occurred while running TestTablePermissions.sh to check ALL permissions to $full_access_tables to $username. Exiting..."

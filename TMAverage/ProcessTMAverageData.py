@@ -40,7 +40,7 @@ db_connection: oracledb.Connection = None
 # Global variable to track if the thread is ready to function. For example, if it did not successfully initialize,
 # the thread will be in a failed state, and not even attempt to do any processing. The same occurs if the script is not able to access
 # the necessary tables (indicating permission or database access issues).
-failed = True
+failed: bool = True
 
 def get_value_from_file(file_path):
     """
@@ -227,7 +227,7 @@ def init_worker(
     db_connection = oracledb.connect(
         user=username, password=password, dsn=connection_string
     )
-    failed = False  # Only set global variable if successfully initialized.=
+    failed = False  # Only set global variable if successfully initialized.
 
 
 def fail_worker():
@@ -466,7 +466,7 @@ def fetch_analog_conversions(
         sql = f"""select C.c0, C.c1, C.c2, C.c3, C.c4, C.c5, C.c6, C.c7, 0 AS DEFINITIONSTART, LOWVALUE, HIGHVALUE
                 FROM {config.TELEMETRY_ANALOG_CONVERSIONS_NAME} C 
                 where C.tlmId = {tmid}
-                ORDER BY DC.SEGMENTNUMBER ASC
+                ORDER BY C.SEGMENTNUMBER ASC
         """
 
     logger.debug(sql)
@@ -543,7 +543,7 @@ def insert_tmaverage_rows(
             )
             fail_worker()
             raise error
-        elif str(error).find("ORA-01654") != -1 or str(error).find("ORA-01647"):
+        elif str(error).find("ORA-01654") != -1 or str(error).find("ORA-01647") != -1:
             logger.exception(
                 "ORA-01654: unable to extend index. / ORA-01647: tablespace is read-only, cannot allocate space in it"
                 "This error is likely due to the script running out of storage space or the tablespace being set as read-only. "
@@ -718,7 +718,6 @@ def process_values_by_tmid(
 
     if len(calibration_sets) > 0:
         logger.info("Calibrating data...")
-        logger.info(f"With datasets: {str(calibration_sets)}") # DEBUG
     else:
         logger.info("No calibration required...")
 

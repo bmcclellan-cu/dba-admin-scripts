@@ -48,7 +48,7 @@ while getopts ":hubovt:" option; do
         venv_opt=1
         ;;
     t)
-        datafile_path=$OPTARG
+        datafile_path="$OPTARG"
         ;;
     b)
         table_opt=1
