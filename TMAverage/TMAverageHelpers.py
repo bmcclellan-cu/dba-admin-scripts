@@ -112,6 +112,8 @@ OTFD_TIME_COLUMN = {
 # The DDL to create the TMAverage table. This requires TMAVERAGE_TAB_NAME to derive
 # the primary key constraint name so that duplicates indexes are not created during testing
 # When this is updated, update the tmaverage_table_check_columns variable as well.
+# Note: This is ONLY executed in ConfigureTMAverageEnvironment.sh, and the escape characters (\\) 
+#       present to allow for the bash variable assignment to succeed without interpreting it literally.
 TMAVERAGE_TABLE_DDL=f"""CREATE TABLE <TMAVERAGE_TABLE_NAME>
 (
     TMID NUMBER(7,0) NOT NULL ENABLE,

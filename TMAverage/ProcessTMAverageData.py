@@ -56,18 +56,18 @@ def get_value_from_file(file_path):
     try:
         # Open the file to read the password
         with open(full_file_path, "r") as file:
-            password = (
+            value = (
                 file.readline().strip()
             )  # Read the first line and strip whitespace
 
-        if not password:
+        if not value:
             print(
                 f"Warning: The file {full_file_path} is empty or contains only whitespace."
             )
             return None
 
         print(f"Value successfully read from: {full_file_path}")
-        return password
+        return value
 
     except FileNotFoundError:
         print(f"Error: The file {full_file_path} was not found.")
