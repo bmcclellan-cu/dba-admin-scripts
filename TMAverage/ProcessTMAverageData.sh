@@ -14,11 +14,10 @@
 #           For more detailed documentation go to https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
 # 
 # Author: Robert Schmidt
-# 
 # Created on: July 21st, 2025
-# Modified on: September 18th, 2025 - RS
+# Modified on: November 17th, 2025 - RS
 ###############################################################
-usage="Usage: ./ProcessTMAverageData.sh [ -r (optional, only email on error) ] [ -o (optional, use OTFD) ] [ -e [ filename ] (absolute path filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [TMID | ALL | filename] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
+usage="Usage: ./ProcessTMAverageData.sh [ -r (optional, only email on error) ] [ -o (optional, use OTFD) ] [ -e [ filename ] (absolute path filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [ system_id ] [TMID | ALL | filename] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
 example1="Example: ./ProcessTMAverageData.sh goldprod ALL 14 7 8"
 example2="         ./ProcessTMAverageData.sh -d goldprod ALL 12-JAN-23 14-JAN-23"
 
@@ -68,16 +67,12 @@ done
 
 shift $(($OPTIND -1))
 
-# Constant variables
-tmaverage_table="TMAVERAGE_SID1"
-tmaverage_stats_table="TMAVERAGE_STATS"
-tablespace_name="TMAVERAGE_SID1"
-
-# Set environment variables
+# Set DBA environment variables
 if [ -f /export/home/oracle/.bashrc ]; then
     source /export/home/oracle/.bashrc
     if [ $? -ne 0 ]; then
         echo "An error occurred while sourcing /export/home/oracle/.bashrc. Exiting..."
+        exit 1
     fi
 else
     export DB_EMAIL_LIST="Brian.McClellan@lasp.colorado.edu Jackson.Cockrum@lasp.colorado.edu Robert.Schmidt@lasp.colorado.edu Bryan.Turns@lasp.colorado.edu"
@@ -90,7 +85,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Check number of arguments
-if [ $# -lt 4 ] || [ $# -gt 5 ]; then
+if [ $# -lt 5 ] || [ $# -gt 6 ]; then
     echo "$usage"
     echo "$example1"
     echo "$example2"
@@ -98,8 +93,9 @@ if [ $# -lt 4 ] || [ $# -gt 5 ]; then
 fi
 
 database=${1,,}
-tmid=${2}
-parallel_degree=${5^^}
+system_id=${2}
+tmid=${3}
+parallel_degree=${6}
 parallel_degree=${parallel_degree:-1}
 
 if [[ ! $parallel_degree =~ ^[0-9]+$ ]]; then
@@ -107,7 +103,12 @@ if [[ ! $parallel_degree =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-echo "Validating Input..."
+if [[ ! $system_id =~ ^[0-9]+$ ]]; then
+    echo "ERROR: System_ID must be a positive integer. Exiting..."
+    exit 1
+fi
+
+echo "Validating input..."
 
 export ORACLE_SID="$database"
 
@@ -120,6 +121,32 @@ if [ -n "$sid_check" ]; then
     echo "ERROR: Provided database is not open. Exiting..."
     exit 1
 fi
+
+newest_python=$(ls /usr/bin/python3* | grep -oP 'python3\.\d+' | sort -V | tail -n 1)
+if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
+    echo "$newest_python"
+    echo "Failed to find newest version of python. TMAverage requires the use of python. Exiting..."
+    exit 1
+fi
+
+# Set config variables to default values:
+tmaverage_table_name="";tmaverage_stats_name="";tablespace_name="";
+tmanalog_table_name="";telemetry_analog_conversions_name="";telemetry_item_definitions_name=""
+
+# Set TMAverage static values from helper script. If the database name is not supported, this will fail.
+# Set static values from helper script. If the database name is not supported, this will fail.
+var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID" "$system_id" 2>&1)
+if [ $? -ne 0 ]; then
+    if [[ "$var_commands" == *"not supported by TMAverage"* ]]; then
+        echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."
+    else
+        echo "$var_commands"
+        echo "ERROR: An error occurred while parsing configs. Exiting..."
+    fi
+    exit 1
+fi
+
+eval "$var_commands"
 
 timestamp=$(date "+%Y%m%d-%H%M%S")
 LOGDIR="/tmp/TMAverageLogs/$database"
@@ -152,7 +179,7 @@ if [ ! -f "$SCRIPT_DIR/.username" ] || [ ! -f "$SCRIPT_DIR/.passwd" ]; then
     exit 1
 fi
 
-# Validate that username and password are valid. (NOTE: Currently pointing to personal repo, will update when PR is merged.)
+
 username=$(<"$SCRIPT_DIR/.username")
 password=$(<"$SCRIPT_DIR/.passwd")
 test_login=$("$HOME/common/oracle/TestOracleUserLogin.sh" "$username" "$password")
@@ -162,7 +189,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 if [[ "$test_login" != "Yes" ]]; then
-    echo "ERROR: .username or .passwd file in $SCRIPT_DIR is invalid. Please run './ConfigureTMAverageEnvironment.sh -u <username> <password>' to update. Exiting..."
+    echo "ERROR: .username or .passwd file in $SCRIPT_DIR is invalid. Please run './ConfigureTMAverageEnvironment.sh to update. Exiting..."
     exit 1
 fi
 
@@ -185,20 +212,36 @@ fi
 # If date option is not given, then determine dates from offset and range
 if [ $date_opt -eq 0 ]; then
     # Ensure that both offset and range are integers
-    if [[ ! "$3" =~ ^-?[0-9]+$ ]] || [[ ! "$4" =~ ^-?[0-9]+$ ]]; then
+    if [[ ! "$4" =~ ^-?[0-9]+$ ]] || [[ ! "$5" =~ ^-?[0-9]+$ ]]; then
         echo "ERROR: Offset and range must both be integers. Exiting..."
         exit 1
     fi
 
     # Parse the offset and range and get a start and end date.
-    start_date=$(date -d "-$3 days" "+%d-%b-%y")
+    start_date=$(date -d "-$4 days" "+%d-%b-%y")
     # Subtract 1 from range, so that script processes $range days of data, as the script is inclusive
-    end_date=$(date -d "$start_date +$(($4-1)) days" "+%d-%b-%y")
+    end_date=$(date -d "$start_date +$(($5-1)) days" "+%d-%b-%y")
     echo "Using start date $start_date and end date $end_date"
 else
-    start_date=${3^^}
-    end_date=${4^^}
+    start_date=${4^^}
+    end_date=${5^^}
 fi
+
+# Get MISC schema for GrantNewPermissions.sh
+misc_schema=$(GetSchemaName.sh -m -v)
+if [ $? -ne 0 ]; then
+    echo "$misc_schema"
+    echo "An error occurred while getting the MISC schema name. Exiting..."
+    exit 1
+fi
+
+# Get username to check for access
+username=$(<"$SCRIPT_DIR/.username")
+username=${username^^}
+
+# Check table permissions.
+select_tables="$telemetry_analog_conversions_name,$telemetry_item_definitions_name,$tmanalog_table_name"
+full_access_tables="$tmaverage_table_name,$tmaverage_stats_name"
 
 # If using OTFD, check that OTFD packages are functional
 if [ -n "$otfd_opt" ]; then
@@ -213,103 +256,29 @@ if [ -n "$otfd_opt" ]; then
         echo "One or more OTFD Packages/tables do not exist/has compilation errors. See procedure status above. Exiting..."
         exit 1
     fi
-fi
+    select_tables="$select_tables,$misc_schema.ONTHEFLYDECOM_RESULTS,$misc_schema.ONTHEFLYDECOM_ERRORS"
 
-# Get the MISC schema, then truncate the _MISC from it
-project_name=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
-if [ $? -ne 0 ]; then
-    echo "$project_name"
-    echo "An error occurred while running GetSchemaName.sh. Exiting..."
-    exit 1
 fi
-if [[ "$project_name" != *"_MISC" ]]; then
-    echo "ERROR: Attempted to retrieve MISC schema, got $project_name instead. Schema name must match glob *'_MISC'. Exiting..."
-    exit 1
-else
-    project_name="${project_name::-5}"
-fi
-project_name="${project_name^^}"
-
-select_tab_count=0
-# Set up table names based on project type
-if [[ $project_name == "AIM" ]]; then
-    select_tables="'TELEMETRYITEMDEFINITION', 'TELEMETRYANALOGCONVERSIONS', 'TMANALOG_TABLE'"
-    select_tab_count=$((select_tab_count+3))
-elif [[ $project_name == "EVE" ]]; then
-    select_tables="'TELEMETRYITEMDEFINITION', 'TELEMETRYANALOGCONVERSIONS', 'TMANALOG'"
-    select_tab_count=$((select_tab_count+3))
-else
-    select_tables="'TELEMETRYITEMDEFINITION', 'TELEMETRYANALOGCONVERSIONS', 'TMANALOG_SID1'"
-    select_tab_count=$((select_tab_count+3))
-fi
-insert_tables="'$tmaverage_table', '$tmaverage_stats_table'"
-
-# Check for read access to ONTHEFLYDECOM tables
-if [[ -n "$otfd_opt" ]]; then
-    select_tables+=", 'ONTHEFLYDECOM_RESULTS', 'ONTHEFLYDECOM_ERRORS'"
-    select_tab_count=$((select_tab_count+2))
-fi
-
-# Get username to check for access
-username=$(<"$SCRIPT_DIR/.username")
-username=${username^^}
 
 # Check SELECT permissions for read-only tables
-select_check=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
-    set heading off
-    set feedback off
-    whenever oserror exit 1
-    whenever sqlerror exit 1
-
-    SELECT COUNT(table_name) 
-    FROM dba_tab_privs 
-    WHERE 
-    grantee = '$username' AND
-    privilege = 'SELECT' AND
-    table_name in (${select_tables});
-    exit;
-EOD
-)
+select_check=$("$HOME/common/oracle/TestTablePermissions.sh" "$select_tables" "$username" SELECT)
 if [ $? -ne 0 ]; then
     echo "$select_check"
-    echo "An error occurred while checking SELECT permissions for user $username. Exiting..."
+    echo "An error occurred while running TestTablePermissions.sh to check SELECT permissions to $select_tables to $username. Exiting..."
     exit 1
-fi
-
-# Trim ALL whitespace, then check that all privileges are present
-select_check=$(echo "$select_check" | tr -d '[:space:]')
-if [[ $select_check != "$select_tab_count" ]]; then
-    echo "ERROR: User $username does not have SELECT permission for tables $select_tables. Please run ConfigureTMAverageEnvironment.sh to configure user. Exiting..."
+elif [[ "$select_check" == *"MISSING"* ]]; then
+    echo "ERROR: $username does not have SELECT permissions on $select_tables, or tables do not exist. Please run ConfigureTMAverageEnvironment.sh. Exiting..."
     exit 1
 fi
 
 # Check INSERT permissions for read-write tables
-insert_check=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
-    set heading off
-    set feedback off
-    whenever oserror exit 1
-    whenever sqlerror exit 1
-
-    SELECT COUNT(*) 
-    FROM dba_tab_privs 
-    WHERE 
-    grantee = '$username' AND
-    privilege = 'INSERT' AND
-    table_name in (${insert_tables});
-    exit;
-EOD
-)
+full_access_check=$("$HOME/common/oracle/TestTablePermissions.sh" "$full_access_tables" "$username" ALL)
 if [ $? -ne 0 ]; then
-    echo "$insert_check"
-    echo "An error occurred while checking INSERT permissions for user $username. Exiting..."
+    echo "$full_access_check"
+    echo "An error occurred while running TestTablePermissions.sh to check ALL permissions to $full_access_tables to $username. Exiting..."
     exit 1
-fi
-
-# Trim ALL whitespace, then check that all privileges are present
-insert_check=$(echo "$insert_check" | tr -d '[:space:]')
-if [[ "$insert_check" != "2" ]]; then
-    echo "ERROR: User $username does not have INSERT permission for tables $insert_tables, or the tables do not exist."
-    echo "Please run ConfigureTMAverageEnvironment.sh to configure user and confirm existence of the required tables. Exiting..."
+elif [[ "$full_access_check" == *"MISSING"* ]]; then
+    echo "ERROR: $username does not have ALL permissions on $full_access_tables, or tables do not exist. Please run ConfigureTMAverageEnvironment.sh. Exiting..."
     exit 1
 fi
 
@@ -326,10 +295,9 @@ fi
 
 echo "Running... $SCRIPT_DIR/ProcessTMAverageData.py $otfd_opt $exclude_opt $database $tmid $start_date $end_date $parallel_degree"
 
-
 # Execute the Python script with the prepared arguments
 echo "Running ProcessTMAverageData.py. See log output at /tmp/TMAverageLogs/"
-python "$SCRIPT_DIR/ProcessTMAverageData.py" $otfd_opt $exclude_opt "$database" "$tmid" "$start_date" "$end_date" "${parallel_degree}"
+python "$SCRIPT_DIR/ProcessTMAverageData.py" $otfd_opt $exclude_opt "$database" "$system_id" "$tmid" "$start_date" "$end_date" "${parallel_degree}"
 if [ $? -ne 0 ]; then
     echo "An error occurred while running ProcessTMAverageData.py. See log outputs at /tmp/TMAverageLogs/ for more information. Exiting..."
     exit 1

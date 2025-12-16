@@ -8,7 +8,8 @@
 #          For more detailed documentation go to https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
 # 
 # Author: Robert Schmidt
-# Modified on: September 18th, 2025 - RS
+# Created: April 3rd, 2025
+# Modified on: November 17th, 2025 - RS
 ###############################################################
 
 # System imports
@@ -30,12 +31,7 @@ import numpy as np
 # Project imports
 from TMAverageHelpers import (
     OTFDException, 
-    TMANALOG_DBS, 
-    DB_SCHEMAS, 
-    TMAVERAGE_TABLE_NAME, 
-    TMAVERAGE_STATS_NAME, 
-    TELEMETRYITEMDEFINITION_DBS, 
-    TELEMETRYANALOGCONVERSIONS_DBS
+    TMAverageConfigs
 )
 
 # Global variable for the database connection (variable exists independently for each process and is persistent as long as the process exists.)
@@ -44,7 +40,7 @@ db_connection: oracledb.Connection = None
 # Global variable to track if the thread is ready to function. For example, if it did not successfully initialize,
 # the thread will be in a failed state, and not even attempt to do any processing. The same occurs if the script is not able to access
 # the necessary tables (indicating permission or database access issues).
-failed = True
+failed: bool = True
 
 def get_value_from_file(file_path):
     """
@@ -60,18 +56,18 @@ def get_value_from_file(file_path):
     try:
         # Open the file to read the password
         with open(full_file_path, "r") as file:
-            password = (
+            value = (
                 file.readline().strip()
             )  # Read the first line and strip whitespace
 
-        if not password:
+        if not value:
             print(
                 f"Warning: The file {full_file_path} is empty or contains only whitespace."
             )
             return None
 
         print(f"Value successfully read from: {full_file_path}")
-        return password
+        return value
 
     except FileNotFoundError:
         print(f"Error: The file {full_file_path} was not found.")
@@ -85,13 +81,13 @@ def get_value_from_file(file_path):
 
 def update_tmaverage_stats(
         cursor: oracledb.Cursor,
-        database: str,
+        config: TMAverageConfigs,
         start_time: datetime.datetime,
         time_duration: datetime.timedelta = None,
         failed: bool = None,
         cancelled: bool = None,
-        ingested: int = None,
-        inserted: int = None,
+        rows_read: int = None,
+        rows_returned: int = None,
         unique_constraint_num: int = None,
         otfd_error_num: int = None,
         errors: list[str] = None,
@@ -108,39 +104,39 @@ def update_tmaverage_stats(
     failed = 1 if failed else 0
     cancelled = 1 if cancelled else 0
 
-    select_sql = f"""SELECT COUNT(*) FROM {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} WHERE DATABASE_NAME=:database AND START_TIME=:start_time"""
+    select_sql = f"""SELECT COUNT(*) FROM {config.TMAVERAGE_STATS_NAME} WHERE DATABASE_NAME=:database AND START_TIME=:start_time"""
 
-    insert_sql = f"""INSERT INTO {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} 
-    (DATABASE_NAME, START_TIME, TIME_RAN, FAILED, CANCELLED, INGESTED, INSERTED, UNIQUE_CONSTRAINT_NUM, OTFD_ERROR_NUM, ERRORS) VALUES 
-    (:database, :start_time, :time_ran, :failed, :cancelled, :ingested, :inserted, :unique_constraint_num, :otfd_error_num, :errors)"""
+    insert_sql = f"""INSERT INTO {config.TMAVERAGE_STATS_NAME} 
+    (DATABASE_NAME, START_TIME, TIME_RAN, FAILED, CANCELLED, ROWS_READ, ROWS_RETURNED, UNIQUE_CONSTRAINT_NUM, OTFD_ERROR_NUM, ERRORS) VALUES 
+    (:database, :start_time, :time_ran, :failed, :cancelled, :rows_read, :rows_returned, :unique_constraint_num, :otfd_error_num, :errors)"""
 
-    update_sql = f"""UPDATE {DB_SCHEMAS[database]}.{TMAVERAGE_STATS_NAME} SET 
-        TIME_RAN    = :time_ran, 
-        FAILED      = :failed,
-        CANCELLED   = :cancelled,
-        INGESTED    = :ingested,
-        INSERTED    = :inserted,
+    update_sql = f"""UPDATE {config.TMAVERAGE_STATS_NAME} SET 
+        TIME_RAN        = :time_ran, 
+        FAILED          = :failed,
+        CANCELLED       = :cancelled,
+        ROWS_READ       = :rows_read,
+        ROWS_RETURNED   = :rows_returned,
         UNIQUE_CONSTRAINT_NUM = :unique_constraint_num,
-        OTFD_ERROR_NUM = :otfd_error_num,
-        ERRORS      = :errors
+        OTFD_ERROR_NUM  = :otfd_error_num,
+        ERRORS          = :errors
         WHERE DATABASE_NAME=:database AND START_TIME=:start_time
     """
 
     try:
         entry_count = cursor.execute(select_sql, 
-            database=database,
+            database=config.DATABASE,
             start_time=start_time,
         ).fetchone()[0]
 
         if entry_count == 0: # No TMAVERAGE_STATS entry, so insert one
             cursor.execute(insert_sql,
-                database=database,
+                database=config.DATABASE,
                 start_time=start_time,
                 time_ran=time_duration,
                 failed=failed,
                 cancelled=cancelled,
-                ingested=ingested,
-                inserted=inserted,
+                rows_read=rows_read,
+                rows_returned=rows_returned,
                 unique_constraint_num=unique_constraint_num,
                 otfd_error_num=otfd_error_num,
                 errors=errors_clob
@@ -148,13 +144,13 @@ def update_tmaverage_stats(
             cursor.connection.commit()
         else: # TMAVERAGE_STATS entry exists, so update.
             cursor.execute(update_sql,
-                database=database,
+                database=config.DATABASE,
                 start_time=start_time,
                 time_ran=time_duration,
                 failed=failed,
                 cancelled=cancelled,
-                ingested=ingested,
-                inserted=inserted,
+                rows_read=rows_read,
+                rows_returned=rows_returned,
                 unique_constraint_num=unique_constraint_num,
                 otfd_error_num=otfd_error_num,
                 errors=errors_clob
@@ -231,7 +227,7 @@ def init_worker(
     db_connection = oracledb.connect(
         user=username, password=password, dsn=connection_string
     )
-    failed = False  # Only set global variable if successfully initialized.=
+    failed = False  # Only set global variable if successfully initialized.
 
 
 def fail_worker():
@@ -250,7 +246,7 @@ def fail_worker():
 
 
 def fetch_values_by_time_range(
-    database: str,
+    config: TMAverageConfigs,
     tmid,
     start_time_gps: int,
     end_time_gps: int,
@@ -268,14 +264,14 @@ def fetch_values_by_time_range(
     # This exists because AIMPROD's primary key index has a 1st column of SID,
     # and excluding it causes the optimizer not to use the index at all.
     sid_clause = ""
-    if database[:3] == "aim":
+    if config.DATABASE[:3] == "aim":
         sid_clause = " SID=1 AND "
 
     sql = f"""
-        SELECT SCT_VTCW, VALUE FROM {TMANALOG_DBS[database]} WHERE 
+        SELECT {config.TABLE_TIME_COLUMN}, VALUE FROM {config.TMANALOG_TABLE_NAME} WHERE 
         {sid_clause}
         (tmid = {tmid}) AND 
-        (SCT_VTCW >= {start_time_gps} AND (SCT_VTCW < {end_time_gps}))
+        ({config.TABLE_TIME_COLUMN} >= {start_time_gps} AND ({config.TABLE_TIME_COLUMN} < {end_time_gps}))
     """
 
     logger.debug(sql)
@@ -309,6 +305,7 @@ def fetch_values_by_time_range(
     results_len = len(results)  # Pre-allocates numpy array to prevent appends.
     results_values = np.zeros((results_len), dtype=np.float128)
     results_bucket_ids = np.zeros((results_len), dtype=np.uintc)
+    results_times = np.zeros((results_len), dtype=np.uint64) # Oracle NUMBER (0, 16)
 
     logger.info(f"Retrieved {results_len} records. Ingesting...")
 
@@ -320,6 +317,7 @@ def fetch_values_by_time_range(
         time = row[0]
         timeDelta = time - start_time_gps
         results_bucket_ids[row_number] = int(math.trunc(timeDelta / 300000000))
+        results_times[row_number] = time
 
         results_values[row_number] = row[1]
         row_number += 1
@@ -328,6 +326,7 @@ def fetch_values_by_time_range(
         results_len,
         results_values,
         results_bucket_ids,
+        results_times
     )
 
 
@@ -335,6 +334,7 @@ def fetch_values_by_time_range(
 # script.
 # Returns a tuple of (results_len, results_values, and results_bucket_ids)
 def fetch_otfd_values_by_time_range(
+    config: TMAverageConfigs,
     tmid: int,
     start_time_gps: int,
     end_time_gps: int,
@@ -354,11 +354,16 @@ def fetch_otfd_values_by_time_range(
         # Call PSQL function to retrieve data (SID (always 1), tmid, START_ERT (unused), END_ERT (unused), START_GPS, END_GPS))
         cursor.callproc(
             f"ONTHEFLYDECOM.selectNumericTlm",
-            [1, tmid, -1, -1, start_time_gps, end_time_gps],
+            keyword_parameters={
+                "systemId_in": config.SID,
+                "tlmId_in": tmid,
+                f"start{config.OTFD_TIME_COLUMN}_in": start_time_gps,
+                f"stop{config.OTFD_TIME_COLUMN}_in": end_time_gps,
+            }
         )
         # Calling the function should lock the thread until it returns, at which point the results will be in ONTHEFLYDECOM_RESULTS
         otfd_results = cursor.execute(
-            "SELECT SCT, VALUE FROM ONTHEFLYDECOM_RESULTS"
+            f"SELECT {config.OTFD_TIME_COLUMN}, VALUE FROM ONTHEFLYDECOM_RESULTS"
         ).fetchall()
         # Check if any errors occurred
         otfd_error = cursor.execute("SELECT * FROM ONTHEFLYDECOM_ERRORS").fetchall()
@@ -403,6 +408,7 @@ def fetch_otfd_values_by_time_range(
     results_len = len(otfd_results)
     results_values = np.zeros((results_len), dtype=np.float128)
     results_bucket_ids = np.zeros((results_len), dtype=np.uintc)
+    results_times = np.zeros((results_len), dtype=np.uint64) # Oracle NUMBER (0, 16)
 
     logger.info(f"Retrieved {results_len} records. Ingesting...")
 
@@ -414,6 +420,7 @@ def fetch_otfd_values_by_time_range(
         time = row[0]
         timeDelta = time - start_time_gps
         results_bucket_ids[row_number] = int(math.trunc(timeDelta / 300000000))
+        results_times[row_number] = time
 
         results_values[row_number] = row[1]
         row_number += 1
@@ -424,25 +431,47 @@ def fetch_otfd_values_by_time_range(
         results_len,
         results_values,
         results_bucket_ids,
+        results_times
     )
 
-
-def fetch_analog_conversions_by_tmid(tmid, database):
+def fetch_analog_conversions(
+        start_time_gps: int,
+        end_time_gps: int,
+        tmid: int, 
+        config: TMAverageConfigs,
+        ):
     """
-    Fetches a single analog conversion from the TelemetryAnalogConversion table. This table is not expected to have multiple entries,
-    and the function only fetches the first one, if more than one is found.
+    Fetches all relevant analog conversions from TelemetryAnalogConversion table. Depending on the config, this query may return 
+    multiple analog conversions that are time-variant. 
     """
     global db_connection
     logger = multiprocessing.get_logger()
     cursor = db_connection.cursor()
 
-    sql = f"""select C.c0,  C.c1,  C.c2,  C.c3,  C.c4,  C.c5,  C.c6,  C.c7 
-            FROM {TELEMETRYANALOGCONVERSIONS_DBS[database]} C 
-            where C.tlmId = {tmid} order by C.segmentNumber"""
+    # Note that if the conversion is segmented and the segments overlap, the highest SEGMENTNUMBER will take priority
+    # due to being last in the returned data.
+    if config.TIME_VARIANT_ANALOG_CONVERSION == "true":
+        sql = f"""select C.c0, C.c1, C.c2, C.c3, C.c4, C.c5, C.c6, C.c7, DEFINITIONSTART, LOWVALUE, HIGHVALUE
+                FROM {config.TELEMETRY_ANALOG_CONVERSIONS_NAME} C
+                where C.tlmId = {tmid} AND
+                DEFINITIONSTART <= {end_time_gps}
+                AND DEFINITIONSTART >= COALESCE((
+                    SELECT MAX(DEFINITIONSTART) FROM {config.TELEMETRY_ANALOG_CONVERSIONS_NAME}
+                    WHERE tlmId = {tmid} AND DEFINITIONSTART <= {start_time_gps}
+                ), 0)
+                ORDER BY C.SEGMENTNUMBER ASC
+        """
+    else:
+        # If not time variant, then set DEFINITIONSTART to 0. 
+        sql = f"""select C.c0, C.c1, C.c2, C.c3, C.c4, C.c5, C.c6, C.c7, 0 AS DEFINITIONSTART, LOWVALUE, HIGHVALUE
+                FROM {config.TELEMETRY_ANALOG_CONVERSIONS_NAME} C 
+                where C.tlmId = {tmid}
+                ORDER BY C.SEGMENTNUMBER ASC
+        """
 
     logger.debug(sql)
     try:
-        result = cursor.execute(sql).fetchone()
+        results = cursor.execute(sql).fetchall()
     except oracledb.DatabaseError as error:
         if str(error).find("ORA-00942") != -1:
             logger.fatal(
@@ -461,10 +490,13 @@ def fetch_analog_conversions_by_tmid(tmid, database):
             )
             raise error
 
-    return result
+    return results
 
 
-def insert_tmaverage_rows(database: str, tmaverage_values: list):
+def insert_tmaverage_rows(
+        config: TMAverageConfigs,
+        tmaverage_values: list
+    ):
     """
     Attempts to insert the passed array into the TMAverage table. Returns the number of rows inserted if successful,
     and raises an exception if the process fails.
@@ -481,8 +513,8 @@ def insert_tmaverage_rows(database: str, tmaverage_values: list):
 
     cursor = db_connection.cursor()
 
-    sql = f"""INSERT INTO {DB_SCHEMAS[database]}.{TMAVERAGE_TABLE_NAME} 
-        (tmid, SCT_VTCW, AVERAGE_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, VALUE_COUNT) 
+    sql = f"""INSERT INTO {config.TMAVERAGE_TABLE_NAME} 
+        (tmid, {config.TABLE_TIME_COLUMN}, AVERAGE_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, VALUE_COUNT) 
         VALUES (:1, :2, :3, :4, :5, :6)"""
 
     logger.debug(sql)
@@ -511,7 +543,7 @@ def insert_tmaverage_rows(database: str, tmaverage_values: list):
             )
             fail_worker()
             raise error
-        elif str(error).find("ORA-01654") != -1 or str(error).find("ORA-01647"):
+        elif str(error).find("ORA-01654") != -1 or str(error).find("ORA-01647") != -1:
             logger.exception(
                 "ORA-01654: unable to extend index. / ORA-01647: tablespace is read-only, cannot allocate space in it"
                 "This error is likely due to the script running out of storage space or the tablespace being set as read-only. "
@@ -571,20 +603,17 @@ def convert_dt2gps(DTValue, isAim):
 
 def calculate_day_start_end_gps(
     date: datetime.datetime,
-    database: str,
+    config: TMAverageConfigs,
 ):
     """
     Gets the start and end times, in GPS for any given day.
     """
-    global db_connection
-
-    cursor = db_connection.cursor()
     # The 18_000_000 offset (18 seconds) exists to recreate how the IDL script for aimprod functioned
     # this is not strictly necessary, but is being recreated nonetheless.
     start_time_gps = (
         convert_dt2gps(
             f"{date.strftime('%d-%b-%y')} 12.00.00.000000000 AM",
-            database == "aimprod",
+            config.DATABASE == "aimprod",
         )
         - 18_000_000
     )
@@ -592,40 +621,45 @@ def calculate_day_start_end_gps(
     end_time_gps = (
         convert_dt2gps(
             f"{date.strftime('%d-%b-%y')} 11.59.59.999999999 PM",
-            database == "aimprod",
+            config.DATABASE == "aimprod",
         )
         - 18_000_000
     )
 
     return (start_time_gps, end_time_gps)
 
-
-def calibrate(value, c):
+def calibrate(value, calibration_set):
     """
     Helper function that is passed to numpy to calibrate the data. Is iterated over the numpy array.
+    Expects c to be an array of calibration sets from highest DEFINITIONSTART to lowest DEFINITIONSTART.
+    
+    calibration_sets:
+        calibration_set:
+            0-7: Polynomial coefficients
     """
+
     newValue = (
-        c[0]
-        + c[1] * value
-        + c[2] * value**2
-        + c[3] * value**3
-        + c[4] * value**4
-        + c[5] * value**5
-        + c[6] * value**6
-        + c[7] * value**7
+        calibration_set[0]
+        + calibration_set[1] * value
+        + calibration_set[2] * value**2
+        + calibration_set[3] * value**3
+        + calibration_set[4] * value**4
+        + calibration_set[5] * value**5
+        + calibration_set[6] * value**6
+        + calibration_set[7] * value**7
     )
     return newValue
 
 
 def process_values_by_tmid(
     tmid: int,
-    database: str,
+    config: TMAverageConfigs,
     start_date: datetime.datetime,
     is_otfd: bool,
 ):
     """
     This function fetches, calibrates, and finds the minimum, maximum, and average values for each 5 minute period
-    for a single specified start_date. It returns a tuple of the number of rows ingested and inserted, which are tallied
+    for a single specified start_date. It returns a tuple of the number of rows read and inserted, which are tallied
     up in the main thread. If the thread is not initialized, it will return (-1, -1), and the main thread will interpret
     that result as a complete failure. This function is run on each child process for each specified TMID.
     """
@@ -642,7 +676,7 @@ def process_values_by_tmid(
 
     logger.info(f"Calculating start and end for date {start_date}.")
 
-    start_time_gps, end_time_gps = calculate_day_start_end_gps(start_date, database)
+    start_time_gps, end_time_gps = calculate_day_start_end_gps(start_date, config)
 
     # Fetch all data for the given date range.
     logger.info(
@@ -651,13 +685,14 @@ def process_values_by_tmid(
 
     if is_otfd:
         data = fetch_otfd_values_by_time_range(
+            config=config,
             tmid=tmid,
             start_time_gps=start_time_gps,
             end_time_gps=end_time_gps,
         )
     else:
         data = fetch_values_by_time_range(
-            database=database,
+            config=config,
             tmid=tmid,
             start_time_gps=start_time_gps,
             end_time_gps=end_time_gps,
@@ -666,6 +701,7 @@ def process_values_by_tmid(
     results_len = data[0]
     results_values = data[1]
     results_bucket_ids = data[2]
+    results_times = data[3]
 
     # If there is no data for the time range and tmid, then exit.
     if results_len == 0:
@@ -678,29 +714,67 @@ def process_values_by_tmid(
     unique_bucket_ids = range(int(((end_time_gps - start_time_gps) / 300000000)))
 
     # Fetch calibration data, then apply to all values for the specific TMID.
-    calibration_data = fetch_analog_conversions_by_tmid(tmid, database)
+    calibration_sets = fetch_analog_conversions(start_time_gps, end_time_gps, tmid, config)
 
-    logger.info("Calibrating data...")
-    # Apply the polynomial calibration every time, as long as it exists.
-    if calibration_data != None:
-        # Splices out the the polynomial coefficients, removes unnecessary data
-        results_values = np.apply_along_axis(
-            calibrate, -1, results_values, (calibration_data)
+    if len(calibration_sets) > 0:
+        logger.info("Calibrating data...")
+    else:
+        logger.info("No calibration required...")
+
+    for i in range(len(calibration_sets)):
+        calibration_set = calibration_sets[i]
+        definition_start = calibration_set[8]
+        low_value = calibration_set[9]
+        high_value = calibration_set[10]
+
+        # Get next-largest DEFINITIONSTART (note that there can be multiple records with the same DEFINITIONSTART for segmented
+        # calibrations)
+        future_sets = [c_set[8] for c_set in calibration_sets if c_set[8] > definition_start]
+        if len(future_sets) > 0:
+            definition_end = min(future_sets)
+        else:
+            definition_end = None
+        
+        # Determine what data is relevant for a given calibration set. The calibration set must be within the 
+        # domain of a given calibration set (from the definition_start of the set to the start of the next set).
+
+        # Generate a boolean mask for what values should be calibrated with this specific calibration set. 
+        calibration_set_mask = (results_times >= definition_start)
+
+        if definition_end: 
+            calibration_set_mask &= (results_times < definition_end)
+
+        # IMPORTANT: Currently low_value and high_value are defined as non-decimal NUMBERs in the oracle database. 
+        #            as a result, the items in results_values get implicitly cast to ints before comparison. I believe
+        #            this is is *probably* the intended usage, as both ends are being interpreted as inclusive, but this may
+        #            be incorrect.
+        if low_value:
+            calibration_set_mask &=  (low_value <= results_values)
+        if high_value:
+            calibration_set_mask &= (high_value >= results_values)
+                
+        # Get only the data relevant to the calibration set.
+        selected_data = results_values[calibration_set_mask]
+
+        calibrated_selection = np.apply_along_axis(
+            calibrate, -1, selected_data, (calibration_set)
         )
+
+        results_values[calibration_set_mask] = calibrated_selection
 
     logger.info("Averaging data...")
     insertion_data = []
     for bucket_id in unique_bucket_ids:
         bucket_mask = np.where(results_bucket_ids == bucket_id, True, False)
         bucket_values = results_values[bucket_mask]
-        sct_vtcw = int(
+        timestamp = int(
             bucket_id * 300_000_000 + start_time_gps + 150_000_000 + 18_000_000
         )  # Adds back 18 seconds to ensure that the SCT values are on 5-minute increments, emulating the behavior on AIM
 
         current_bucket_count = int(np.size(bucket_values))
 
         if current_bucket_count == 0:
-            insertion_data.append((int(tmid), sct_vtcw, 0, 0, 0, 0))
+            insertion_data.append((int(tmid), timestamp, 0, 0, 0, 0))
             continue
 
         # WARNING: The current version of the script uses a float 128 for the numpy array.
@@ -713,7 +787,7 @@ def process_values_by_tmid(
         insertion_data.append(
             (
                 int(tmid),
-                sct_vtcw,
+                timestamp,
                 current_bucket_average,
                 current_bucket_min,
                 current_bucket_max,
@@ -721,13 +795,13 @@ def process_values_by_tmid(
             )
         )
     try:
-        inserted = insert_tmaverage_rows(database, insertion_data)
+        num_inserted = insert_tmaverage_rows(config, insertion_data)
     except Exception as e:
-        # This adds the number of rows that were ingested to any insert error, so that
-        # the main process can still report how many rows were ingested.
-        e.ingested_num = results_len
+        # This adds the number of rows that were read to any insert error, so that
+        # the main process can still report how many rows were read before the insert error.
+        e.rows_read = results_len
         raise e
-    return (results_len, inserted)
+    return (results_len, num_inserted)
 
 
 def main():
@@ -756,6 +830,7 @@ def main():
         help="filename for newline-separated TMIDs to exclude",
     )
     parser.add_argument("database", type=str)
+    parser.add_argument("system_id", type=int)
     parser.add_argument(
         "tmid",
         type=str,
@@ -778,9 +853,13 @@ def main():
     arguments = parser.parse_args()
 
     database = arguments.database.lower()
+    system_id = arguments.system_id
     tmid_input = arguments.tmid
     is_otfd = arguments.otfd
     parallel_degree = arguments.parallel_degree
+
+    # Once inputs are gathered, load TMAverage configs. This also checks if the database is supported.
+    config = TMAverageConfigs(database, system_id)
 
     # Configure the logger for the main thread
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -862,14 +941,6 @@ def main():
         # Error message is already printed by get_password_from_file
         exit(1)
 
-    # Validate database input, ensure that script has an entry in DB_SCHEMAS
-    if database not in DB_SCHEMAS.keys():
-        logger.critical(
-            f"Selected database is not supported by script. Supported databases "
-            f"are: {str(tuple(DB_SCHEMAS.keys()))}"
-        )
-        exit(1)
-
     # Connect to the database as a test to ensure credentials are valid.
     # Each worker process will connect to the DB individually.
     try:
@@ -897,10 +968,9 @@ def main():
     # Initialize the tmaverage_stats entry.
     update_tmaverage_stats(
         cursor,
-        database=database,
+        config=config,
         start_time=start_time
     )
-
 
     try:
         # If all tmids is specified, then query for them.
@@ -914,14 +984,14 @@ def main():
                 exclusion_clause = f" AND TLMID NOT IN ('{exclusion_list}')"
 
             tmids = cursor.execute(
-                f"SELECT DISTINCT TLMID from {TELEMETRYITEMDEFINITION_DBS[database]} WHERE dataType='U' OR dataType='I' OR dataType='F'{exclusion_clause}"
+                f"SELECT DISTINCT TLMID from {config.TELEMETRY_ITEM_DEFINITIONS_NAME} WHERE dataType='U' OR dataType='I' OR dataType='F'{exclusion_clause}"
             ).fetchall()
             tmids = [tmid[0] for tmid in tmids]
             tmids.sort()
             logger.info(f"There are {len(tmids)} unique tmids.")
     except:
         logger.exception(
-            f"An error occurred while fetching TMIDs from {TELEMETRYITEMDEFINITION_DBS[database]}. Exiting..."
+            f"An error occurred while fetching TMIDs from {config.TELEMETRY_ITEM_DEFINITIONS_NAME}. Exiting..."
         )
         cursor.close()
         connection.close()
@@ -937,8 +1007,8 @@ def main():
     )
 
     error_status = False
-    total_ingested_rows = 0
-    total_inserted_rows = 0
+    total_rows_read = 0
+    total_rows_returned = 0
 
     critical_failure = False
     cancelled = False
@@ -952,15 +1022,15 @@ def main():
         # Setup the process_values_by_tmid partial with the appropriate static arguments
         process_partial = partial(
             process_values_by_tmid,
-            database=database,
+            config=config,
             start_date=single_date,
             is_otfd=is_otfd,
         )
 
         logger.info(f"Processing data for TMID(s) {tmid_input} for date {single_date}")
 
-        day_ingested_rows = 0
-        day_inserted_rows = 0
+        day_rows_read = 0
+        day_rows_returned = 0
 
         day_error_status = False
         critical_failure = False
@@ -982,16 +1052,16 @@ def main():
                 if result == (-1, -1):
                     critical_failure = True
                 else:
-                    day_ingested_rows += result[0]
-                    day_inserted_rows += result[1]
+                    day_rows_read += result[0]
+                    day_rows_returned += result[1]
 
             except KeyboardInterrupt:
                 logger.critical(
                     "Script has been cancelled. Terminating multiprocessing pool..."
                 )
 
-                logger.info(f"Rows ingested before cancel: {total_ingested_rows}")
-                logger.info(f"Rows ingested before cancel: {total_inserted_rows}")
+                logger.info(f"Rows read before cancel: {total_rows_read}")
+                logger.info(f"Rows returned before cancel: {total_rows_returned}")
 
                 worker_pool.terminate()
                 cancelled = True
@@ -1001,8 +1071,8 @@ def main():
                 if str(error).find("ORA-00001") != -1:
                     # This is not a critical failure, and script will continue processing. Log error to user and continue
                     unique_constraint_num += 1
-                    if hasattr(error, "ingested_num"):
-                        day_ingested_rows += error.ingested_num
+                    if hasattr(error, "rows_read"):
+                        day_rows_read += error.rows_read
                 else:
                     error_status = True
                     logger.exception(
@@ -1013,7 +1083,7 @@ def main():
             except OTFDException as error:
                 all_errors.append(f"An OTFD error occurred. ONTHEFLYDECOM_ERRORS Rows: {error.error_rows}")
                 otfd_error_num += len(error.error_rows)
-            except:
+            except Exception as error:
                 error_status = True
                 logger.exception(
                     f"An exception occurred while processing data for TMID {tmid_input} for date {single_date}. Please see below output.",
@@ -1021,8 +1091,8 @@ def main():
                 )
                 all_errors.append(traceback.format_exc())
 
-                if hasattr(error, "ingested_num"):
-                    day_ingested_rows += error.ingested_num
+                if hasattr(error, "rows_read"):
+                    day_rows_read += error.rows_read
 
 
         # Day error checks:
@@ -1057,11 +1127,11 @@ def main():
             break
                     
         logger.info(f"Processing for date {single_date} complete.")
-        logger.info(f"Ingested {day_ingested_rows} rows.")
-        logger.info(f"Inserted {day_inserted_rows} rows.")
+        logger.info(f"Read {day_rows_read} rows.")
+        logger.info(f"Returned {day_rows_returned} rows.")
 
-        total_inserted_rows += day_inserted_rows
-        total_ingested_rows += day_ingested_rows
+        total_rows_returned += day_rows_returned
+        total_rows_read += day_rows_read
 
     worker_pool.close()
     worker_pool.join()
@@ -1072,13 +1142,13 @@ def main():
 
     update_tmaverage_stats(
         cursor=connection.cursor(),
-        database=database,
+        config=config,
         start_time=start_time,
         time_duration=duration,
         failed=critical_failure,
         cancelled=cancelled,
-        ingested=total_ingested_rows,
-        inserted=total_inserted_rows,
+        rows_read=total_rows_read,
+        rows_returned=total_rows_returned,
         # Every insert is guaranteed to insert 288 rows (5m * 288 = 1 day), so multiply failed bulk inserts by 288.
         unique_constraint_num=unique_constraint_num*288,
         otfd_error_num=otfd_error_num,
@@ -1100,8 +1170,8 @@ def main():
         logger.critical(
             "One or more of the worker threads failed for an unknown reason. Please check worker logs to determine the cause of failure. \n"
         )
-        logger.info(f"Rows ingested before failure: {total_ingested_rows}")
-        logger.info(f"Rows ingested before failure: {total_inserted_rows}")
+        logger.info(f"Rows read before failure: {total_rows_read}")
+        logger.info(f"Rows returned before failure: {total_rows_returned}")
         exit(1)
 
     if error_status:
@@ -1109,14 +1179,14 @@ def main():
             "One or more errors occurred during execution. "
             " Please check the above output and the log files for more details."
         )
-        logger.info(f"Rows ingested: {total_ingested_rows}")
-        logger.info(f"Rows inserted: {total_inserted_rows}")
+        logger.info(f"Rows read: {total_rows_read}")
+        logger.info(f"Rows returned: {total_rows_returned}")
         exit(1)
 
     else:
         logger.info("Script has successfully completed!")
-        logger.info(f"Rows ingested: {total_ingested_rows}")
-        logger.info(f"Rows inserted: {total_inserted_rows}")
+        logger.info(f"Rows read: {total_rows_read}")
+        logger.info(f"Rows returned: {total_rows_returned}")
         exit(0)
 
 if __name__ == "__main__":

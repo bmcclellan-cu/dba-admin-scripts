@@ -1,24 +1,29 @@
 #!/bin/bash
 #
-# Purpose: This script creates the TMAverage tablespace and table in the L1A schema,
-#          as well as (optionally) a user with the required permissions to populate the
-#          table.
+# Purpose:  This script creates the TMAverage tablespace and table in the L1A schema,
+#           as well as (optionally) a user with the required permissions to populate the
+#           table.
 # 
-# Notes: The L1A schema must exist in order for this script to work. 
-#        The script defaults to assuming that the analog table is TMANALOG_SID1, but can be
-#        overwritten for cases where the table is different.
-#       
-#        The -v option creates a venv in the same directory as the script is located with the 
-#        required dependencies for the python script to run.
+# Notes:    This script uses TMAverageHelpers.py to set various static parameters that vary by 
+#           database. Any updates to tmaverage configurations must be done in TMAverageHelpers.py
+# 
+#           For more detailed documentation go to https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
+# 
+# IMPORTANT:    As a part of the TMAverage & TMAverage_Stats table checks, this script will validate 
+#               that the MOST RECENT DDL changes have been applied to the respective table. It is 
+#               assumed that all previous updates have been applied, and the the only check that is 
+#               performed is for the most recent modifications. This check must be updated every time 
+#               the DDL is updated, and the respective variables in TMAverageHelpers.py must be updated:
+#               tmaverage_table_check_columns, tmaverage_stats_check_columns.
+# 
 # 
 # Author: Robert Schmidt
-# Created: Jun 6, 2025
-# Last Modified: September 18th, 2025 - RS
+# Created: June 6th, 2025
+# Last Modified: November 17th, 2025 - RS
 ##########################################################################
-usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafile ] (optional, create TMAverage_SID1 tablespace) ] [ -b (optional, create TMAverage tables) ] [ -v (optional, create venv in tmaverage script directory ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ username (optional) ] [ password (optional) ]"
-example1="Example: ./ConfigureTMAverageEnvironment.sh -t /ssd_internal/Robert/AIMPROD_TMAVERAGE/tmaverage_table.dbf"
-example2="         ./ConfigureTMAverageEnvironment.sh -u -o -v PROCESSTMIDTEST testPWD"
-
+usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafile ] (optional, create TMAverage tablespace) ] [ -b (optional, create TMAverage tables) ] [ -v (optional, create venv in tmaverage script directory, does not require system_id ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ system_id ] [ username (optional) ] [ password (optional) ]"
+example1="Example: ./ConfigureTMAverageEnvironment.sh -t 1 /ssd_internal/Robert/AIMPROD_TMAVERAGE/tmaverage_table.dbf"
+example2="         ./ConfigureTMAverageEnvironment.sh -u -o -v 1 PROCESSTMIDTEST testPWD"
 
 user_opt=0
 otfd_opt=0
@@ -43,7 +48,7 @@ while getopts ":hubovt:" option; do
         venv_opt=1
         ;;
     t)
-        datafile_path=$OPTARG
+        datafile_path="$OPTARG"
         ;;
     b)
         table_opt=1
@@ -60,27 +65,34 @@ shift $(($OPTIND -1))
 username=""
 password=""
 
-# Set static values. These are used so that exceptions can be easily managed (aim).
-tablespace_name="TMAVERAGE_SID1"
-tmaverage_table_name="TMAVERAGE_SID1"
-tmaverage_stats_name="TMAVERAGE_STATS"
-
-tmanalog_table_name="TMANALOG_SID1"
-
 # Resolve the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Check and set parameters
-if [[ $user_opt -ne 0 && $# -eq 2 ]]; then
-    username="$1"
-    password="$2"
-elif [[ $user_opt -eq 0 && $# -eq 0 ]]; then
-    : # No parameters to set
-else    
+
+# The -u option requires the SID, username, and password parameters.
+if [[ $user_opt -ne 0 && $# -eq 3 ]]; then
+    system_id="$1"
+    username="$2"
+    password="$3"
+
+    # The -o, and -b options need the SID parameter.
+elif [[ $# -eq 1 ]] && { [ $otfd_opt -eq 1 ] || [ $table_opt -eq 1 ]; }; then
+    system_id="$1"
+
+    # The -v option requires no parameters.
+elif [[ $# -eq 0 ]] && [ $venv_opt -eq 1 ]; then
+    :
+else
     echo "Invalid parameters."
     echo "$usage"
     echo "$example1"
     echo "$example2"
+    exit 1
+fi
+
+# If system_id is set, check it.
+if [ -n "$system_id" ] && ! [[ $system_id =~ ^[0-9]+$ ]]; then
+    echo "ERROR: System_ID must be a valid integer. Exiting..."
     exit 1
 fi
 
@@ -116,36 +128,38 @@ if [ -n "$sid_check" ]; then
     exit 1
 fi
 
-# Gets the MISC schema, then truncate the _MISC from it. 
-project_name=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
-if [ $? -ne 0 ]; then
-    echo "$project_name"
-    echo "An error occurred while running GetSchemaName.sh. Exiting..."
+newest_python=$(ls /usr/bin/python3* | grep -oP 'python3\.\d+' | sort -V | tail -n 1)
+if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
+    echo "$newest_python"
+    echo "Failed to find newest version of python. TMAverage requires the use of python. Exiting..."
     exit 1
 fi
-if [[ "$project_name" != *"_MISC" ]]; then
-    echo "Attempted to retrieve MISC schema, got $project_name instead. Schema name must match glob *'_MISC'. Exiting..."
-    exit 1
-else
-    project_name="${project_name::-5}"
+
+# If system_id is set, then get SID-dependent helper variables.
+if [ -n "$system_id" ]; then
+    # Set config variables to default values:
+    tmaverage_table_name="";tmaverage_stats_name="";tablespace_name="";tmanalog_table_name="";
+    telemetry_analog_conversions_name="";telemetry_item_definitions_name="";tmaverage_table_ddl="";tmaverage_stats_ddl=""
+    tmaverage_table_check_columns="";tmaverage_stats_check_columns=""
+
+    # Set static values from helper script. Also checks if database is supported by script.
+    var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID" "$system_id" 2>&1)
+    if [ $? -ne 0 ]; then
+        if [[ "$var_commands" == *"not supported by TMAverage"* ]]; then
+            echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."
+        else
+            echo "$var_commands"
+            echo "ERROR: An error occurred while parsing configs. Exiting..."
+        fi
+        exit 1
+    fi
+
+    eval "$var_commands"
+
+    # Split apart table names for helper scripts
+    IFS="." read -r tmaverage_schema tmaverage_tab <<< "$tmaverage_table_name"
+    IFS="." read -r stats_schema stats_tab <<< "$tmaverage_stats_name"
 fi
-project_name="${project_name^^}"
-
-
-# Check project name and set static variables accordingly
-if [[ "$project_name" == "AIM" ]]; then
-    ct_schema_name="AIM_CT_SC"
-    tmanalog_table_name="TMANALOG_TABLE"
-elif [[ "$project_name" == "EVE" ]]; then
-    ct_schema_name="EVE_CT"
-    tmanalog_table_name="TMANALOG"
-else
-    ct_schema_name="${project_name}_CT"
-fi
-
-schema_name="${project_name^^}_L1A"
-
-
 
 # Create tablespace if path is specified
 if [ -n "$datafile_path" ]; then
@@ -191,19 +205,19 @@ if [ $table_opt -ne 0 ]; then
     fi
 
     # Check that L1A schema exists.
-    l1a_schema_check=$("$HOME/common/oracle/CheckIfSchemaExists.sh" "$schema_name")
+    tmaverage_schema_check=$("$HOME/common/oracle/CheckIfSchemaExists.sh" "$tmaverage_schema")
     if [ $? -ne 0 ]; then
-        echo "$l1a_schema_check"
+        echo "$tmaverage_schema_check"
         echo "An error occurred while running CheckIfSchemaExists.sh. Exiting... "
         exit 1
     fi
-    if [[ "$l1a_schema_check" != "Yes" ]]; then
-        echo "Schema ${schema_name} does not exist. Exiting..."
+    if [[ "$tmaverage_schema_check" != "Yes" ]]; then
+        echo "Schema $tmaverage_schema does not exist. Exiting..."
         exit 1
     fi
 
     # Check if TMAverage table already exists
-    check_table_exists=$("$HOME/common/oracle/CheckIfTableExists.sh" "$schema_name" "$tmaverage_table_name")
+    check_table_exists=$("$HOME/common/oracle/CheckIfTableExists.sh" "$tmaverage_schema" "$tmaverage_tab")
     if [ $? -ne 0 ]; then
         echo "$check_table_exists"
         echo "An error occurred while running CheckIfTableExists.sh Exiting..."
@@ -212,26 +226,14 @@ if [ $table_opt -ne 0 ]; then
 
     if [[ "$check_table_exists" == *"No"* ]]; then
         # Create TMAverage table
-        echo "Creating table $schema_name.$tmaverage_table_name in tablespace $tablespace_name..."
+        echo "Creating table $tmaverage_table_name in tablespace $tablespace_name..."
         create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
             set heading off
             set feedback off
             whenever oserror exit 1
             whenever sqlerror exit 1
 
-            CREATE TABLE "$schema_name"."$tmaverage_table_name"
-            (
-                TMID NUMBER(7,0) NOT NULL ENABLE,
-                SCT_VTCW NUMBER(16,0) NOT NULL ENABLE,
-                AVERAGE_VALUE FLOAT(126) NOT NULL ENABLE,
-                MINIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
-                MAXIMUM_VALUE FLOAT(126) NOT NULL ENABLE,
-                VALUE_COUNT NUMBER(7,0) NOT NULL ENABLE,
-                CONSTRAINT PK_TMAVERAGE_SID1 PRIMARY KEY (TMID, SCT_VTCW) ENABLE
-            )
-            ORGANIZATION INDEX PCTFREE 0 LOGGING
-            TABLESPACE "$tablespace_name";
-
+            $tmaverage_table_ddl
 EOD
         )
         if [ $? -ne 0 ]; then
@@ -240,11 +242,41 @@ EOD
             exit 1
         fi
     else
-        echo "Table $schema_name.$tmaverage_table_name already exists. Continuing..."
+        echo "Table $tmaverage_table_name already exists, checking most-recently-updated columns..."
+        # Check most recent updates to the TMAverage table. 
+        for column in $tmaverage_table_check_columns; do
+            echo "Checking: $column"
+            column_check=$("$HOME/common/oracle/CheckIfColumnExists.sh" "$tmaverage_schema" "$tmaverage_tab" "$column")
+            if [ $? -ne 0 ]; then
+                echo "$column_check"
+                echo "An error occurred while running CheckIfColumnExists.sh. Exiting..."
+                exit 1
+            fi
+            if [[ $column_check != "Yes" ]]; then
+                echo "ERROR: Column $column is not present in $tmaverage_table_name. Please update the table DDL to the following: "
+                echo
+                echo
+                echo "$tmaverage_table_ddl"
+                exit 1
+            fi
+        done
+        echo "Table exists and is up-to-date. Continuing..."
+    fi
+
+    # Check that L1A schema exists.
+    stats_schema_check=$("$HOME/common/oracle/CheckIfSchemaExists.sh" "$stats_schema")
+    if [ $? -ne 0 ]; then
+        echo "$stats_schema_check"
+        echo "An error occurred while running CheckIfSchemaExists.sh. Exiting... "
+        exit 1
+    fi
+    if [[ "$stats_schema_check" != "Yes" ]]; then
+        echo "Schema $stats_schema does not exist. Exiting..."
+        exit 1
     fi
 
     # Check if TMAverage_stats table already exists
-    check_table_exists=$("$HOME/common/oracle/CheckIfTableExists.sh" "$schema_name" "$tmaverage_stats_name")
+    check_table_exists=$("$HOME/common/oracle/CheckIfTableExists.sh" "$stats_schema" "$stats_tab")
     if [ $? -ne 0 ]; then
         echo "$check_table_exists"
         echo "An error occurred while running CheckIfTableExists.sh Exiting..."
@@ -252,26 +284,14 @@ EOD
     fi
 
     if [[ "$check_table_exists" == *"No"* ]]; then
-        echo "Creating table $schema_name.$tmaverage_stats_name in tablespace $tablespace_name..."
+        echo "Creating table $tmaverage_stats_name in tablespace $tablespace_name..."
         create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
         set heading off
         set feedback off
         whenever oserror exit 1
         whenever sqlerror exit 1
 
-        CREATE TABLE $schema_name.$tmaverage_stats_name (
-            DATABASE_NAME   VARCHAR2(128),
-            START_TIME      TIMESTAMP PRIMARY KEY,
-            TIME_RAN        INTERVAL DAY TO SECOND,
-            FAILED          NUMBER(1),
-            CANCELLED       NUMBER(1),
-            INGESTED        NUMBER,
-            INSERTED        NUMBER,
-            UNIQUE_CONSTRAINT_NUM NUMBER,
-            OTFD_ERROR_NUM  NUMBER,
-            ERRORS          CLOB
-        )
-        TABLESPACE "$tablespace_name";
+        $tmaverage_stats_ddl
 EOD
         )
         if [ $? -ne 0 ]; then
@@ -280,7 +300,25 @@ EOD
             exit 1
         fi
     else
-        echo "Table $schema_name.$tmaverage_stats_name already exists. Continuing..."
+        echo "Table $tmaverage_stats_name already exists, checking most-recently-updated columns..."
+       # Check most recent updates to the TMAVERAGE_STATS table. 
+        for column in $tmaverage_stats_check_columns; do
+            echo "Checking: $column"
+            column_check=$("$HOME/common/oracle/CheckIfColumnExists.sh" "$stats_schema" "$stats_tab" "$column")
+            if [ $? -ne 0 ]; then
+                echo "$column_check"
+                echo "An error occurred while running CheckIfColumnExists.sh. Exiting..."
+                exit 1
+            fi
+            if [[ $column_check != "Yes" ]]; then
+                echo "ERROR: Column $column is not present in $tmaverage_stats_name. Please update the table DDL to the following: "
+                echo
+                echo
+                echo "$tmaverage_stats_ddl"
+                exit 1
+            fi
+        done
+        echo "Table exists and is up-to-date. Continuing..."
     fi
 fi
 
@@ -322,27 +360,42 @@ EOD
         exit 1
     fi
 
-    table1="${schema_name}.${tmaverage_table_name}"
-    table2="${schema_name}.${tmaverage_stats_name}"
+    tables="$tmaverage_table_name,$tmaverage_stats_name"
 
     echo "Granting required permissions to user $username:"
-    read_write_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$table1,$table2" table ALL "$username" Y)
+    read_write_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$tables" table ALL "$username" Y)
     if [ $? -ne 0 ]; then
         echo "$read_write_permissions"
-        echo "An error occurred while granting read-write permissions to table $schema_name.$tmaverage_table_name on $username. Exiting..."
+        echo "An error occurred while granting read-write permissions to tables $tables on $username. Exiting..."
         exit 1
     fi
 
-    table1="${schema_name}.$tmanalog_table_name"
-    table2="${ct_schema_name}.TelemetryItemDefinition"
-    table3="${ct_schema_name}.TelemetryAnalogConversions"
+    # TODO: Replace this with updated GrantNewPermissions.sh. TMANALOG is a view on EMA, and GrantNewPermissions.sh does not 
+    #       currently support adding permissions to views. This update will be addressed in DB-3350.
+    table_permission_add=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+        set heading off
+        set feedback off
+        whenever oserror exit 1
+        whenever sqlerror exit 1
 
-    read_only_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$table1,$table2,$table3" table SELECT "$username" Y)
+        GRANT SELECT ON $tmanalog_table_name TO $username;
+        GRANT SELECT ON $telemetry_item_definitions_name TO $username;
+        GRANT SELECT ON $telemetry_analog_conversions_name TO $username;
+        exit;   
+EOD
+)
     if [ $? -ne 0 ]; then
-        echo "$read_only_permissions"
-        echo "An error occurred while granting read-only permission to the below tables. Exiting..."
+        echo "$table_permission_add"
+        echo "An error occurred while adding permissions for $tmanalog_table_name, $telemetry_item_definitions_name, $telemetry_analog_conversions_name. Exiting..."
         exit 1
     fi
+
+    # read_only_permissions=$("$HOME/common/oracle/GrantNewPermissions.sh" "$table1,$table2,$table3" table SELECT "$username" Y)
+    # if [ $? -ne 0 ]; then
+    #     echo "$read_only_permissions"
+    #     echo "An error occurred while granting read-only permission to the following tables $table1, $table2, $table3. Exiting..."
+    #     exit 1
+    # fi
 
     if [ $otfd_opt -ne 0 ]; then
         echo "Granting user access to OTFD package & tables..."
@@ -366,8 +419,8 @@ EOD
             whenever oserror exit 1
             whenever sqlerror exit 1
 
-            GRANT EXECUTE ON ${project_name}_MISC.ONTHEFLYDECOM TO $username;
-            GRANT EXECUTE ON ${project_name}_MISC.ONTHEFLYDECOMMISSIONSPECIFIC TO $username;
+            GRANT EXECUTE ON ONTHEFLYDECOM TO $username;
+            GRANT EXECUTE ON ONTHEFLYDECOMMISSIONSPECIFIC TO $username;
 EOD
         )
         if [ $? -ne 0 ]; then
@@ -376,13 +429,20 @@ EOD
             exit 1
         fi
 
-        results="${project_name}_MISC.ONTHEFLYDECOM_RESULTS"
-        errors="${project_name}_MISC.ONTHEFLYDECOM_ERRORS"
+        # Get MISC schema for GrantNewPermissions.sh
+        misc_schema=$(GetSchemaName.sh -m -v)
+        if [ $? -ne 0 ]; then
+            echo "$misc_schema"
+            echo "An error occurred while getting the MISC schema name. Exiting..."
+            exit 1
+        fi
+        
+        tables="$misc_schema.ONTHEFLYDECOM_RESULTS,$misc_schema.ONTHEFLYDECOM_ERRORS"
 
-        otfd_tables=$("$HOME/common/oracle/GrantNewPermissions.sh" "$results,$errors" table ALL "$username" Y)
+        otfd_tables=$("$HOME/common/oracle/GrantNewPermissions.sh" "$tables" table SELECT $username Y)
         if [ $? -ne 0 ]; then
             echo "$otfd_tables"
-            echo "An error occurred while granting read-only permissions. Exiting..."
+            echo "An error occurred while granting SELECT permissions to tables $tables on $username. Exiting..."
             exit 1
         fi
     fi
@@ -392,13 +452,6 @@ fi
 
 # Create a virtual environment in the current directory and install needed dependencies.
 if [ $venv_opt -ne 0 ]; then
-    newest_python=$(ls /usr/bin/python3* | grep -oP 'python3\.\d+' | sort -V | tail -n 1)
-    if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
-        echo "$newest_python"
-        echo "Failed to find newest version of python in order to create virtual environment. Exiting..."
-        exit 1
-    fi
-
     create_venv=$("$newest_python" -m venv "$SCRIPT_DIR/venv")
     if [ $? -ne 0 ]; then
         echo "$create_venv"
