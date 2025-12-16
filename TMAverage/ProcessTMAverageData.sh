@@ -135,7 +135,7 @@ tmanalog_table_name="";telemetry_analog_conversions_name="";telemetry_item_defin
 
 # Set TMAverage static values from helper script. If the database name is not supported, this will fail.
 # Set static values from helper script. If the database name is not supported, this will fail.
-var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID" "$system_id" 2>&1)
+var_commands=$($newest_python $SCRIPT_DIR/TMAverageHelpers.py "$ORACLE_SID" "$system_id" 2>&1)
 if [ $? -ne 0 ]; then
     if [[ "$var_commands" == *"not supported by TMAverage"* ]]; then
         echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."
