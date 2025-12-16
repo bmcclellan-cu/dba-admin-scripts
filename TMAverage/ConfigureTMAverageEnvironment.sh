@@ -253,7 +253,7 @@ EOD
                 exit 1
             fi
             if [[ $column_check != "Yes" ]]; then
-                echo "ERROR: Column $column is not present in $tmaverage_table_name. Please update the table DDL to the following: "
+                echo "ERROR: Column $column is not present in $tmaverage_table_name. Please update the table DDL to match the following: "
                 echo
                 echo
                 echo "$tmaverage_table_ddl"
@@ -311,7 +311,7 @@ EOD
                 exit 1
             fi
             if [[ $column_check != "Yes" ]]; then
-                echo "ERROR: Column $column is not present in $tmaverage_stats_name. Please update the table DDL to the following: "
+                echo "ERROR: Column $column is not present in $tmaverage_stats_name. Please update the table DDL to match the following: "
                 echo
                 echo
                 echo "$tmaverage_stats_ddl"

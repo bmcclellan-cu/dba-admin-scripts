@@ -83,6 +83,7 @@ def update_tmaverage_stats(
         cursor: oracledb.Cursor,
         config: TMAverageConfigs,
         start_time: datetime.datetime,
+        run_params: str = "",
         time_duration: datetime.timedelta = None,
         failed: bool = None,
         cancelled: bool = None,
@@ -107,10 +108,11 @@ def update_tmaverage_stats(
     select_sql = f"""SELECT COUNT(*) FROM {config.TMAVERAGE_STATS_NAME} WHERE DATABASE_NAME=:database AND START_TIME=:start_time"""
 
     insert_sql = f"""INSERT INTO {config.TMAVERAGE_STATS_NAME} 
-    (DATABASE_NAME, START_TIME, TIME_RAN, FAILED, CANCELLED, ROWS_READ, ROWS_RETURNED, UNIQUE_CONSTRAINT_NUM, OTFD_ERROR_NUM, ERRORS) VALUES 
-    (:database, :start_time, :time_ran, :failed, :cancelled, :rows_read, :rows_returned, :unique_constraint_num, :otfd_error_num, :errors)"""
+    (DATABASE_NAME, START_TIME, RUN_PARAMS, TIME_RAN, FAILED, CANCELLED, ROWS_READ, ROWS_RETURNED, UNIQUE_CONSTRAINT_NUM, OTFD_ERROR_NUM, ERRORS) VALUES 
+    (:database, :start_time, :run_params, :time_ran, :failed, :cancelled, :rows_read, :rows_returned, :unique_constraint_num, :otfd_error_num, :errors)"""
 
     update_sql = f"""UPDATE {config.TMAVERAGE_STATS_NAME} SET 
+        RUN_PARAMS      = :run_params,
         TIME_RAN        = :time_ran, 
         FAILED          = :failed,
         CANCELLED       = :cancelled,
@@ -132,6 +134,7 @@ def update_tmaverage_stats(
             cursor.execute(insert_sql,
                 database=config.DATABASE,
                 start_time=start_time,
+                run_params=run_params,
                 time_ran=time_duration,
                 failed=failed,
                 cancelled=cancelled,
@@ -146,6 +149,7 @@ def update_tmaverage_stats(
             cursor.execute(update_sql,
                 database=config.DATABASE,
                 start_time=start_time,
+                run_params=run_params,
                 time_ran=time_duration,
                 failed=failed,
                 cancelled=cancelled,
@@ -858,6 +862,11 @@ def main():
     is_otfd = arguments.otfd
     parallel_degree = arguments.parallel_degree
 
+    # Get the whole string of arguments the script was run with to save to TMAverage_Stats.
+    # Adding -d option to allow for a direct copy and paste over the .sh script to re-create run 
+    # because the inputs to python are always dates.
+    run_params = "-d " + " ".join(sys.argv[1:])
+
     # Once inputs are gathered, load TMAverage configs. This also checks if the database is supported.
     config = TMAverageConfigs(database, system_id)
 
@@ -969,7 +978,8 @@ def main():
     update_tmaverage_stats(
         cursor,
         config=config,
-        start_time=start_time
+        start_time=start_time,
+        run_params=run_params
     )
 
     try:
@@ -1144,6 +1154,7 @@ def main():
         cursor=connection.cursor(),
         config=config,
         start_time=start_time,
+        run_params=run_params,
         time_duration=duration,
         failed=critical_failure,
         cancelled=cancelled,

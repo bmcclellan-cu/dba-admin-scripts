@@ -19,7 +19,7 @@
 ##########################################################################
 import sys
 
-TMAVERAGE_VERSION = "1.0"
+TMAVERAGE_VERSION = "2.0"
 
 # Dictionary of databases and SIDs that the script is designed for. Any attempt 
 # to run any TMAverage scripts on SIDs or databases not listed here will fail and 
@@ -135,6 +135,7 @@ TMAVERAGE_TABLE_CHECK_COLUMNS="<TABLE_TIME_COLUMN>"
 TMAVERAGE_STATS_DDL=f"""CREATE TABLE <TMAVERAGE_STATS_NAME> (
     DATABASE_NAME   VARCHAR2(128),
     START_TIME      TIMESTAMP PRIMARY KEY,
+    RUN_PARAMS          VARCHAR(200),
     TIME_RAN        INTERVAL DAY TO SECOND,
     FAILED          NUMBER(1),
     CANCELLED       NUMBER(1),
@@ -145,7 +146,7 @@ TMAVERAGE_STATS_DDL=f"""CREATE TABLE <TMAVERAGE_STATS_NAME> (
     ERRORS          CLOB
 )
 TABLESPACE \\"<TABLESPACE_NAME>\\";"""
-TMAVERAGE_STATS_CHECK_COLUMNS="ROWS_READ ROWS_RETURNED"
+TMAVERAGE_STATS_CHECK_COLUMNS="ROWS_READ ROWS_RETURNED RUN_PARAMS"
 
 class OTFDException(Exception):
     """
