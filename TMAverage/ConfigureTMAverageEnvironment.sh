@@ -128,6 +128,15 @@ if [ -n "$sid_check" ]; then
     exit 1
 fi
 
+# Get MISC schema of database.
+misc_schema=$(GetSchemaName.sh -m -v)
+if [ $? -ne 0 ]; then
+    echo "$misc_schema"
+    echo "An error occurred while getting the MISC schema name. Exiting..."
+    exit 1
+fi
+
+
 newest_python=$(ls /usr/bin/python3* | grep -oP 'python3\.\d+' | sort -V | tail -n 1)
 if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
     echo "$newest_python"
@@ -189,6 +198,8 @@ if [ -n "$datafile_path" ]; then
         echo "Tablespace $tablespace_name already exists. Continuing..."
     fi
 fi
+
+# TODO: Add trap for if table creation/update fails.
 
 # Create the TMAverage table if desired.
 if [ $table_opt -ne 0 ]; then
@@ -320,6 +331,24 @@ EOD
         done
         echo "Table exists and is up-to-date. Continuing..."
     fi
+
+    # Tables were updated/verified successfully, add record to MIGRATION_STATUS indicating current version
+
+    timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+
+    # TODO: Check if $SCRIPT_DIR is actually set
+    migration_status_insert=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+        set heading off
+        set feedback off
+        whenever oserror exit 1
+        whenever sqlerror exit 1
+
+        INSERT INTO $misc_schema.MIGRATION_STATUS (STATUS_TIMESTAMP, SOFTWARE_NAME, SID, UPDATE_VERSION, SOFTWARE_PATH, UPDATE_SUCCESS) VALUES
+        (TIMESTAMP '$timestamp', 'TMAverage (Tables)', $system_id, $tmaverage_version, $SCRIPT_DIR, 'Success');
+
+EOD
+    )
+
 fi
 
 # Create the requested user for TMAverage
@@ -426,14 +455,6 @@ EOD
         if [ $? -ne 0 ]; then
             echo "$otfd_execute"
             echo "An error occurred while granting access to the OTFD package to $username. Exiting..."
-            exit 1
-        fi
-
-        # Get MISC schema for GrantNewPermissions.sh
-        misc_schema=$(GetSchemaName.sh -m -v)
-        if [ $? -ne 0 ]; then
-            echo "$misc_schema"
-            echo "An error occurred while getting the MISC schema name. Exiting..."
             exit 1
         fi
         

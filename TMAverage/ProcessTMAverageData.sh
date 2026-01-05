@@ -228,7 +228,7 @@ else
 fi
 
 # Get MISC schema for GrantNewPermissions.sh
-misc_schema=$(GetSchemaName.sh -m -v)
+misc_schema=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
 if [ $? -ne 0 ]; then
     echo "$misc_schema"
     echo "An error occurred while getting the MISC schema name. Exiting..."
