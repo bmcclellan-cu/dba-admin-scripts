@@ -147,7 +147,7 @@ fi
 # If system_id is set, then get SID-dependent helper variables.
 if [ -n "$system_id" ]; then
     # Set config variables to default values:
-    tmaverage_table_name="";tmaverage_stats_name="";tablespace_name="";tmanalog_table_name="";
+    version="";tmaverage_table_name="";tmaverage_stats_name="";tablespace_name="";tmanalog_table_name="";
     telemetry_analog_conversions_name="";telemetry_item_definitions_name="";tmaverage_table_ddl="";tmaverage_stats_ddl=""
     tmaverage_table_check_columns="";tmaverage_stats_check_columns=""
 
@@ -199,10 +199,35 @@ if [ -n "$datafile_path" ]; then
     fi
 fi
 
-# TODO: Add trap for if table creation/update fails.
-
 # Create the TMAverage table if desired.
 if [ $table_opt -ne 0 ]; then
+
+    # Trap that enters a "Failure" record into MIGRATION_STATUS if this step fails
+    table_exit_handler() {
+        echo "Table creation/validation failed. Inserting record into MIGRATION_STATUS."
+        timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+
+        migration_status_insert=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+            set heading off
+            set feedback off
+            whenever oserror exit 1
+            whenever sqlerror exit 1
+
+            INSERT INTO $misc_schema.MIGRATION_STATUS (STATUS_TIMESTAMP, SOFTWARE_NAME, SID, UPDATE_VERSION, SOFTWARE_PATH, UPDATE_SUCCESS) VALUES
+            (TIMESTAMP '$timestamp', 'TMAverage (Tables)', $system_id, '$version', '$SCRIPT_DIR', 'Failure');
+EOD
+        )
+        if [ $? -ne 0 ]; then
+            echo "$migration_status_insert"
+            echo "An error occurred while inserting an update record into $misc_schema.MIGRATION_STATUS. Exiting..."
+        else
+            echo "Successfully inserted a record into $misc_schema.MIGRATION_STATUS."
+        fi
+        # Prevent the trap from being triggered twice
+        trap - EXIT INT TERM
+    }
+    trap table_exit_handler EXIT INT TERM # On exit, call table_exit_handler.
+
     # Check that tablespace exists.
     tablespace_check=$("$HOME/common/oracle/CheckIfTablespaceExists.sh" "$tablespace_name")
     if [ $? -ne 0 ]; then
@@ -336,7 +361,6 @@ EOD
 
     timestamp=$(date +"%Y-%m-%d %H:%M:%S")
 
-    # TODO: Check if $SCRIPT_DIR is actually set
     migration_status_insert=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
         set heading off
         set feedback off
@@ -344,11 +368,20 @@ EOD
         whenever sqlerror exit 1
 
         INSERT INTO $misc_schema.MIGRATION_STATUS (STATUS_TIMESTAMP, SOFTWARE_NAME, SID, UPDATE_VERSION, SOFTWARE_PATH, UPDATE_SUCCESS) VALUES
-        (TIMESTAMP '$timestamp', 'TMAverage (Tables)', $system_id, $tmaverage_version, $SCRIPT_DIR, 'Success');
+        (TIMESTAMP '$timestamp', 'TMAverage (Tables)', $system_id, '$version', '$SCRIPT_DIR', 'Success');
 
 EOD
     )
+    if [ $? -ne 0 ]; then
+        echo "$migration_status_insert"
+        echo "An error occurred while inserting an update record into $misc_schema.MIGRATION_STATUS. Exiting..."
+        exit 1
+    fi
 
+    echo "Successfully inserted a record into $misc_schema.MIGRATION_STATUS."
+
+    # Unset trap once update/validation is complete
+    trap - EXIT INT TERM
 fi
 
 # Create the requested user for TMAverage
