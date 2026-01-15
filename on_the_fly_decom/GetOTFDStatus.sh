@@ -14,7 +14,7 @@
 # Author: Robert Schmidt
 #
 # Created on: September 11th, 2025
-# Modified on: January 9th, 2026
+# Last updated: January 14th, 2025 - RS
 ################################################################################
 
 
@@ -76,8 +76,40 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Check that the OTFD packages exist.
+# Get the status and version of OTFD DB Tables
+migration_status=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+    set heading off
+    set feedback off
+    whenever oserror exit 1
+    whenever sqlerror exit 1
 
+    set linesize 10000
+
+    SELECT STATUS_TIMESTAMP || '|' || UPDATE_VERSION || '|' || UPDATE_SUCCESS 
+    FROM $misc_schema.MIGRATION_STATUS
+    WHERE SOFTWARE_NAME = 'OTFD (Tables)' ORDER BY STATUS_TIMESTAMP DESC FETCH NEXT 1 ROWS ONLY;
+EOD
+)
+if [ $? -ne 0 ]; then
+    echo "$migration_status"
+    echo "An error occurred while fetching version of OTFD Tables. Exiting..."
+    exit 1
+fi
+
+if [ -n "$migration_status" ]; then
+    migration_status=$(echo "$migration_status" | tr -d '\n')
+    IFS='|' read -r update_timestamp db_version update_status <<< "$migration_status"
+    # Only display status if not successful.
+    if [[ "$update_status" == "Success" ]]; then
+        update_status_formatted=""
+    else
+        update_status_formatted="($update_status)"
+    fi
+else
+    echo "WARNING: No record found in $misc_schema.MIGRATION_STATUS. Using fallback option of reporting table existence."
+fi
+
+# Check that the OTFD packages exist.
 base_package_check=$("$HOME/common/oracle/CheckIfObjectExists.sh" "$misc_schema" ONTHEFLYDECOM)
 if [ $? -ne 0 ]; then
     echo "$base_package_check"
@@ -138,18 +170,22 @@ if [ "$mission_package_check" != "Yes" ]; then
     mission_version="Not Loaded"
 fi
 
-if [ "$results_table_check" == "Yes" ]; then
-    echo "ONTHEFLYDECOM_RESULTS:    Exists"
+if [ -n "$migration_status" ]; then
+    echo "DB Last Updated:          $update_timestamp"
+    echo "DB Version:               $db_version $update_status_formatted"
 else
-    echo "ONTHEFLYDECOM_RESULTS:    Does Not Exist"
-fi
+    if [ "$results_table_check" == "Yes" ]; then
+        echo "ONTHEFLYDECOM_RESULTS:    Exists"
+    else
+        echo "ONTHEFLYDECOM_RESULTS:    Does Not Exist"
+    fi
 
-if [ "$error_table_check" == "Yes" ]; then
-    echo "ONTHEFLYDECOM_ERRORS:     Exists"
-else
-    echo "ONTHEFLYDECOM_ERRORS:     Does Not Exist"
+    if [ "$error_table_check" == "Yes" ]; then
+        echo "ONTHEFLYDECOM_ERRORS:     Exists"
+    else
+        echo "ONTHEFLYDECOM_ERRORS:     Does Not Exist"
+    fi
 fi
-
 echo "Base OTFD Package:        $base_version"
 echo "Mission-specific Package: $mission_version"
 
@@ -161,8 +197,8 @@ additional_packages_tables=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
         set heading off
         set pagesize 0
 
-        SELECT OWNER FROM DBA_PLSQL_OBJECT_SETTINGS where NAME = 'ONTHEFLYDECOM' AND OWNER != '$misc_schema' AND TYPE = 'PACKAGE';
-        SELECT UNIQUE OWNER FROM DBA_TABLES WHERE (TABLE_NAME = 'ONTHEFLYDECOM_RESULTS' OR TABLE_NAME = 'ONTHEFLYDECOM_ERRORS') AND OWNER != '$misc_schema';
+        SELECT OWNER || '.' || NAME FROM DBA_PLSQL_OBJECT_SETTINGS where NAME = 'ONTHEFLYDECOM' AND OWNER != '$misc_schema' AND TYPE = 'PACKAGE';
+        SELECT OWNER || '.' || TABLE_NAME FROM DBA_TABLES WHERE (TABLE_NAME = 'ONTHEFLYDECOM_RESULTS' OR TABLE_NAME = 'ONTHEFLYDECOM_ERRORS') AND OWNER != '$misc_schema';
 
         exit;
 EOD
@@ -175,8 +211,38 @@ fi
 
 if [ -n "$additional_packages_tables" ]; then
     echo
-    echo "Additional Schemas with ONTHEFLYDECOM Package and/or ONTHEFLYDECOM Table (This can result in unexpected behavior):"
+    echo "WARNING: The ONTHEFLYDECOM Package and/or ONTHEFLYDECOM Tables were found outside of the MISC schema. Tables and Packages are listed below: "
     echo "$additional_packages_tables"
+    echo
+fi
+
+# Only perform validation on MIGRATION_STATUS results if data was returned.
+if [ -z "$migration_status" ]; then
+    exit 0
+fi
+
+if [ "$update_status" == "Success" ] && { [ "$results_table_check" != "Yes" ] || [ "$error_table_check" != "Yes" ]; }; then
+    echo "ERROR: $misc_schema.MIGRATION_STATUS reports that the DB is currently on version $db_version, but"
+    echo "       ONTHEFLYDECOM_ERRORS and/or ONTHEFLYDECOM_RESULTS are missing. These tables must be created"
+    echo "       for OnTheFlyDecom to function. Exiting..."
+    exit 1
+fi
+
+if [ "$update_status" != "Success" ]; then
+    echo "ERROR: $misc_schema.MIGRATION_STATUS reports that the last update did not succeed (Status=$update_status). "
+    echo "       Please update the database and update $misc_schema.MIGRATION_STATUS once this is completed. Exiting..."
+    exit 1
+fi
+
+# Check that the major version numbers of the database and the OTFD package match. 
+# Major version number changes indicate an interface or table change, and should always match
+db_major_v=$(echo "$db_version" | awk -F '.' '{print $2}')
+otfd_major_v=$(echo "$base_version" | awk -F '.' '{print $2}')
+
+if [ "$db_major_v" -ne "$otfd_major_v" ]; then
+    echo "ERROR: Database and software have mismatched major versions. Please update the database or software to prevent compatibility issues."
+    echo "       Update $misc_schema.MIGRATION_STATUS once the database is updated. Exiting..."
+    exit 1
 fi
 
 
