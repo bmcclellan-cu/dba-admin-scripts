@@ -2,7 +2,8 @@
 #
 # Purpose:  This script checks if the OTFD packages are loaded, along with the 
 #           existence of their requisite tables. If the packages exist, it will
-#           also report the package version. 
+#           also report the package version. It will also check for duplicates of
+#           any of these in any schema that is not the MISC schema.
 #           Packages: ONTHEFLYDECOM, ONTHEFLYDECOMMISSIONSPECIFIC
 #           Tables: ONTHEFLYDECOM_ERRORS, ONTHEFLYDECOM_RESULTS.
 # 
@@ -13,6 +14,7 @@
 # Author: Robert Schmidt
 #
 # Created on: September 11th, 2025
+# Modified on: January 9th, 2026
 ################################################################################
 
 
@@ -41,7 +43,7 @@ elif [ $# -gt 1 ]; then
     exit 1
 fi
 
-sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I $ORACLE_SID)
+sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I "$ORACLE_SID")
 if [ -n "$sid_check" ]; then
     if [ "$sid_check" == "-1" ]; then
         echo "ERROR: \$ORACLE_SID not set. Exiting..."
@@ -90,6 +92,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+
 if [ "$base_package_check" == "Yes" ] && [ "$mission_package_check" == "Yes" ]; then
     # Get versions of both OTFD packages. 
     package_versions=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
@@ -101,7 +104,7 @@ if [ "$base_package_check" == "Yes" ] && [ "$mission_package_check" == "Yes" ]; 
         set pagesize 0
 
         BEGIN
-        ONTHEFLYDECOM.getVersion;
+        $misc_schema.ONTHEFLYDECOM.getVersion;
         END;
         /
         SELECT message FROM ONTHEFLYDECOM_ERRORS;
@@ -149,5 +152,32 @@ fi
 
 echo "Base OTFD Package:        $base_version"
 echo "Mission-specific Package: $mission_version"
+
+additional_packages_tables=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+        whenever oserror exit 1
+        whenever sqlerror exit 1
+
+        set feedback off
+        set heading off
+        set pagesize 0
+
+        SELECT OWNER FROM DBA_PLSQL_OBJECT_SETTINGS where NAME = 'ONTHEFLYDECOM' AND OWNER != '$misc_schema' AND TYPE = 'PACKAGE';
+        SELECT UNIQUE OWNER FROM DBA_TABLES WHERE (TABLE_NAME = 'ONTHEFLYDECOM_RESULTS' OR TABLE_NAME = 'ONTHEFLYDECOM_ERRORS') AND OWNER != '$misc_schema';
+
+        exit;
+EOD
+)
+if [ $? -ne 0 ]; then
+    echo "$additional_packages_tables"
+    echo "An error occurred while checking for additional ONTHEFLYDECOM packages and tables under other schemas."
+    exit 1
+fi
+
+if [ -n "$additional_packages_tables" ]; then
+    echo
+    echo "Additional Schemas with ONTHEFLYDECOM Package and/or ONTHEFLYDECOM Table (This can result in unexpected behavior):"
+    echo "$additional_packages_tables"
+fi
+
 
 exit 0
