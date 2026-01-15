@@ -2,8 +2,8 @@
 #
 # Purpose:  Gets the version of the TMAverage tables loaded on the database as well as the version of the TMAverage
 #           software and confirms whether they are compatible or not. They are deemed compatible if the major version (X.0)
-#           matches between the database and the software (denoted by TMAverageHelper.py). If SID ALL is passed to the script
-#           it will iterate through all SIDs.
+#           matches between the database and the software (the software version is stored in TMAverageHelpers.py). If SID 
+#           ALL is passed to the script it will iterate through all SIDs TMAverage is compatible with.
 # 
 # Notes:
 #           The database and software are considered out-of-sync if the MAJOR version number is different. Major version numbers 
@@ -67,10 +67,9 @@ if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
     exit 1
 fi
 
-
 if [ "$system_ids" == "ALL" ]; then
     # Get all available SIDs for a given database if ALL option is used.
-    system_ids=$($newest_python $SCRIPT_DIR/TMAverageHelpers.py "$ORACLE_SID" list 2>&1)
+    system_ids=$($newest_python "$SCRIPT_DIR/TMAverageHelpers.py" "$ORACLE_SID" list 2>&1)
     if [ $? -ne 0 ]; then
         if [[ "$system_ids" == *"not supported by TMAverage"* ]]; then
             echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."
@@ -88,7 +87,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Get MISC schema for GrantNewPermissions.sh
+# Get MISC schema for querying MIGRATION_STATUS.
 misc_schema=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
 if [ $? -ne 0 ]; then
     echo "$misc_schema"
@@ -108,7 +107,7 @@ fi
 
 tmaverage_incompatible=0
 
-# Iterate through each SID and query the table version history table for the current version for that SID
+# Iterate through each SID and query MIGRATION_STATUS for the current DB version for that SID
 for system_id in $system_ids; do
     migration_status=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
         set heading off

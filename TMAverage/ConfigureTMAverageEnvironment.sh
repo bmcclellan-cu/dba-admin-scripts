@@ -205,8 +205,6 @@ if [ $table_opt -ne 0 ]; then
     # Trap that enters a "Failure" record into MIGRATION_STATUS if this step fails
     table_exit_handler() {
         echo "Table creation/validation failed. Inserting record into MIGRATION_STATUS."
-        timestamp=$(date +"%Y-%m-%d %H:%M:%S")
-
         migration_status_insert=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
             set heading off
             set feedback off
@@ -214,7 +212,7 @@ if [ $table_opt -ne 0 ]; then
             whenever sqlerror exit 1
 
             INSERT INTO $misc_schema.MIGRATION_STATUS (STATUS_TIMESTAMP, SOFTWARE_NAME, SID, UPDATE_VERSION, SOFTWARE_PATH, UPDATE_SUCCESS) VALUES
-            (TIMESTAMP '$timestamp', 'TMAverage (Tables)', $system_id, '$version', '$SCRIPT_DIR', 'Failure');
+            (CURRENT_TIMESTAMP, 'TMAverage (Tables)', $system_id, '$version', '$SCRIPT_DIR', 'Failure');
 EOD
         )
         if [ $? -ne 0 ]; then

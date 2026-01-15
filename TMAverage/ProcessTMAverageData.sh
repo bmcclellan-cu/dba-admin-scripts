@@ -137,7 +137,7 @@ tmanalog_table_name="";telemetry_analog_conversions_name="";telemetry_item_defin
 
 # Set TMAverage static values from helper script. If the database name is not supported, this will fail.
 # Set static values from helper script. If the database name is not supported, this will fail.
-var_commands=$($newest_python $SCRIPT_DIR/TMAverageHelpers.py "$ORACLE_SID" "$system_id" 2>&1)
+var_commands=$($newest_python "$SCRIPT_DIR/TMAverageHelpers.py" "$ORACLE_SID" "$system_id" 2>&1)
 if [ $? -ne 0 ]; then
     if [[ "$var_commands" == *"not supported by TMAverage"* ]]; then
         echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."
@@ -191,14 +191,14 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 if [[ "$test_login" != "Yes" ]]; then
-    echo "ERROR: .username or .passwd file in $SCRIPT_DIR is invalid. Please run './ConfigureTMAverageEnvironment.sh to update. Exiting..."
+    echo "ERROR: .username and/or .passwd file in $SCRIPT_DIR are invalid. Please run './ConfigureTMAverageEnvironment.sh -u $system_id $username $password' to update. Exiting..."
     exit 1
 fi
 
 # Check for existence of Python virtual environment
 VENV_ACTIVATE="${SCRIPT_DIR}/venv/bin/activate"
 if [ ! -f "$VENV_ACTIVATE" ]; then
-    echo "ERROR: File venv/bin/activate not found in $SCRIPT_DIR! Please run ./ConfigureTMAverageEnvironment.sh -v to create one with the necessary dependencies. Exiting..."
+    echo "ERROR: File venv/bin/activate not found in $SCRIPT_DIR! Please run './ConfigureTMAverageEnvironment.sh -v' to create one with the necessary dependencies. Exiting..."
     exit 1
 fi
 
@@ -207,7 +207,7 @@ source "$VENV_ACTIVATE"
 
 # Virtual environment check
 if [ -z "$VIRTUAL_ENV" ]; then
-    echo "ERROR: A valid Python virtual environment must exist in $SCRIPT_DIR. Please run ./ConfigureTMAverageEnvironment.sh -v to create one with the necessary dependencies. Exiting..."
+    echo "ERROR: A valid Python virtual environment must exist in $SCRIPT_DIR. Please run './ConfigureTMAverageEnvironment.sh -v' to create one with the necessary dependencies. Exiting..."
     exit 1
 fi
 
@@ -259,7 +259,6 @@ if [ -n "$otfd_opt" ]; then
         exit 1
     fi
     select_tables="$select_tables,$misc_schema.ONTHEFLYDECOM_RESULTS,$misc_schema.ONTHEFLYDECOM_ERRORS"
-
 fi
 
 # Check that database tables are up-to-date
@@ -270,7 +269,7 @@ if [ $? -ne 0 ]; then
     exit 1
 elif ( ! echo "$tmaverage_status" | grep -q "TMAverage is up-to-date!" ); then
     echo "$tmaverage_status"
-    echo "TMAverage DB Tables are not up-to-date. See above output for more details. Please update database and run ConfigureTMAverageEnvironment.sh. Exiting..."
+    echo "ERROR: TMAverage DB Tables are not up-to-date. See above output for more details. Exiting..."
     exit 1
 fi
 
@@ -281,7 +280,7 @@ if [ $? -ne 0 ]; then
     echo "An error occurred while running TestTablePermissions.sh to check SELECT permissions to $select_tables to $username. Exiting..."
     exit 1
 elif [[ "$select_check" == *"MISSING"* ]]; then
-    echo "ERROR: $username does not have SELECT permissions on $select_tables, or tables do not exist. Please run ConfigureTMAverageEnvironment.sh. Exiting..."
+    echo "ERROR: $username does not have SELECT permissions on $select_tables, or tables do not exist. Please run 'ConfigureTMAverageEnvironment.sh -u $otfd_opt $username $password'. Exiting..."
     exit 1
 fi
 
@@ -292,7 +291,7 @@ if [ $? -ne 0 ]; then
     echo "An error occurred while running TestTablePermissions.sh to check ALL permissions to $full_access_tables to $username. Exiting..."
     exit 1
 elif [[ "$full_access_check" == *"MISSING"* ]]; then
-    echo "ERROR: $username does not have ALL permissions on $full_access_tables, or tables do not exist. Please run ConfigureTMAverageEnvironment.sh. Exiting..."
+    echo "ERROR: $username does not have ALL permissions on $full_access_tables, or tables do not exist. Please run 'ConfigureTMAverageEnvironment.sh -u $otfd_opt $username $password'. Exiting..."
     exit 1
 fi
 
