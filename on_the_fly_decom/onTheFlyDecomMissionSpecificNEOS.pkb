@@ -83,7 +83,7 @@ IS
     upperCaseOptionName VARCHAR2(128) := '';
 BEGIN
     upperCaseOptionName := UPPER( optionName);
-    IF (upperCaseOptionName = 'TLMFILENAME') THEN  -- IXPE only
+    IF (upperCaseOptionName = 'TLMFILENAME') THEN  -- NEOS only
         gblTlmFileName := optionValue;
     ELSE
         RETURN 0;
@@ -130,7 +130,7 @@ FUNCTION getOptionsHelp
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'IXPE options are: TLMFILENAME: <filename>';
+    return 'NEOS options are: TLMFILENAME: <filename>';
 END getOptionsHelp;
 
 
@@ -196,7 +196,7 @@ FUNCTION getTimeColumnsL0
 IS
 BEGIN
     ONTHEFLYDECOM.logOTFD('getTimeColumnsL0: <no_parameters>', 2);
-    -- Note: ASCT is unused for IXPE, so it is aliased as null. No queries can be made by ASCT, 
+    -- Note: ASCT is unused for NEOS, so it is aliased as null. No queries can be made by ASCT, 
     --       and will error during getDefinitionStartStopTime.
     return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'null AS ASCT');
 END getTimeColumnsL0;
@@ -301,7 +301,7 @@ Procedure: getDecomMapCur
 
 Purpose:    Given a SID, APID, TLMID, start and stop time, opens a cursor containing all relevant decom maps.
             This is done due to differences in the TMDecom table location and structure (EMA has a separate 
-            table for each SID, IXPE has a single table with a SID column).
+            table for each SID, IXPE/NEOS has a single table with a SID column).
 
 Inputs:
    
@@ -388,7 +388,7 @@ PROCEDURE: getTSLCur
 
 Purpose:    Given a SID, APID, TLMID, start and stop time, opens a cursor containing all relevant 
             TelemetryStorageLocation entries. This is done due to differences in the TelemetryStorageLocation
-            table location and structure (EMA has a separate table for each SID, IXPE has a single table with 
+            table location and structure (EMA has a separate table for each SID, IXPE/NEOS has a single table with 
             a SID column).
 
 Inputs:
@@ -477,10 +477,10 @@ Outputs:
 Returns: 1=success, 0=failure
 
 Notes:
-  - IXPE does not support ASCT, so any attempt to query by that column gets prevented here as a
+  - NEOS does not support ASCT, so any attempt to query by that column gets prevented here as a
     form of input validation. 
   - SCT and/or ERT is always specified when filename is specified:
-    IXPE retrieve_eng always requires SCT and/or ERT, even when source_filename is specified.
+    NEOS retrieve_eng always requires SCT and/or ERT, even when source_filename is specified.
     Therefore we do not need code to select min_ert/max_ert of the TelemetrySourceFiles record.
     Using min_sct/max_sct would be problematic because even current data has near-zero time-stamps
     for min_sct, which if used as definition start/stop times, could cause a large number of
@@ -516,7 +516,7 @@ BEGIN
 
     -- If ASCT is specified, error immediately.
     IF startASCT_in >= 0 OR stopASCT_in >= 0 THEN
-        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: IXPE Only supports querying by ERT, SCT.', 0);
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: NEOS Only supports querying by ERT, SCT.', 0);
         RETURN 0;
     END IF;
 
