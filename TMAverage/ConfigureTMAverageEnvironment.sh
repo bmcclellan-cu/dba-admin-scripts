@@ -289,9 +289,10 @@ EOD
                 exit 1
             fi
             if [[ $column_check != "Yes" ]]; then
-                echo "ERROR: Column $column is not present in $tmaverage_table_name. Please update the table DDL to match the following: "
+                echo "ERROR: Column $column is not present in $tmaverage_table_name. Please see the appropriate subpage to migrate TMAverage versions:"
+                echo "       https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/282113217/TMaverage+Release+history"
                 echo
-                echo
+                echo "       The resulting DDL should match the following:"
                 echo "$tmaverage_table_ddl"
                 exit 1
             fi
@@ -347,9 +348,10 @@ EOD
                 exit 1
             fi
             if [[ $column_check != "Yes" ]]; then
-                echo "ERROR: Column $column is not present in $tmaverage_stats_name. Please update the table DDL to match the following: "
+                echo "ERROR: Column $column is not present in $tmaverage_stats_name. Please see the appropriate subpage to migrate TMAverage versions:"
+                echo "       https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/282113217/TMaverage+Release+history"
                 echo
-                echo
+                echo "       The resulting DDL should match the following:"
                 echo "$tmaverage_stats_ddl"
                 exit 1
             fi
@@ -358,9 +360,6 @@ EOD
     fi
 
     # Tables were updated/verified successfully, add record to MIGRATION_STATUS indicating current version
-
-    timestamp=$(date +"%Y-%m-%d %H:%M:%S")
-
     migration_status_insert=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
         set heading off
         set feedback off
@@ -368,7 +367,7 @@ EOD
         whenever sqlerror exit 1
 
         INSERT INTO $misc_schema.MIGRATION_STATUS (STATUS_TIMESTAMP, SOFTWARE_NAME, SID, UPDATE_VERSION, SOFTWARE_PATH, UPDATE_SUCCESS) VALUES
-        (TIMESTAMP '$timestamp', 'TMAverage (Tables)', $system_id, '$version', '$SCRIPT_DIR', 'Success');
+        (CURRENT_TIMESTAMP, 'TMAverage (Tables)', $system_id, '$version', '$SCRIPT_DIR', 'Success');
 
 EOD
     )

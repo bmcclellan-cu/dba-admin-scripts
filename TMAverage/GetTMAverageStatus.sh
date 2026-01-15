@@ -82,7 +82,7 @@ if [ "$system_ids" == "ALL" ]; then
     fi
 fi
 
-tmaverage_version=$($newest_python $SCRIPT_DIR/TMAverageHelpers.py version 2>&1)
+tmaverage_version=$($newest_python "$SCRIPT_DIR/TMAverageHelpers.py" version 2>&1)
 if [ $? -ne 0 ]; then
     echo "ERROR: An error occurred while fetching TMAverage version. Exiting..."
     exit 1
@@ -120,36 +120,51 @@ for system_id in $system_ids; do
 
         SELECT STATUS_TIMESTAMP || '|' || UPDATE_VERSION || '|' || UPDATE_SUCCESS 
         FROM $misc_schema.MIGRATION_STATUS
-        WHERE SID=$system_id ORDER BY STATUS_TIMESTAMP DESC FETCH NEXT 1 ROWS ONLY;
+        WHERE SID = $system_id AND SOFTWARE_NAME = 'TMAverage (Tables)'
+        ORDER BY STATUS_TIMESTAMP DESC 
+        FETCH NEXT 1 ROWS ONLY;
 EOD
     )
     if [ $? -ne 0 ]; then
         echo "$migration_status"
         echo "An error occurred while fetching database table version from MIGRATION_STATUS for SID $system_id. Continuing..."
         continue
+    elif [ -z "$migration_status" ]; then
+        echo "ERROR: No record found in $misc_schema.MIGRATION_STATUS for SID $system_id. Assume that TMAverage cannot run and"
+        echo "       run './ConfigureTMAverageEnvironment.sh -b $system_id' to update/validate database. Continuing..."
+        tmaverage_incompatible=1
+        continue
     fi
-
 
     # Remove all newlines & split values
     migration_status=$(echo "$migration_status" | tr -d '\n')
     IFS='|' read -r timestamp db_version status <<< "$migration_status"
 
-    echo "TMAverage Status for SID $system_id: "
+    # Only display status if not successful
+    if [[ "$status" == "Success" ]]; then
+        status_formatted=""
+    else
+        status_formatted="($status)"
+    fi
+
+    echo "TMAverage Status for SID $system_id:"
     echo "  DB Last Updated:  $timestamp"
-    echo "  DB Version:       $db_version ($status)"
+    echo "  DB Version:       $db_version $status_formatted"
     echo "  Software Version: $tmaverage_version"
 
-    # Split version numbers and ensure major version matches
-    IFS='.' read -r db_major_v db_minor_v <<< "$db_version"
-    IFS='.' read -r tm_major_v tm_minor_v <<< "$tmaverage_version"
+    # Get major version numbers and ensure they match
+    db_major_v=$(echo "$db_version" | awk -F '.' '{print $2}')
+    tm_major_v=$(echo "$tmaverage_version" | awk -F '.' '{print $2}')
     
-    if [ $tm_major_v -ne $db_major_v ]; then
-        echo "WARNING: Database and software have mismatched major versions. Please update either database or software to prevent compatibility issues. Continuing..."
+    if [ "$tm_major_v" -ne "$db_major_v" ]; then
+        echo "WARNING: Database and software have mismatched major versions. Please update either database or software to prevent"
+        echo "         compatibility issues by running './ConfigureTMAverageEnvironment.sh -b $system_id' to update/validate database. Continuing..."
         tmaverage_incompatible=1
     fi
 
     if [[ "$status" != "Success" ]]; then
-        echo "WARNING: The most recent update to the TMAverage tables failed. Please ensure that tables are correctly setup and re-run ConfigureTMAverageEnvironment.sh. Continuing..."
+        echo "WARNING: The most recent update to the TMAverage tables failed. Please ensure that tables are correctly setup and re-run"
+        echo "          './ConfigureTMAverageEnvironment.sh -b $system_id'. Continuing..."
         tmaverage_incompatible=1
     fi
 done
@@ -158,10 +173,8 @@ echo
 
 if [ $tmaverage_incompatible -ne 0 ]; then
     echo "ERROR: One or more SIDs for database $database have a failed/incompatible version of TMAverage installed on the database. "
-    echo "       Please run ConfigureTMAverageEnvironment.sh to update. Exiting..."
+    echo "       Please run ConfigureTMAverageEnvironment.sh to update. See above output for more details. Exiting..."
     exit 1
 else
     echo "TMAverage is up-to-date!"
 fi
-
-# TODO: Add case for if no rows are returned!

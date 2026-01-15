@@ -81,6 +81,8 @@ else
     export LD_LIBRARY_PATH=$ORACLE_HOME/lib
 fi
 
+export DB_EMAIL_LIST="Robert.Schmidt@colorado.edu"
+
 # Resolve the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -260,6 +262,18 @@ if [ -n "$otfd_opt" ]; then
 
 fi
 
+# Check that database tables are up-to-date
+tmaverage_status=$("$SCRIPT_DIR/GetTMAverageStatus.sh" "$database" "$system_id")
+if [ $? -ne 0 ]; then
+    echo "$tmaverage_status"
+    echo "An error occurred while checking the status of DB TMAverage Tables. Exiting..."
+    exit 1
+elif ( ! echo "$tmaverage_status" | grep -q "TMAverage is up-to-date!" ); then
+    echo "$tmaverage_status"
+    echo "TMAverage DB Tables are not up-to-date. See above output for more details. Please update database and run ConfigureTMAverageEnvironment.sh. Exiting..."
+    exit 1
+fi
+
 # Check SELECT permissions for read-only tables
 select_check=$("$HOME/common/oracle/TestTablePermissions.sh" "$select_tables" "$username" SELECT)
 if [ $? -ne 0 ]; then
@@ -294,6 +308,9 @@ elif [ "$check_tablespace" != "READ-WRITE" ]; then
 fi
 
 echo "Running... $SCRIPT_DIR/ProcessTMAverageData.py $otfd_opt $exclude_opt $database $tmid $start_date $end_date $parallel_degree"
+
+# TODO: DEBUG
+exit 0
 
 # Execute the Python script with the prepared arguments
 echo "Running ProcessTMAverageData.py. See log output at /tmp/TMAverageLogs/"
