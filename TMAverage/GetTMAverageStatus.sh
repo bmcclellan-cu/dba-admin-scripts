@@ -72,13 +72,26 @@ if [ "$system_ids" == "ALL" ]; then
     system_ids=$($newest_python "$SCRIPT_DIR/TMAverageHelpers.py" "$ORACLE_SID" list 2>&1)
     if [ $? -ne 0 ]; then
         if [[ "$system_ids" == *"not supported by TMAverage"* ]]; then
-            echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."
+            echo "ERROR: Database $ORACLE_SID is not supported by TMAverage. Exiting..."
         else
             echo "$system_ids"
-            echo "ERROR: An error occurred while parsing configs. Exiting..."
+            echo "ERROR: An error occurred while fetching available SIDs for database $ORACLE_SID. Exiting..."
         fi
         exit 1
     fi
+else
+    # Check that the provided system_id is actually supported by TMAverage
+    check_supported=$($newest_python "$SCRIPT_DIR/TMAverageHelpers.py" "$ORACLE_SID" "$system_ids" 2>&1)
+    if [ $? -ne 0 ]; then
+        if [[ "$check_supported" == *"not supported by TMAverage"* ]]; then
+            echo "ERROR: Database $ORACLE_SID system_id $system_ids is not supported by TMAverage. Exiting..."
+        else
+            echo "$check_supported"
+            echo "ERROR: An error occurred while checking if database $ORACLE_SID SID $system_ids is supported. Exiting..."
+        fi
+        exit 1
+    fi
+
 fi
 
 tmaverage_version=$($newest_python "$SCRIPT_DIR/TMAverageHelpers.py" version 2>&1)
