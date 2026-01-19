@@ -81,8 +81,6 @@ else
     export LD_LIBRARY_PATH=$ORACLE_HOME/lib
 fi
 
-export DB_EMAIL_LIST="Robert.Schmidt@colorado.edu"
-
 # Resolve the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -307,9 +305,6 @@ elif [ "$check_tablespace" != "READ-WRITE" ]; then
 fi
 
 echo "Running... $SCRIPT_DIR/ProcessTMAverageData.py $otfd_opt $exclude_opt $database $tmid $start_date $end_date $parallel_degree"
-
-# TODO: DEBUG
-exit 0
 
 # Execute the Python script with the prepared arguments
 echo "Running ProcessTMAverageData.py. See log output at /tmp/TMAverageLogs/"
