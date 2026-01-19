@@ -14,7 +14,7 @@
 # Modified on: January 5th, 2026 - RS
 ###############################################################
 usage="Usage: ./GetTMAverageStatus.sh [database] [ system_id | ALL ]"
-example="Example: ./ProcessTMAverageData.sh ixpeprod"
+example="Example: ./GetTMAverageStatus.sh ixpeprod 1"
 
 while getopts ":h" option; do
     case $option in
