@@ -221,17 +221,19 @@ if [ -z "$migration_status" ]; then
     exit 0
 fi
 
+exit_status=0
+
 if [ "$update_status" == "Success" ] && { [ "$results_table_check" != "Yes" ] || [ "$error_table_check" != "Yes" ]; }; then
+    exit_status=1
     echo "ERROR: $misc_schema.MIGRATION_STATUS reports that the DB is currently on version $db_version, but"
     echo "       ONTHEFLYDECOM_ERRORS and/or ONTHEFLYDECOM_RESULTS are missing. These tables must be created"
     echo "       for OnTheFlyDecom to function. Exiting..."
-    exit 1
-fi
-
-if [ "$update_status" != "Success" ]; then
+    echo
+elif [ "$update_status" != "Success" ]; then
+    exit_status=1
     echo "ERROR: $misc_schema.MIGRATION_STATUS reports that the last update did not succeed (Status=$update_status). "
     echo "       Please update the database and update $misc_schema.MIGRATION_STATUS once this is completed. Exiting..."
-    exit 1
+    echo
 fi
 
 # Check that the major version numbers of the database and the OTFD package match. 
@@ -240,10 +242,11 @@ db_major_v=$(echo "$db_version" | awk -F '.' '{print $2}')
 otfd_major_v=$(echo "$base_version" | awk -F '.' '{print $2}')
 
 if [ "$db_major_v" -ne "$otfd_major_v" ]; then
+    exit_status=1
     echo "ERROR: Database and software have mismatched major versions. Please update the database or software to prevent compatibility issues."
     echo "       Update $misc_schema.MIGRATION_STATUS once the database is updated. Exiting..."
     exit 1
 fi
 
 
-exit 0
+exit $exit_status
