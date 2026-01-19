@@ -43,7 +43,7 @@ elif [ $# -gt 1 ]; then
     exit 1
 fi
 
-sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I "$ORACLE_SID")
+sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I)
 if [ -n "$sid_check" ]; then
     if [ "$sid_check" == "-1" ]; then
         echo "ERROR: \$ORACLE_SID not set. Exiting..."
