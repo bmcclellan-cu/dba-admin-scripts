@@ -517,30 +517,32 @@ BEGIN
     definitionStopTime := -1;
 
     -- If ASCT is specified, error immediately.
-    IF startASCT_in >= 0 OR stopASCT_in >= 0 THEN
+    IF (startASCT_in >= 0 OR stopASCT_in >= 0) THEN
         ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: IXPE Only supports querying by ERT, SCT.', 0);
         RETURN 0;
     END IF;
 
-    -- If an ERT range was specified, use it as the time range for the queries.
-    -- Otherwise assume SCT can be used for the time range when querying these tables.
-    -- This presumes SCT and ERT are the same, or close enough.
+    -- Require that SCT is present for all queries.
+    IF (startSCT_in < 0 OR stopSCT_in < 0) THEN
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: Incomplete query provided. Missing start/stop SCT.', 0);
+        RETURN 0;
+    END IF; 
 
+    -- Validated inputs, get definition times:
+
+    -- For TMDecom or TSL queries, prefer to use ERT. If ERT is not provided, then fallback to SCT.
     IF (startERT_in >= 0 AND stopERT_in >= 0) THEN
         -- Input ERT times are valid, so use them.
         definitionStartTime := startERT_in;
         definitionStopTime  := stopERT_in;
         definitionColumn    := 1;
-    ELSIF (startSCT_in >= 0 AND stopSCT_In >= 0) THEN
+    ELSE
         -- No ERT times were input, so set the TSL and TMD times to SCT times,
         -- and hope they're comparable to TSF and TMD times (and ERT).  In flight,
         -- SCT is the same as ERT, i.e. not jammed in the future like during IandT.
         definitionStartTime := startSCT_in;
         definitionStopTime  := stopSCT_in;
         definitionColumn    := 0;
-    ELSE
-        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: Incomplete query provided. Missing start/stop ERT/SCT.', 0);
-        RETURN 0;
     END IF;
     RETURN 1;
 END getDefinitionStartStopTimes;
