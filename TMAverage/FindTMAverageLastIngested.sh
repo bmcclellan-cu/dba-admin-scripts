@@ -71,6 +71,16 @@ if [ -z "$VIRTUAL_ENV" ]; then
     exit 1
 fi
 
+version=$($newest_python --version 2>&1 | awk '{print $2}')
+major=${version%%.*}
+minor=${version#*.}
+minor=${minor%%.*}
+
+if [ "$major" -ne 3 ] || [ "$minor" -lt 9 ]; then
+    echo "ERROR: Incompatible version of python is installed. TMAverage needs minimum of 3.9"
+    exit 1
+fi
+
 # Set config variables to default values:
 tmaverage_table_name=""
 
