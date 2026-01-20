@@ -14,13 +14,14 @@
 # Created on: January 19th, 2026
 # Modified on: January 19th, 2026 - RS
 ###############################################################
-usage="Usage: ./DeleteTMAverageData.sh [ -l (optional, list # of rows)] [ database ] [ system_id ] [ dates_to_delete (CSV of dates/date ranges. See docstring) ] "
+usage="Usage: ./DeleteTMAverageData.sh [ -y (Skip confirmation prompt) ] [ -l (optional, list # of rows)] [ database ] [ system_id ] [ dates_to_delete (CSV of dates/date ranges. See docstring) ]"
 example1="Example: ./DeleteTMAverageData.sh -l ixpeprod 1 20-DEC-25,21-DEC-25"
-example2="         ./DeleteTMAverageData.sh emadev 20 01-JAN-26:05-JAN-26,07-JAN-26"
+example2="         ./DeleteTMAverageData.sh -y emadev 20 01-JAN-26:05-JAN-26,07-JAN-26"
 
 list_opt=0
+yes_opt=0
 # Process input options
-while getopts ":hl" option; do
+while getopts ":hly" option; do
     case $option in
     h)
         echo "$usage"
@@ -30,6 +31,9 @@ while getopts ":hl" option; do
         ;;
     l)
         list_opt=1
+        ;;
+    y)
+        yes_opt=1
         ;;
     \?)
         echo "ERROR: Invalid option. Exiting..."
@@ -49,6 +53,11 @@ if [ $# -ne 3 ]; then
     echo "$usage"
     echo "$example1"
     echo "$example2"
+    exit 1
+fi
+
+if [ $yes_opt -ne 0 ] && [ $list_opt -ne 0 ]; then
+    echo "The -y and -l options are mutually exclusive. Exiting..."
     exit 1
 fi
 
@@ -147,6 +156,8 @@ for date in $dates_to_delete; do
     where_clause+=" OR $table_time_column BETWEEN $start_time_gps AND $end_time_gps" 
 done
 
+echo "Getting count of # of rows affected."
+
 tmaverage_delete_count=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD | xargs
     set heading off
     set feedback off
@@ -170,11 +181,14 @@ if [ $list_opt -ne 0 ]; then
     echo "Finished listing. Exiting..."
     exit 0
 fi
-
-read -r -p "Are you sure you want to delete $tmaverage_delete_count rows? (Y/N): " confirm && confirm=${confirm^^}
-if ! [ "$confirm" == "Y" ] || [ "$confirm" == "YES" ]; then
-    echo "Cancelling Delete."
-    exit 0
+if [ $yes_opt -ne 0 ]; then
+    echo "The -y option was provided, so skipping confirmation..."
+else
+    read -r -p "Are you sure you want to delete $tmaverage_delete_count rows? (Y/N): " confirm && confirm=${confirm^^}
+    if ! [ "$confirm" == "Y" ] || [ "$confirm" == "YES" ]; then
+        echo "Cancelling Delete."
+        exit 0
+    fi
 fi
 
 tmaverage_delete_rows=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba << EOD | xargs
