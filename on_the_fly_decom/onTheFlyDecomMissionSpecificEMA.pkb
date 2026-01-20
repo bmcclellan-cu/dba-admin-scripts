@@ -449,7 +449,8 @@ FUNCTION: getDefinitionStartStopTimes
 
 Purpose:  Gets start/stop times for use in queries to the TelemetryStorageLocation and TMDecom tables.
           This does not narrow the query being made, but rather chooses which parameter to use to fetch
-          the relevant records for decommutation.
+          the relevant records for decommutation. Also acts as input validation.
+
 
 Inputs:
     systemId_in  - E.g. 1 = FLIGHT, 2 = TEST

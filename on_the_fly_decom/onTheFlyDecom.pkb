@@ -1389,7 +1389,8 @@ BEGIN
     
     -- Determines which field to use for the time range, and returns which column to iterate over for
     -- TelemetryStorageLocation and TMDecom rows. This is typically the ERT range of the query, but 
-    -- may also be an SCT range or altered by options such as testID. 
+    -- may also be an SCT range or altered by options such as testID. This function will fail cleanly on
+    -- unsupported time inputs.
     status := onTheFlyDecomMissionSpecific.getDefinitionStartStopTimes( 
         systemId_in,
         startSCT_in, stopSCT_in,
