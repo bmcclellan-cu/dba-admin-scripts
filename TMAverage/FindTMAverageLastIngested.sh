@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Purpose: Queries the TMAVERAGE_SID1 table for the most recent data, and returns the GPS timestamp in DT format.
+# Purpose: Queries the TMAverage table for the most recent data, and returns the GPS timestamp in DT format.
 # 
 # 
 # Note:    For more detailed documentation go to https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
@@ -45,12 +45,10 @@ fi
 sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I)
 if [ -n "$sid_check" ]; then
     if [ "$sid_check" == "-1" ]; then
-        echo "ERROR"
-        echo "\$ORACLE_SID not set..."
+        echo "ERROR: \$ORACLE_SID not set..."
         exit 1
     fi
-    echo "ERROR"
-    echo "provided \$database is not open. Exiting..."
+    echo "ERROR: Provided \$database is not open. Exiting..."
     exit 1
 fi
 
@@ -67,6 +65,16 @@ source "$VENV_ACTIVATE"
 # Virtual environment check
 if [ -z "$VIRTUAL_ENV" ]; then
     echo "ERROR: A valid Python virtual environment must exist in $SCRIPT_DIR. Please run './ConfigureTMAverageEnvironment.sh -v' to create one with the necessary dependencies. Exiting..."
+    exit 1
+fi
+
+version=$($newest_python --version 2>&1 | awk '{print $2}')
+major=${version%%.*}
+minor=${version#*.}
+minor=${minor%%.*}
+
+if [ "$major" -ne 3 ] || [ "$minor" -lt 9 ]; then
+    echo "ERROR: Incompatible version of python is installed. TMAverage needs minimum of 3.9"
     exit 1
 fi
 
@@ -92,7 +100,8 @@ IFS="." read -r tmaverage_s tmaverage_t <<< "$tmaverage_table_name"
 # Check that table exists.
 table_check=$("$HOME/common/oracle/CheckIfTableExists.sh" "$tmaverage_s" "$tmaverage_t")
 if [ $? -ne 0 ]; then
-    echo "An error occurred while running CheckIfTableExists.sh. Exiting..."
+    echo "$table_check"
+    echo "An error occurred while checking the existence of table '$tmaverage_table_name' . Exiting..."
     exit 1
 fi
 if [ "$table_check" != "Yes" ]; then

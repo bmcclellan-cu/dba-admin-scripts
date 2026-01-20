@@ -29,6 +29,7 @@ user_opt=0
 otfd_opt=0
 venv_opt=0
 table_opt=0
+tablespace_opt=0
 datafile_path=""
 while getopts ":hubovt:" option; do
     case $option in
@@ -48,6 +49,7 @@ while getopts ":hubovt:" option; do
         venv_opt=1
         ;;
     t)
+        tablespace_opt=1
         datafile_path="$OPTARG"
         ;;
     b)
@@ -144,6 +146,16 @@ if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
     exit 1
 fi
 
+version=$($newest_python --version 2>&1 | awk '{print $2}')
+major=${version%%.*}
+minor=${version#*.}
+minor=${minor%%.*}
+
+if [ "$major" -ne 3 ] || [ "$minor" -lt 9 ]; then
+    echo "ERROR: Incompatible version of python is installed. TMAverage needs minimum of 3.9"
+    exit 1
+fi
+
 # If system_id is set, then get SID-dependent helper variables.
 if [ -n "$system_id" ]; then
     # Set config variables to default values:
@@ -171,7 +183,7 @@ if [ -n "$system_id" ]; then
 fi
 
 # Create tablespace if path is specified
-if [ -n "$datafile_path" ]; then
+if [ $tablespace_opt -ne 0 ]; then
     # Check that tablespace exists.
     tablespace_check=$("$HOME/common/oracle/CheckIfTablespaceExists.sh" "$tablespace_name")
     if [ $? -ne 0 ]; then
@@ -518,22 +530,16 @@ if [ $venv_opt -ne 0 ]; then
         echo "Error occurred while creating python venv in $SCRIPT_DIR/venv. Exiting..."
         exit 1
     fi
-    # Activate venv
-    source "$SCRIPT_DIR/venv/bin/activate"
-    if [ $? -ne 0 ]; then
-        echo "An error occurred while activating venv environment. Exiting..."
-        exit 1
-    fi
 
     # Install needed dependencies.
-    install_requirements=$(pip install -r "$SCRIPT_DIR/requirements.txt")
+    install_requirements=$("$SCRIPT_DIR/venv/bin/pip" install -r "$SCRIPT_DIR/requirements.txt" 2>&1)
     if [ $? -ne 0 ]; then
         echo "$install_requirements"
         echo "Error occurred while installing requirements at $SCRIPT_DIR/requirements.txt. Exiting..."
         exit 1
     fi
 
-    echo "Successfully created venv at $SCRIPT_DIR/venv."
+    echo "Successfully created/updated venv at $SCRIPT_DIR/venv."
 fi
 
 
