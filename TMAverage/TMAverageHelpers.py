@@ -26,6 +26,7 @@
 # Last Modified: November 17th, 2025 - RS
 ##########################################################################
 import sys
+import os
 
 TMAVERAGE_VERSION = "3.2"
 
