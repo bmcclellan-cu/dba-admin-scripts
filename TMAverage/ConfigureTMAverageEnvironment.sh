@@ -120,7 +120,7 @@ if [ $user_opt -eq 0 ] && [ $otfd_opt -eq 0 ] && [ $venv_opt -eq 0 ] && [ $table
 fi
 
 # Checking $ORACLE_SID
-sid_check=$("$HOME"/common/oracle/VerifyAllParam.sh -I)
+sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I)
 if [ -n "$sid_check" ]; then
     if [ "$sid_check" == "-1" ]; then
         echo "Error: \$ORACLE_SID not set..."
@@ -131,7 +131,7 @@ if [ -n "$sid_check" ]; then
 fi
 
 # Get MISC schema of database.
-misc_schema=$(GetSchemaName.sh -m -v)
+misc_schema=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
 if [ $? -ne 0 ]; then
     echo "$misc_schema"
     echo "An error occurred while getting the MISC schema name. Exiting..."
@@ -164,7 +164,7 @@ if [ -n "$system_id" ]; then
     tmaverage_table_check_columns="";tmaverage_stats_check_columns=""
 
     # Set static values from helper script. Also checks if database is supported by script.
-    var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID" "$system_id" 2>&1)
+    var_commands=$($newest_python "$SCRIPT_DIR/TMAverageHelpers.py" "$ORACLE_SID" "$system_id" 2>&1)
     if [ $? -ne 0 ]; then
         if [[ "$var_commands" == *"not supported by TMAverage"* ]]; then
             echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."
@@ -282,7 +282,7 @@ EOD
     if [[ "$check_table_exists" == *"No"* ]]; then
         # Create TMAverage table
         echo "Creating table $tmaverage_table_name in tablespace $tablespace_name..."
-        create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+        create_table=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
             set heading off
             set feedback off
             whenever oserror exit 1
@@ -341,7 +341,7 @@ EOD
 
     if [[ "$check_table_exists" == *"No"* ]]; then
         echo "Creating table $tmaverage_stats_name in tablespace $tablespace_name..."
-        create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+        create_table=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
         set heading off
         set feedback off
         whenever oserror exit 1
@@ -409,7 +409,7 @@ if [ $user_opt -ne 0 ]; then
     status_code=$?
     if [ $status_code -ne 0 ] && [[ $create_user == *"already exists"* ]]; then
         echo "User with username $username already exists on database $ORACLE_SID. Resetting password..."
-        alter_user=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+        alter_user=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
             set heading off
             set feedback off
             whenever oserror exit 1
@@ -452,7 +452,7 @@ EOD
 
     # TODO: Replace this with updated GrantNewPermissions.sh. TMANALOG is a view on EMA, and GrantNewPermissions.sh does not 
     #       currently support adding permissions to views. This update will be addressed in DB-3350.
-    table_permission_add=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+    table_permission_add=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
         set heading off
         set feedback off
         whenever oserror exit 1
@@ -493,7 +493,7 @@ EOD
             exit 1
         fi
 
-        otfd_execute=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+        otfd_execute=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
             set heading off
             set feedback off
             whenever oserror exit 1
