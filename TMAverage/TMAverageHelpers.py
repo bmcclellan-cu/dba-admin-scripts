@@ -267,4 +267,6 @@ if __name__ == "__main__":
     attributes = vars(conf)  # Gets dict of variables and their values
 
     for attribute in attributes:
-        print(f"export {attribute.lower()}=\"{attributes[attribute]}\"")
+        var_name = attribute.lower()
+        var_value = attributes[attribute]
+        print(f"export {var_name}=\"$\{ {var_name}{attributes[attribute]}\}\"")
