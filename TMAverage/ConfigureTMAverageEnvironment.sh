@@ -201,6 +201,15 @@ fi
 
 # Create the TMAverage table if desired.
 if [ $table_opt -ne 0 ]; then
+    migration_status_check=$("$HOME/common/oracle/CheckIfTableExists.sh" "$misc_schema" MIGRATION_STATUS)
+    if [ $? -ne 0 ]; then
+        echo "$migration_status_check"
+        echo "An error occurred while running CheckIfTableExists.sh. Exiting..."
+        exit 1
+    elif [ "$migration_status_check" != "Yes" ]; then
+        echo "ERROR: $misc_schema.MIGRATION_STATUS table not found. Please create table then re-run script. Exiting..."
+        exit 1
+    fi
 
     # Trap that enters a "Failure" record into MIGRATION_STATUS if this step fails
     table_exit_handler() {
