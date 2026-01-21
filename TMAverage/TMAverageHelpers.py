@@ -269,4 +269,6 @@ if __name__ == "__main__":
     for attribute in attributes:
         var_name = attribute.lower()
         var_value = attributes[attribute]
-        print(f"export {var_name}=\"$\{ {var_name}{attributes[attribute]}\}\"")
+        # This will set each environment variable if it has not already been set. 
+        # Example output: export tmaverage_table_name=${tmaverage_table_name:-IXPE_L1A.TMAVERAGE_SID1}
+        print(f"export {var_name}=${{{var_name}:-{attributes[attribute]}}}")
