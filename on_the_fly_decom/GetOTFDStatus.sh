@@ -76,37 +76,48 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Get the status and version of OTFD DB Tables
-migration_status=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
-    set heading off
-    set feedback off
-    whenever oserror exit 1
-    whenever sqlerror exit 1
-
-    set linesize 10000
-
-    SELECT STATUS_TIMESTAMP || '|' || UPDATE_VERSION || '|' || UPDATE_SUCCESS 
-    FROM $misc_schema.MIGRATION_STATUS
-    WHERE SOFTWARE_NAME = 'OTFD (Tables)' ORDER BY STATUS_TIMESTAMP DESC FETCH NEXT 1 ROWS ONLY;
-EOD
-)
+migration_table_check=$("$HOME/common/oracle/CheckIfTableExists.sh" "$misc_schema" MIGRATION_STATUS)
 if [ $? -ne 0 ]; then
-    echo "$migration_status"
-    echo "An error occurred while fetching version of OTFD Tables. Exiting..."
+    echo "$migration_table_check"
+    echo "An error occurred while checking if table MIGRATION_STATUS exists. Exiting..."
     exit 1
 fi
 
-if [ -n "$migration_status" ]; then
-    migration_status=$(echo "$migration_status" | tr -d '\n')
-    IFS='|' read -r update_timestamp db_version update_status <<< "$migration_status"
-    # Only display status if not successful.
-    if [[ "$update_status" == "Success" ]]; then
-        update_status_formatted=""
+if [ "$migration_table_check" == "Yes" ]; then
+    # Get the status and version of OTFD DB Tables
+    migration_status=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+        set heading off
+        set feedback off
+        whenever oserror exit 1
+        whenever sqlerror exit 1
+
+        set linesize 10000
+
+        SELECT STATUS_TIMESTAMP || '|' || UPDATE_VERSION || '|' || UPDATE_SUCCESS 
+        FROM $misc_schema.MIGRATION_STATUS
+        WHERE SOFTWARE_NAME = 'OTFD (Tables)' ORDER BY STATUS_TIMESTAMP DESC FETCH NEXT 1 ROWS ONLY;
+EOD
+    )
+    if [ $? -ne 0 ]; then
+        echo "$migration_status"
+        echo "An error occurred while fetching version of OTFD Tables. Exiting..."
+        exit 1
+    fi
+
+    if [ -n "$migration_status" ]; then
+        migration_status=$(echo "$migration_status" | tr -d '\n')
+        IFS='|' read -r update_timestamp db_version update_status <<< "$migration_status"
+        # Only display status if not successful.
+        if [[ "$update_status" == "Success" ]]; then
+            update_status_formatted=""
+        else
+            update_status_formatted="($update_status)"
+        fi
     else
-        update_status_formatted="($update_status)"
+        echo "WARNING: No record found in $misc_schema.MIGRATION_STATUS. Using fallback option of reporting table existence."
     fi
 else
-    echo "WARNING: No record found in $misc_schema.MIGRATION_STATUS. Using fallback option of reporting table existence."
+    echo "WARNING: Table $misc_schema.MIGRATION_STATUS does not exist. Using fallback option of reporting table existence."
 fi
 
 # Check that the OTFD packages exist.
@@ -211,7 +222,7 @@ fi
 
 if [ -n "$additional_packages_tables" ]; then
     echo
-    echo "WARNING: The ONTHEFLYDECOM Package and/or ONTHEFLYDECOM Tables were found outside of the MISC schema. Tables and Packages are listed below: "
+    echo "WARNING: The ONTHEFLYDECOM Package and/or ONTHEFLYDECOM tables were found outside of the MISC schema. Tables and Packages are listed below: "
     echo "$additional_packages_tables"
     echo
 fi
