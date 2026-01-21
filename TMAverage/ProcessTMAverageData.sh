@@ -123,7 +123,7 @@ if [ -n "$sid_check" ]; then
 fi
 
 timestamp=$(date "+%Y%m%d-%H%M%S")
-LOGDIR="/tmp/TMAverageLogs/$database"
+LOGDIR="/export/home/oracle/tmaverage_logs/$database"
 mkdir -p "$LOGDIR"
 LOGFILE="$LOGDIR/TMAverage-$timestamp-Bash.log"
 # Sets all script output to be put into a logfile as well, including stderr
@@ -299,10 +299,10 @@ fi
 echo "Running... $SCRIPT_DIR/ProcessTMAverageData.py $otfd_opt $exclude_opt $database $tmid $start_date $end_date $parallel_degree"
 
 # Execute the Python script with the prepared arguments
-echo "Running ProcessTMAverageData.py. See log output at /tmp/TMAverageLogs/"
+echo "Running ProcessTMAverageData.py. See log output at /export/home/oracle/tmaverage_logs/"
 python "$SCRIPT_DIR/ProcessTMAverageData.py" $otfd_opt $exclude_opt "$database" "$system_id" "$tmid" "$start_date" "$end_date" "${parallel_degree}"
 if [ $? -ne 0 ]; then
-    echo "An error occurred while running ProcessTMAverageData.py. See log outputs at /tmp/TMAverageLogs/ for more information. Exiting..."
+    echo "An error occurred while running ProcessTMAverageData.py. See log outputs at /export/home/oracle/tmaverage_logs/ for more information. Exiting..."
     exit 1
 fi
 

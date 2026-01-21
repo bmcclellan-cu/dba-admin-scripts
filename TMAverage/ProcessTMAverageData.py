@@ -213,7 +213,7 @@ def init_worker(
     # Create a per-process log file based on the time the process is initialized and the unique thread id.
     proc = multiprocessing.current_process()
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    log_file = f"/tmp/TMAverageLogs/{database}/TMAverage-{timestamp}-{proc.name}.log"
+    log_file = f"/export/home/oracle/tmaverage_logs/{database}/TMAverage-{timestamp}-{proc.name}.log"
 
     # Clear and add handler
     logger.handlers.clear()
@@ -872,9 +872,9 @@ def main():
 
     # Configure the logger for the main thread
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    os.makedirs(f"/tmp/TMAverageLogs/{database}", exist_ok=True)
+    os.makedirs(f"/export/home/oracle/tmaverage_logs/{database}", exist_ok=True)
     logger = setup_logger(
-        f"/tmp/TMAverageLogs/{database}/TMAverage-{timestamp}-Main.log"
+        f"/export/home/oracle/tmaverage_logs/{database}/TMAverage-{timestamp}-Main.log"
     )
 
     # Validate TMID input if not all. If all, will query for data once db connection is
@@ -1113,13 +1113,13 @@ def main():
             error_status = True
             logger.error(
                 f"One or more error(s) occurred during processing TMID {tmid_input} for date {single_date}. "
-                "Please check worker log files at /tmp/TMAverageLogs/ for more details. Continuing..."
+                "Please check worker log files at /export/home/oracle/tmaverage_logs for more details. Continuing..."
             )
         if unique_constraint_num > 0:
             error_status = True
             logger.error(
                 f"One or more unique constraint errors (ORA-00001) occurred while processing TMID {tmid_input} for date {single_date}. "
-                "Please check worker log files at /tmp/TMAverageLogs/ for more details. Continuing..."
+                "Please check worker log files at /export/home/oracle/tmaverage_logs for more details. Continuing..."
             )
         
         if otfd_error_num > 0:
