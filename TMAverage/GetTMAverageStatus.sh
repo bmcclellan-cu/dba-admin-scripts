@@ -165,8 +165,8 @@ EOD
     echo "  Software Version: $tmaverage_version"
 
     # Get major version numbers and ensure they match
-    db_major_v=$(echo "$db_version" | awk -F '.' '{print $2}')
-    tm_major_v=$(echo "$tmaverage_version" | awk -F '.' '{print $2}')
+    db_major_v=$(echo "$db_version" | awk -F '.' '{print $1}')
+    tm_major_v=$(echo "$tmaverage_version" | awk -F '.' '{print $1}')
     
     if [ "$tm_major_v" -ne "$db_major_v" ]; then
         echo "WARNING: Database and software have mismatched major versions. Please update either database or software to prevent"
