@@ -35,38 +35,49 @@ TMAVERAGE_VERSION = "3.2"
 # display an appropriate error message.
 SUPPORTED_DB_SIDS = {
     "goldprod": [1],
-    "evep12c": [1],
+    "evep12c":  [1],
     "tsisprod": [1],
-    "aimprod": [1],
+    "aimprod":  [1],
     "ixpeprod": [1],
-    "emadev": [19, 20],
+    "neosd19":  [1, 2],
+    "neosprod": [1, 2],
+    "emadev": range(1, 22), # SIDs 1-21
+    "emapre": range(1, 22), # SIDs 1-21
 }
 
 # The schema where data is primarily stored (typically L1A), and where TMAverage tables
 # are located.
 DATA_SCHEMAS = {
-    "aimprod": "AIM_L1A",
+    "aimprod":   "AIM_L1A",
     "goldprod": "GOLD_L1A",
-    "evep12c": "EVE_L1A",
+    "evep12c":   "EVE_L1A",
     "tsisprod": "TSIS_L1A",
     "ixpeprod": "IXPE_L1A",
-    "emadev": "EMA_SCHEMA<SID>"  # (EMA) Data is separated by SID/Schema
+    "neosd19":  "NEOS_L1A",
+    "neosprod": "NEOS_L1A",
+    "emadev": "EMA_SCHEMA<SID>",  # (EMA) Data is separated by SID/Schema
+    "emapre": "EMA_SCHEMA<SID>",
 }
 
 # Primary metadata schemas.
 CT_SCHEMAS = {
-    "aimprod": "AIM_CT_SC",
+    "aimprod":   "AIM_CT_SC",
     "goldprod": "GOLD_CT",
-    "evep12c": "EVE_CT",
+    "evep12c":   "EVE_CT",
     "tsisprod": "TSIS_CT",
     "ixpeprod": "IXPE_CT",
-    "emadev": "EMA_CT",
+    "neosd19":  "NEOS_CT",
+    "neosprod": "NEOS_CT",
+    "emadev":    "EMA_CT",
+    "emapre":    "EMA_CT",
+
 }
 
 # The location and name of TMAnalog. Depends on SID.
 TMANALOG_DBS = {
     "evep12c":  "<DATA_SCHEMA>.TMANALOG",
     "emadev":   "<DATA_SCHEMA>.TMANALOG",
+    "emapre":   "<DATA_SCHEMA>.TMANALOG",
     "aimprod":  "<DATA_SCHEMA>.TMANALOG_TABLE",
     "*":        "<DATA_SCHEMA>.TMANALOG_SID<SID>",
 }
@@ -75,6 +86,7 @@ TMANALOG_DBS = {
 # the primary key name from it effectively without needing to truncate the schema name from it.
 TMAVERAGE_TAB_NAME = {
     "emadev":   "TMAVERAGE",
+    "emapre":   "TMAVERAGE",
     "*":        "TMAVERAGE_SID<SID>"
 }
 
@@ -87,6 +99,7 @@ TMAVERAGE_STATS_NAME = "<DATA_SCHEMA>.TMAVERAGE_STATS"
 # Name of the tablespace where TMAverage and TMAverage_Stats are stored.
 TABLESPACE_NAME = {
     "emadev":   "<DATA_SCHEMA>_TMAVERAGE",
+    "emapre":   "<DATA_SCHEMA>_TMAVERAGE",
     "*":        "TMAVERAGE_SID<SID>",
 }
 
@@ -98,6 +111,7 @@ TELEMETRYITEMDEFINITION_DBS = {
 # Defines polynomial conversions of the raw data into EU (Engineering Units). 
 TELEMETRYANALOGCONVERSIONS_DBS = {
     "emadev":   "<DATA_SCHEMA>.TMANALOGCONVERSIONS",   # (EMA) Separate analog conversions for each SID.
+    "emapre":   "<DATA_SCHEMA>.TMANALOGCONVERSIONS",
     "*":        "<CT_SCHEMA>.TELEMETRYANALOGCONVERSIONS",
 }
 
@@ -105,6 +119,7 @@ TELEMETRYANALOGCONVERSIONS_DBS = {
 # contain an empty string.
 TIME_VARIANT_ANALOG_CONVERSION = {
     "emadev":   "true",
+    "emapre":   "true",
     "*":        ""
 }
 
@@ -112,11 +127,13 @@ TIME_VARIANT_ANALOG_CONVERSION = {
 # This is separated from OTFD_TIME_COLUMN because the table column name is SCT_VTCW rather than SCT.
 TABLE_TIME_COLUMN = {
     "emadev": "ASCT",
+    "emapre": "ASCT",
     "*": "SCT_VTCW"
 }
 
 OTFD_TIME_COLUMN = {
     "emadev": "ASCT",
+    "emapre": "ASCT",
     "*": "SCT"
 }
 
