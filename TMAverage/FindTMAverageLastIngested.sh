@@ -114,7 +114,7 @@ fi
 
 echo "Getting latest data timestamp for $tmaverage_table_name. This may take a while for larger tables..."
 
-get_latest_timestamp=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+get_latest_timestamp=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
     set heading off
     set feedback off
     whenever oserror exit 1
