@@ -65,7 +65,7 @@ while getopts ":horde:" option; do
     esac
 done
 
-shift $((OPTIND -1))
+shift $(($OPTIND -1))
 
 # Set DBA environment variables
 if [ -f /export/home/oracle/.bashrc ]; then

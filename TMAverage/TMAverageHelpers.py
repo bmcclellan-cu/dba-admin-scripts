@@ -182,8 +182,6 @@ class TMAverageConfigs():
             raise ValueError(f"ERROR: Database {database} SID {sid} is not supported by TMAverage.\n"
                              "Supported databases are: {str(tuple(SUPPORTED_DB_SIDS.keys()))}")
         
-        print(os.environ)
-
         self.VERSION = TMAVERAGE_VERSION
 
         self.SID = sid
