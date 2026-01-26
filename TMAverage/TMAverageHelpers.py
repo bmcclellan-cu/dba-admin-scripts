@@ -26,7 +26,6 @@
 # Last Modified: November 17th, 2025 - RS
 ##########################################################################
 import sys
-import os
 
 TMAVERAGE_VERSION = "3.2"
 
@@ -287,4 +286,4 @@ if __name__ == "__main__":
     for attribute in attributes:
         var_name = attribute.lower()
         var_value = attributes[attribute]
-        print(f"export {var_name}=\"$\{ {var_name}{attributes[attribute]}\}\"")
+        print(f"export {attribute.lower()}=\"{attributes[attribute]}\"")
