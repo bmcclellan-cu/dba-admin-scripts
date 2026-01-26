@@ -12,7 +12,7 @@
 # 
 # Author: Robert Schmidt
 # Created on: January 19th, 2026
-# Modified on: January 19th, 2026 - RS
+# Modified on: January 26th, 2026 - RS
 ###############################################################
 usage="Usage: ./DeleteTMAverageData.sh [ -y (Skip confirmation prompt) ] [ -l (optional, list # of rows)] [ database ] [ system_id ] [ dates_to_delete (CSV of dates/date ranges. See docstring) ]"
 example1="Example: ./DeleteTMAverageData.sh -l ixpeprod 1 20-DEC-25,21-DEC-25"
@@ -82,11 +82,19 @@ if ! [[ $system_id =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
+# Check for existence of Python virtual environment
+VENV_ACTIVATE="${SCRIPT_DIR}/venv/bin/activate"
+if [ ! -f "$VENV_ACTIVATE" ]; then
+    echo "ERROR: File venv/bin/activate not found in $SCRIPT_DIR! Please run './ConfigureTMAverageEnvironment.sh -v' to create one with the necessary dependencies. Exiting..."
+    exit 1
+fi
 
-newest_python=$(ls /usr/bin/python3* | grep -oP 'python3\.\d+' | sort -V | tail -n 1)
-if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
-    echo "$newest_python"
-    echo "Failed to find newest version of python. TMAverage requires the use of python. Exiting..."
+# Source activate file for the Python virtual environment
+source "$VENV_ACTIVATE"
+
+# Virtual environment check
+if [ -z "$VIRTUAL_ENV" ]; then
+    echo "ERROR: A valid Python virtual environment must exist in $SCRIPT_DIR. Please run './ConfigureTMAverageEnvironment.sh -v' to create one with the necessary dependencies. Exiting..."
     exit 1
 fi
 
@@ -95,7 +103,7 @@ tmaverage_table_name="";table_time_column="";
 
 # Set TMAverage static values from helper script. If the database name is not supported, this will fail.
 # Set static values from helper script. If the database name is not supported, this will fail.
-var_commands=$($newest_python "$SCRIPT_DIR/TMAverageHelpers.py" "$ORACLE_SID" "$system_id" 2>&1)
+var_commands=$(python "$SCRIPT_DIR/TMAverageHelpers.py" "$ORACLE_SID" "$system_id" 2>&1)
 if [ $? -ne 0 ]; then
     if [[ "$var_commands" == *"not supported by TMAverage"* ]]; then
         echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."
@@ -110,7 +118,7 @@ eval "$var_commands"
 
 convert_dt2gps (){
     datetime_value=${1^^}
-    gps_timestamp=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD | xargs
+    gps_timestamp=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD | xargs
         set heading off
         set feedback off
         whenever oserror exit 1
