@@ -274,7 +274,8 @@ EXCEPTION
         RETURN;
     WHEN OTHERS THEN
         ONTHEFLYDECOM.logOTFD('addToL0Query: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
-        RETURN;
+        -- Re-raise unknown exception to main procedure.
+        raise;
 END addToL0Query;
 
 /*************************************************************************************************
@@ -311,7 +312,8 @@ EXCEPTION
         RETURN;
     WHEN OTHERS THEN
         ONTHEFLYDECOM.logOTFD('addToL0Query: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
-        RETURN;
+        -- Re-raise unknown exception to main procedure.
+        raise;
 END addToL1Query;
 
 /*************************************************************************************************
