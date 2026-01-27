@@ -64,7 +64,7 @@ FUNCTION getVersion
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'IXPE 0.2.1';
+    return 'IXPE 0.2.3';
 END getVersion;
 
 /*************************************************************************************************
@@ -262,11 +262,19 @@ BEGIN
         EXECUTE IMMEDIATE 'SELECT fileId from TelemetrySourceFiles WHERE filename=''' ||
      	                  gblTlmFileName || '''' INTO fileId;
         IF (fileId IS NULL) THEN
-            ONTHEFLYDECOM.logOTFD('addToL0Query: gblTlmFileName(' || gblTlmFileName || ') is not valid, returns no file ID', 0);
+            ONTHEFLYDECOM.logOTFD('addToL0Query: gblTlmFileName="' || gblTlmFileName || '" is not valid, returns no file ID', 0);
             RETURN;
         END IF;
-        exeString := exeString || ' AND fileId=' || TO_CHAR(fileId);
+        exeString := exeString || ' fileId=' || TO_CHAR(fileId) || ' AND ';
     END IF;
+EXCEPTION
+    -- On exception return without altering exeString and log as error.
+    WHEN NO_DATA_FOUND THEN
+        ONTHEFLYDECOM.logOTFD('addToL0Query: gblTlmFileName="' || gblTlmFileName || '" is not valid, returns no file ID', 0);
+        RETURN;
+    WHEN OTHERS THEN
+        ONTHEFLYDECOM.logOTFD('addToL0Query: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+        RETURN;
 END addToL0Query;
 
 /*************************************************************************************************
@@ -290,12 +298,20 @@ BEGIN
         EXECUTE IMMEDIATE 'SELECT fileId from TelemetrySourceFiles WHERE filename=''' ||
      	                  gblTlmFileName || '''' INTO fileId;
         IF (fileId IS NULL) THEN
-            ONTHEFLYDECOM.logOTFD('addToL1Query: gblTlmFileName(' || gblTlmFileName || ') is not valid, returns no file ID', 0);
+            ONTHEFLYDECOM.logOTFD('addToL1Query: gblTlmFileName="' || gblTlmFileName || '" is not valid, returns no file ID', 0);
             RETURN;
         END IF;
         exeString := exeString || ' AND SCT_VTCW in (select SCT_VTCW from L0_Packets_SID' ||
 	             TO_CHAR(systemId_in) || ' where fileId=' || TO_CHAR(fileId) || ')';
     END IF;
+EXCEPTION
+    -- On exception return without altering exeString and log as error.
+    WHEN NO_DATA_FOUND THEN
+        ONTHEFLYDECOM.logOTFD('addToL0Query: gblTlmFileName="' || gblTlmFileName || '" is not valid, returns no file ID', 0);
+        RETURN;
+    WHEN OTHERS THEN
+        ONTHEFLYDECOM.logOTFD('addToL0Query: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+        RETURN;
 END addToL1Query;
 
 /*************************************************************************************************
