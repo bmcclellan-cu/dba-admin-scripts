@@ -45,8 +45,8 @@ CREATE OR REPLACE PACKAGE BODY NEOS_MISC.onTheFlyDecomMissionSpecific
 AS
 
 -- These options are settable by calling the setOption or clearOption procedure.
--- A -1 value or empty string means the option won't be used in queries.  I.e. either it
--- hasn't yet been set by the user, the user reset it.  These variables may be different
+-- An empty string means the option won't be used in queries.  I.e. either it
+-- hasn't yet been set by the user or the user reset it. These variables may be different
 -- for different missions, as may the options which selectNumericTlm supports.
 -- Each mission has its own instance of this code, although it may be identical for missions
 -- with the same options.  We do not support a generalized code base which supports all options.
@@ -260,11 +260,20 @@ BEGIN
         EXECUTE IMMEDIATE 'SELECT fileId from TelemetrySourceFiles WHERE filename=''' ||
      	                  gblTlmFileName || '''' INTO fileId;
         IF (fileId IS NULL) THEN
-            ONTHEFLYDECOM.logOTFD('addToL0Query: gblTlmFileName(' || gblTlmFileName || ') is not valid, returns no file ID', 0);
+            ONTHEFLYDECOM.logOTFD('addToL0Query: gblTlmFileName="' || gblTlmFileName || '" is not valid, returns no file ID', 0);
             RETURN;
         END IF;
-        exeString := exeString || ' AND fileId=' || TO_CHAR(fileId);
+        exeString := exeString || ' fileId=' || TO_CHAR(fileId) || ' AND ';
     END IF;
+EXCEPTION
+    -- On exception return without altering exeString and log as error.
+    WHEN NO_DATA_FOUND THEN
+        ONTHEFLYDECOM.logOTFD('addToL0Query: gblTlmFileName="' || gblTlmFileName || '" is not valid, returns no file ID', 0);
+        RETURN;
+    WHEN OTHERS THEN
+        ONTHEFLYDECOM.logOTFD('addToL0Query: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+        -- Re-raise unknown exception to main procedure.
+        raise;
 END addToL0Query;
 
 /*************************************************************************************************
@@ -288,12 +297,21 @@ BEGIN
         EXECUTE IMMEDIATE 'SELECT fileId from TelemetrySourceFiles WHERE filename=''' ||
      	                  gblTlmFileName || '''' INTO fileId;
         IF (fileId IS NULL) THEN
-            ONTHEFLYDECOM.logOTFD('addToL1Query: gblTlmFileName(' || gblTlmFileName || ') is not valid, returns no file ID', 0);
+            ONTHEFLYDECOM.logOTFD('addToL1Query: gblTlmFileName="' || gblTlmFileName || '" is not valid, returns no file ID', 0);
             RETURN;
         END IF;
         exeString := exeString || ' AND SCT_VTCW in (select SCT_VTCW from L0_Packets_SID' ||
 	             TO_CHAR(systemId_in) || ' where fileId=' || TO_CHAR(fileId) || ')';
     END IF;
+EXCEPTION
+    -- On exception return without altering exeString and log as error.
+    WHEN NO_DATA_FOUND THEN
+        ONTHEFLYDECOM.logOTFD('addToL0Query: gblTlmFileName="' || gblTlmFileName || '" is not valid, returns no file ID', 0);
+        RETURN;
+    WHEN OTHERS THEN
+        ONTHEFLYDECOM.logOTFD('addToL0Query: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+        -- Re-raise unknown exception to main procedure.
+        raise;
 END addToL1Query;
 
 /*************************************************************************************************
