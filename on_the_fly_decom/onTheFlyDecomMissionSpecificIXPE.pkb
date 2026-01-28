@@ -47,8 +47,8 @@ CREATE OR REPLACE PACKAGE BODY IXPE_MISC.onTheFlyDecomMissionSpecific
 AS
 
 -- These options are settable by calling the setOption or clearOption procedure.
--- A -1 value or empty string means the option won't be used in queries.  I.e. either it
--- hasn't yet been set by the user, the user reset it.  These variables may be different
+-- An empty string means the option won't be used in queries.  I.e. either it
+-- hasn't yet been set by the user or the user reset it. These variables may be different
 -- for different missions, as may the options which selectNumericTlm supports.
 -- Each mission has its own instance of this code, although it may be identical for missions
 -- with the same options.  We do not support a generalized code base which supports all options.
