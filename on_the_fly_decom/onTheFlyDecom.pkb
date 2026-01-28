@@ -1103,7 +1103,7 @@ BEGIN
 
         -- We skip inserting all rows that violate the unique index in case
         -- the view this query comes from has duplicate data.
-        FORALL indx IN 1 .. nValues SAVE EXCEPTIONS
+        FORALL indx IN 1 .. nValues
             INSERT /*+ IGNORE_ROW_ON_DUPKEY_INDEX(ONTHEFLYDECOM_RESULTS, ONTHEFLYDECOM_RESULTS_IDX1) */
                 INTO onTheFlyDecom_results (SCT, ERT, ASCT, VALUE) VALUES 
                 (sct_arr(indx), ert_arr(indx), asct_arr(indx), value_arr(indx));
