@@ -1,18 +1,16 @@
 /*************************************************************************************************
-File:       onTheFlyDecomMissionSpecificIXPE.pkb (package body for package: onTheFlyDecomMissionSpecific
+File:       onTheFlyDecomMissionSpecificNEOS.pkb (package body for package: onTheFlyDecomMissionSpecific
 
-Purpose:    IXPE-specific code for on-the-fly decom, called by the core package.
+Purpose:    NEOS-specific code for on-the-fly decom, called by the core package.
   
 Revisions:
   mm/dd/yy who  description
-  10/19/23 SM   Initial version.
-  09/11/25 RS   Updated for EMA main package updates
-  11/13/25 RS   Updated logging
+  01/14/26 RS   Initial Version (copied from IXPE)
   
 Usage: 
   1. In sqlplus:
      @<full_path>/onTheFlyDecomMissionSpecific.pks      -- compile the package spec
-     @<full_path>/onTheFlyDecomMissionSpecificIXPE.pkb  -- compile the package body
+     @<full_path>/onTheFlyDecomMissionSpecificNEOS.pkb  -- compile the package body
 
 Notes:
   1. Contents:
@@ -33,7 +31,7 @@ Notes:
      These are optional inputs which can be set by calling setOption or clearOption.
      gblTlmFileName:
        This is a string, the default is "" (empty string).
-       IXPE only; the IXPE code will support this, but not testId.
+       NEOS only; the NEOS code will support this, but not testId.
 
   3. Compiler Errors:
      - A login.sql file can cause compiler errors.
@@ -43,7 +41,7 @@ Notes:
 
 *************************************************************************************************/
 
-CREATE OR REPLACE PACKAGE BODY IXPE_MISC.onTheFlyDecomMissionSpecific
+CREATE OR REPLACE PACKAGE BODY NEOS_MISC.onTheFlyDecomMissionSpecific
 AS
 
 -- These options are settable by calling the setOption or clearOption procedure.
@@ -64,7 +62,7 @@ FUNCTION getVersion
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'IXPE 0.2.3';
+    return 'NEOS 0.1.0';
 END getVersion;
 
 /*************************************************************************************************
@@ -85,7 +83,7 @@ IS
     upperCaseOptionName VARCHAR2(128) := '';
 BEGIN
     upperCaseOptionName := UPPER( optionName);
-    IF (upperCaseOptionName = 'TLMFILENAME') THEN  -- IXPE only
+    IF (upperCaseOptionName = 'TLMFILENAME') THEN  -- NEOS only
         gblTlmFileName := optionValue;
     ELSE
         RETURN 0;
@@ -132,7 +130,7 @@ FUNCTION getOptionsHelp
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'IXPE options are: TLMFILENAME: <filename>';
+    return 'NEOS options are: TLMFILENAME: <filename>';
 END getOptionsHelp;
 
 
@@ -198,7 +196,7 @@ FUNCTION getTimeColumnsL0
 IS
 BEGIN
     ONTHEFLYDECOM.logOTFD('getTimeColumnsL0: <no_parameters>', 2);
-    -- Note: ASCT is unused for IXPE, so it is aliased as null. No queries can be made by ASCT, 
+    -- Note: ASCT is unused for NEOS, so it is aliased as null. No queries can be made by ASCT, 
     --       and will error during getDefinitionStartStopTime.
     return ONTHEFLYDECOM.string_varray('SCT_VTCW', 'ERT', 'null AS ASCT');
 END getTimeColumnsL0;
@@ -321,7 +319,7 @@ Procedure: getDecomMapCur
 
 Purpose:    Given a SID, APID, TLMID, start and stop time, opens a cursor containing all relevant decom maps.
             This is done due to differences in the TMDecom table location and structure (EMA has a separate 
-            table for each SID, IXPE has a single table with a SID column).
+            table for each SID, IXPE/NEOS has a single table with a SID column).
 
 Inputs:
    
@@ -408,7 +406,7 @@ PROCEDURE: getTSLCur
 
 Purpose:    Given a SID, APID, TLMID, start and stop time, opens a cursor containing all relevant 
             TelemetryStorageLocation entries. This is done due to differences in the TelemetryStorageLocation
-            table location and structure (EMA has a separate table for each SID, IXPE has a single table with 
+            table location and structure (EMA has a separate table for each SID, IXPE/NEOS has a single table with 
             a SID column).
 
 Inputs:
@@ -497,10 +495,10 @@ Outputs:
 Returns: 1=success, 0=failure
 
 Notes:
-  - IXPE does not support ASCT, so any attempt to query by that column gets prevented here as a
+  - NEOS does not support ASCT, so any attempt to query by that column gets prevented here as a
     form of input validation. 
   - SCT and/or ERT is always specified when filename is specified:
-    IXPE retrieve_eng always requires SCT and/or ERT, even when source_filename is specified.
+    NEOS retrieve_eng always requires SCT and/or ERT, even when source_filename is specified.
     Therefore we do not need code to select min_ert/max_ert of the TelemetrySourceFiles record.
     Using min_sct/max_sct would be problematic because even current data has near-zero time-stamps
     for min_sct, which if used as definition start/stop times, could cause a large number of
@@ -535,32 +533,30 @@ BEGIN
     definitionStopTime := -1;
 
     -- If ASCT is specified, error immediately.
-    IF (startASCT_in >= 0 OR stopASCT_in >= 0) THEN
-        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: IXPE Only supports querying by ERT, SCT.', 0);
+    IF startASCT_in >= 0 OR stopASCT_in >= 0 THEN
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: NEOS Only supports querying by ERT, SCT.', 0);
         RETURN 0;
     END IF;
 
-    -- Require that SCT is present for all queries.
-    IF (startSCT_in < 0 OR stopSCT_in < 0) THEN
-        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: Incomplete query provided. Missing start/stop SCT.', 0);
-        RETURN 0;
-    END IF; 
+    -- If an ERT range was specified, use it as the time range for the queries.
+    -- Otherwise assume SCT can be used for the time range when querying these tables.
+    -- This presumes SCT and ERT are the same, or close enough.
 
-    -- Validated inputs, get definition times:
-
-    -- For TMDecom or TSL queries, prefer to use ERT. If ERT is not provided, then fallback to SCT.
     IF (startERT_in >= 0 AND stopERT_in >= 0) THEN
         -- Input ERT times are valid, so use them.
         definitionStartTime := startERT_in;
         definitionStopTime  := stopERT_in;
         definitionColumn    := 1;
-    ELSE
+    ELSIF (startSCT_in >= 0 AND stopSCT_In >= 0) THEN
         -- No ERT times were input, so set the TSL and TMD times to SCT times,
         -- and hope they're comparable to TSF and TMD times (and ERT).  In flight,
         -- SCT is the same as ERT, i.e. not jammed in the future like during IandT.
         definitionStartTime := startSCT_in;
         definitionStopTime  := stopSCT_in;
         definitionColumn    := 0;
+    ELSE
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: Incomplete query provided. Missing start/stop ERT/SCT.', 0);
+        RETURN 0;
     END IF;
     RETURN 1;
 END getDefinitionStartStopTimes;
