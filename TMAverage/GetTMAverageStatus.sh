@@ -131,7 +131,7 @@ tmaverage_incompatible=0
 
 # Iterate through each SID and query MIGRATION_STATUS for the current DB version for that SID
 for system_id in $system_ids; do
-    migration_status=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+    migration_status=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
         set heading off
         set feedback off
         whenever oserror exit 1

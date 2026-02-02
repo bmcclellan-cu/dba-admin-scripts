@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Purpose: Queries the TMAVERAGE_SID1 table for the most recent data, and returns the GPS timestamp in DT format.
+# Purpose: Queries the TMAverage table for the most recent data, and returns the GPS timestamp in DT format.
 # 
 # 
 # Note:    For more detailed documentation go to https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/228214621/TMAverage+-+Usage+Performance
@@ -34,6 +34,9 @@ if [ $# -lt 1 ] || [ $# -gt 2 ]; then
     exit 1
 fi
 
+# Resolve the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 export ORACLE_SID=${1,,}
 system_id=${2:-1}
 
@@ -45,12 +48,10 @@ fi
 sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I)
 if [ -n "$sid_check" ]; then
     if [ "$sid_check" == "-1" ]; then
-        echo "ERROR"
-        echo "\$ORACLE_SID not set..."
+        echo "ERROR: \$ORACLE_SID not set..."
         exit 1
     fi
-    echo "ERROR"
-    echo "provided \$database is not open. Exiting..."
+    echo "ERROR: Provided \$database is not open. Exiting..."
     exit 1
 fi
 
@@ -92,7 +93,8 @@ IFS="." read -r tmaverage_s tmaverage_t <<< "$tmaverage_table_name"
 # Check that table exists.
 table_check=$("$HOME/common/oracle/CheckIfTableExists.sh" "$tmaverage_s" "$tmaverage_t")
 if [ $? -ne 0 ]; then
-    echo "An error occurred while running CheckIfTableExists.sh. Exiting..."
+    echo "$table_check"
+    echo "An error occurred while checking the existence of table '$tmaverage_table_name' . Exiting..."
     exit 1
 fi
 if [ "$table_check" != "Yes" ]; then
@@ -102,7 +104,7 @@ fi
 
 echo "Getting latest data timestamp for $tmaverage_table_name. This may take a while for larger tables..."
 
-get_latest_timestamp=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+get_latest_timestamp=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
     set heading off
     set feedback off
     whenever oserror exit 1

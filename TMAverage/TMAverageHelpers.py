@@ -27,7 +27,7 @@
 ##########################################################################
 import sys
 
-TMAVERAGE_VERSION = "3.1"
+TMAVERAGE_VERSION = "3.2"
 
 # Dictionary of databases and SIDs that the script is designed for. Any attempt 
 # to run any TMAverage scripts on SIDs or databases not listed here will fail and 
@@ -172,7 +172,7 @@ class TMAverageConfigs():
     Note: This is necessary both so that there is a standard way to set the configs, but also so that
           this data can be passed to the worker threads in a convenient manner. Previously they just 
           accessed the constants in TMAverageHelpers.py, but now the configuration needs to be evaluated at 
-          runtime to handle multiple possible SIDs, and this allows for a single variable to be passed to 
+          runtime to handle multiple possible SIDs, and this allows for a single object to be passed to 
           the worker threads.
     """
     def __init__(self, database: str, sid: str):
@@ -180,7 +180,7 @@ class TMAverageConfigs():
         if not (database in SUPPORTED_DB_SIDS.keys() and int(sid) in SUPPORTED_DB_SIDS[database]):
             raise ValueError(f"ERROR: Database {database} SID {sid} is not supported by TMAverage.\n"
                              "Supported databases are: {str(tuple(SUPPORTED_DB_SIDS.keys()))}")
-
+        
         self.VERSION = TMAVERAGE_VERSION
 
         self.SID = sid

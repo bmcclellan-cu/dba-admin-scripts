@@ -29,6 +29,7 @@ user_opt=0
 otfd_opt=0
 venv_opt=0
 table_opt=0
+tablespace_opt=0
 datafile_path=""
 while getopts ":hubovt:" option; do
     case $option in
@@ -48,6 +49,7 @@ while getopts ":hubovt:" option; do
         venv_opt=1
         ;;
     t)
+        tablespace_opt=1
         datafile_path="$OPTARG"
         ;;
     b)
@@ -118,7 +120,7 @@ if [ $user_opt -eq 0 ] && [ $otfd_opt -eq 0 ] && [ $venv_opt -eq 0 ] && [ $table
 fi
 
 # Checking $ORACLE_SID
-sid_check=$("$HOME"/common/oracle/VerifyAllParam.sh -I)
+sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I)
 if [ -n "$sid_check" ]; then
     if [ "$sid_check" == "-1" ]; then
         echo "Error: \$ORACLE_SID not set..."
@@ -129,7 +131,7 @@ if [ -n "$sid_check" ]; then
 fi
 
 # Get MISC schema of database.
-misc_schema=$(GetSchemaName.sh -m -v)
+misc_schema=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
 if [ $? -ne 0 ]; then
     echo "$misc_schema"
     echo "An error occurred while getting the MISC schema name. Exiting..."
@@ -144,6 +146,16 @@ if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
     exit 1
 fi
 
+version=$($newest_python --version 2>&1 | awk '{print $2}')
+major=${version%%.*}
+minor=${version#*.}
+minor=${minor%%.*}
+
+if [ "$major" -ne 3 ] || [ "$minor" -lt 9 ]; then
+    echo "ERROR: Incompatible version of python is installed. TMAverage needs minimum of 3.9"
+    exit 1
+fi
+
 # If system_id is set, then get SID-dependent helper variables.
 if [ -n "$system_id" ]; then
     # Set config variables to default values:
@@ -152,7 +164,7 @@ if [ -n "$system_id" ]; then
     tmaverage_table_check_columns="";tmaverage_stats_check_columns=""
 
     # Set static values from helper script. Also checks if database is supported by script.
-    var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID" "$system_id" 2>&1)
+    var_commands=$($newest_python "$SCRIPT_DIR/TMAverageHelpers.py" "$ORACLE_SID" "$system_id" 2>&1)
     if [ $? -ne 0 ]; then
         if [[ "$var_commands" == *"not supported by TMAverage"* ]]; then
             echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."
@@ -171,7 +183,7 @@ if [ -n "$system_id" ]; then
 fi
 
 # Create tablespace if path is specified
-if [ -n "$datafile_path" ]; then
+if [ $tablespace_opt -ne 0 ]; then
     # Check that tablespace exists.
     tablespace_check=$("$HOME/common/oracle/CheckIfTablespaceExists.sh" "$tablespace_name")
     if [ $? -ne 0 ]; then
@@ -270,7 +282,7 @@ EOD
     if [[ "$check_table_exists" == *"No"* ]]; then
         # Create TMAverage table
         echo "Creating table $tmaverage_table_name in tablespace $tablespace_name..."
-        create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+        create_table=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
             set heading off
             set feedback off
             whenever oserror exit 1
@@ -329,7 +341,7 @@ EOD
 
     if [[ "$check_table_exists" == *"No"* ]]; then
         echo "Creating table $tmaverage_stats_name in tablespace $tablespace_name..."
-        create_table=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+        create_table=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
         set heading off
         set feedback off
         whenever oserror exit 1
@@ -397,7 +409,7 @@ if [ $user_opt -ne 0 ]; then
     status_code=$?
     if [ $status_code -ne 0 ] && [[ $create_user == *"already exists"* ]]; then
         echo "User with username $username already exists on database $ORACLE_SID. Resetting password..."
-        alter_user=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+        alter_user=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
             set heading off
             set feedback off
             whenever oserror exit 1
@@ -440,7 +452,7 @@ EOD
 
     # TODO: Replace this with updated GrantNewPermissions.sh. TMANALOG is a view on EMA, and GrantNewPermissions.sh does not 
     #       currently support adding permissions to views. This update will be addressed in DB-3350.
-    table_permission_add=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+    table_permission_add=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
         set heading off
         set feedback off
         whenever oserror exit 1
@@ -481,7 +493,7 @@ EOD
             exit 1
         fi
 
-        otfd_execute=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+        otfd_execute=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
             set heading off
             set feedback off
             whenever oserror exit 1
@@ -518,22 +530,16 @@ if [ $venv_opt -ne 0 ]; then
         echo "Error occurred while creating python venv in $SCRIPT_DIR/venv. Exiting..."
         exit 1
     fi
-    # Activate venv
-    source "$SCRIPT_DIR/venv/bin/activate"
-    if [ $? -ne 0 ]; then
-        echo "An error occurred while activating venv environment. Exiting..."
-        exit 1
-    fi
 
     # Install needed dependencies.
-    install_requirements=$(pip install -r "$SCRIPT_DIR/requirements.txt")
+    install_requirements=$("$SCRIPT_DIR/venv/bin/pip" install -r "$SCRIPT_DIR/requirements.txt" 2>&1)
     if [ $? -ne 0 ]; then
         echo "$install_requirements"
         echo "Error occurred while installing requirements at $SCRIPT_DIR/requirements.txt. Exiting..."
         exit 1
     fi
 
-    echo "Successfully created venv at $SCRIPT_DIR/venv."
+    echo "Successfully created/updated venv at $SCRIPT_DIR/venv."
 fi
 
 
