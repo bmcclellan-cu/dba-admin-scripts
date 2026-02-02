@@ -333,7 +333,7 @@ BEGIN
     -- Note: Steve Monk previously had issues with the truncate command, but recent testing has not been able to duplicate those issues.
     EXECUTE IMMEDIATE 'TRUNCATE TABLE ONTHEFLYDECOM_ERRORS';
     missionSpecificVersion := onTheFlyDecomMissionSpecific.getVersion();
-    logOTFD( 'INFO multimission version: 0.2.2', -1);
+    logOTFD( 'INFO multimission version: 0.2.3', -1);
     logOTFD( 'INFO mission-specific version: ' || missionSpecificVersion, -1);
 END getVersion;
 
@@ -837,7 +837,7 @@ Purpose:    Does on-the-fly decom for one telemetry item over a time-range, with
                 4. Loop through all rows and collect SCT, ERT, ASCT, and the decommuted value into temporary arrays
                     - Decommutates the hex data into an oracle NUMBER datatype, using the offset (a bit shift off the hex range)
                     length, and data type. (decomFromHexString).
-                5. Use a FOREACH loop to insert all of the decommuted data into ONTHEFLYDECOM_RESULTS table as a bulk INSERT.
+                5. Use a FORALL loop to insert all of the decommuted data into ONTHEFLYDECOM_RESULTS table as a bulk INSERT.
 
 Inputs:
    
@@ -1101,9 +1101,13 @@ BEGIN
 	    -- "Generate all the DML statements that would have been executed one row at a time,
         --  and send them all across to the SQL engine with one context switch."
 
+        -- We skip inserting all rows that violate the unique index in case
+        -- the view this query comes from has duplicate data.
         FORALL indx IN 1 .. nValues
-            INSERT INTO onTheFlyDecom_results (SCT, ERT, ASCT, VALUE) VALUES (sct_arr(indx), ert_arr(indx), asct_arr(indx), value_arr(indx));
-        
+            INSERT /*+ IGNORE_ROW_ON_DUPKEY_INDEX(ONTHEFLYDECOM_RESULTS, ONTHEFLYDECOM_RESULTS_IDX1) */
+                INTO onTheFlyDecom_results (SCT, ERT, ASCT, VALUE) VALUES 
+                (sct_arr(indx), ert_arr(indx), asct_arr(indx), value_arr(indx));
+
         nRows := nRows + nValues; -- Increment the row counter 
     END LOOP;    
     CLOSE c;
@@ -1230,8 +1234,10 @@ BEGIN
     ert_time_column := select_time_columns(2);
     asct_time_column := select_time_columns(3);    
 
-    -- Define the invariant part of the query.
-    exeString := ' INSERT INTO onTheFlyDecom_results (SCT, ERT, ASCT, Value) ' ||
+    -- Define the invariant part of the query. We skip inserting all rows that violate the unique index in case
+    -- the view this query comes from has duplicate data.
+    exeString := ' INSERT /*+ IGNORE_ROW_ON_DUPKEY_INDEX(ONTHEFLYDECOM_RESULTS, ONTHEFLYDECOM_RESULTS_IDX1) */
+                   INTO onTheFlyDecom_results (SCT, ERT, ASCT, Value) ' ||
                  ' SELECT ' || monitor_value || select_time_columns_string || ', Value from ' || tableName ||
 		         ' WHERE TMID = :tlmId_in';
 
@@ -1281,7 +1287,7 @@ BEGIN
     EXECUTE IMMEDIATE exeString USING IN tlmId_in;
 
     logOTFD('queryL1: inserted ' || sql%Rowcount || ' rows into onTheFlyDecom_results table.', 2);
-    
+
     -- Warn if no rows were returned
     IF sql%Rowcount = 0 THEN
         logOTFD('queryL1: Warning - Query returned 0 rows for tlmId=' || tlmId_in || 
@@ -1593,12 +1599,13 @@ BEGIN
         
 
         -- Make a table of tmdecom rows.
-        DECLARE TYPE TMD_typ IS TABLE OF tmdecom_row_t INDEX BY PLS_INTEGER;
-        TMDRows TMD_typ;
+        DECLARE 
+            TYPE TMD_typ IS TABLE OF tmdecom_row_t INDEX BY PLS_INTEGER;
+            TMDRows TMD_typ;
 
-        -- Declare all other variables
-        TSLRowApid NUMBER;
-        tmpRowsWritten NUMBER;
+            -- Declare all other variables
+            TSLRowApid NUMBER;
+            tmpRowsWritten NUMBER;
 
         BEGIN
             -- Get data from TMDecom.  For L0 queries, this gives the offset and size of the telemetry item
