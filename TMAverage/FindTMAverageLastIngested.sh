@@ -7,7 +7,7 @@
 # 
 # Author: Robert Schmidt
 # Created: June 21st, 2025
-# Last Modified: November 17th, 2025 - RS
+# Last Modified: January 26th, 2026 - RS
 ###############################################################
 usage="Usage: ./FindTMAverageLastIngested.sh [ database ] [ (default 1) System_ID ]"
 example1="Example: ./FindTMAverageLastIngested.sh goldprod"
@@ -54,11 +54,19 @@ if [ -n "$sid_check" ]; then
     exit 1
 fi
 
+# Check for existence of Python virtual environment
+VENV_ACTIVATE="${SCRIPT_DIR}/venv/bin/activate"
+if [ ! -f "$VENV_ACTIVATE" ]; then
+    echo "ERROR: File venv/bin/activate not found in $SCRIPT_DIR! Please run './ConfigureTMAverageEnvironment.sh -v' to create one with the necessary dependencies. Exiting..."
+    exit 1
+fi
 
-newest_python=$(ls /usr/bin/python3* | grep -oP 'python3\.\d+' | sort -V | tail -n 1)
-if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
-    echo "$newest_python"
-    echo "Failed to find newest version of python. TMAverage requires the use of python. Exiting..."
+# Source activate file for the Python virtual environment
+source "$VENV_ACTIVATE"
+
+# Virtual environment check
+if [ -z "$VIRTUAL_ENV" ]; then
+    echo "ERROR: A valid Python virtual environment must exist in $SCRIPT_DIR. Please run './ConfigureTMAverageEnvironment.sh -v' to create one with the necessary dependencies. Exiting..."
     exit 1
 fi
 
@@ -66,7 +74,7 @@ fi
 tmaverage_table_name=""
 
 # Set static values from helper script. If the database name is not supported, this will fail.
-var_commands=$($newest_python TMAverageHelpers.py "$ORACLE_SID" "$system_id" 2>&1)
+var_commands=$(python TMAverageHelpers.py "$ORACLE_SID" "$system_id" 2>&1)
 if [ $? -ne 0 ]; then
     if [[ "$var_commands" == *"not supported by TMAverage"* ]]; then
         echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."

@@ -15,7 +15,7 @@
 # 
 # Author: Robert Schmidt
 # Created on: July 21st, 2025
-# Modified on: November 17th, 2025 - RS
+# Modified on: January 26th, 2026 - RS
 ###############################################################
 usage="Usage: ./ProcessTMAverageData.sh [ -r (optional, only email on error) ] [ -o (optional, use OTFD) ] [ -e [ filename ] (absolute path filename containing newline-separated TMIDs to exclude. Only valid with 'ALL' option.) ] [ -d (optional, use start and end date instead of offset and range) ] [database] [ system_id ] [TMID | ALL | filename] [ offset (days) | start date (DD-MMM-YY) ] [ range (days) | end date (DD-MMM-YY) ] [parallel_degree (optional)]"
 example1="Example: ./ProcessTMAverageData.sh goldprod ALL 14 7 8"
@@ -122,32 +122,6 @@ if [ -n "$sid_check" ]; then
     exit 1
 fi
 
-newest_python=$(ls /usr/bin/python3* | grep -oP 'python3\.\d+' | sort -V | tail -n 1)
-if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
-    echo "$newest_python"
-    echo "Failed to find newest version of python. TMAverage requires the use of python. Exiting..."
-    exit 1
-fi
-
-# Set config variables to default values:
-tmaverage_table_name="";tmaverage_stats_name="";tablespace_name="";
-tmanalog_table_name="";telemetry_analog_conversions_name="";telemetry_item_definitions_name=""
-
-# Set TMAverage static values from helper script. If the database name is not supported, this will fail.
-# Set static values from helper script. If the database name is not supported, this will fail.
-var_commands=$($newest_python "$SCRIPT_DIR/TMAverageHelpers.py" "$ORACLE_SID" "$system_id" 2>&1)
-if [ $? -ne 0 ]; then
-    if [[ "$var_commands" == *"not supported by TMAverage"* ]]; then
-        echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."
-    else
-        echo "$var_commands"
-        echo "ERROR: An error occurred while parsing configs. Exiting..."
-    fi
-    exit 1
-fi
-
-eval "$var_commands"
-
 timestamp=$(date "+%Y%m%d-%H%M%S")
 LOGDIR="/tmp/TMAverageLogs/$database"
 mkdir -p "$LOGDIR"
@@ -179,7 +153,6 @@ if [ ! -f "$SCRIPT_DIR/.username" ] || [ ! -f "$SCRIPT_DIR/.passwd" ]; then
     exit 1
 fi
 
-
 username=$(<"$SCRIPT_DIR/.username")
 password=$(<"$SCRIPT_DIR/.passwd")
 test_login=$("$HOME/common/oracle/TestOracleUserLogin.sh" "$username" "$password")
@@ -208,6 +181,25 @@ if [ -z "$VIRTUAL_ENV" ]; then
     echo "ERROR: A valid Python virtual environment must exist in $SCRIPT_DIR. Please run './ConfigureTMAverageEnvironment.sh -v' to create one with the necessary dependencies. Exiting..."
     exit 1
 fi
+
+# Set config variables to default values:
+tmaverage_table_name="";tmaverage_stats_name="";tablespace_name="";
+tmanalog_table_name="";telemetry_analog_conversions_name="";telemetry_item_definitions_name=""
+
+# Set TMAverage static values from helper script. If the database name is not supported, this will fail.
+# Set static values from helper script. If the database name is not supported, this will fail.
+var_commands=$(python "$SCRIPT_DIR/TMAverageHelpers.py" "$ORACLE_SID" "$system_id" 2>&1)
+if [ $? -ne 0 ]; then
+    if [[ "$var_commands" == *"not supported by TMAverage"* ]]; then
+        echo "ERROR: Database $ORACLE_SID system_id $system_id is not supported by TMAverage. Exiting..."
+    else
+        echo "$var_commands"
+        echo "ERROR: An error occurred while parsing configs. Exiting..."
+    fi
+    exit 1
+fi
+
+eval "$var_commands"
 
 # If date option is not given, then determine dates from offset and range
 if [ $date_opt -eq 0 ]; then

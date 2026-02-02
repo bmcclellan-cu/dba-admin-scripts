@@ -11,7 +11,7 @@
 # 
 # Author: Robert Schmidt
 # Created on: January 5th, 2026
-# Modified on: January 5th, 2026 - RS
+# Modified on: January 26th, 2026 - RS
 ###############################################################
 usage="Usage: ./GetTMAverageStatus.sh [database] [ system_id | ALL ]"
 example="Example: ./GetTMAverageStatus.sh ixpeprod 1"
@@ -60,16 +60,25 @@ if [ -n "$sid_check" ]; then
     exit 1
 fi
 
-newest_python=$(ls /usr/bin/python3* | grep -oP 'python3\.\d+' | sort -V | tail -n 1)
-if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
-    echo "$newest_python"
-    echo "Failed to find newest version of python. TMAverage requires the use of python. Exiting..."
+# Check for existence of Python virtual environment
+VENV_ACTIVATE="${SCRIPT_DIR}/venv/bin/activate"
+if [ ! -f "$VENV_ACTIVATE" ]; then
+    echo "ERROR: File venv/bin/activate not found in $SCRIPT_DIR! Please run './ConfigureTMAverageEnvironment.sh -v' to create one with the necessary dependencies. Exiting..."
+    exit 1
+fi
+
+# Source activate file for the Python virtual environment
+source "$VENV_ACTIVATE"
+
+# Virtual environment check
+if [ -z "$VIRTUAL_ENV" ]; then
+    echo "ERROR: A valid Python virtual environment must exist in $SCRIPT_DIR. Please run './ConfigureTMAverageEnvironment.sh -v' to create one with the necessary dependencies. Exiting..."
     exit 1
 fi
 
 if [ "$system_ids" == "ALL" ]; then
     # Get all available SIDs for a given database if ALL option is used.
-    system_ids=$($newest_python "$SCRIPT_DIR/TMAverageHelpers.py" "$ORACLE_SID" list 2>&1)
+    system_ids=$(python "$SCRIPT_DIR/TMAverageHelpers.py" "$ORACLE_SID" list 2>&1)
     if [ $? -ne 0 ]; then
         if [[ "$system_ids" == *"not supported by TMAverage"* ]]; then
             echo "ERROR: Database $ORACLE_SID is not supported by TMAverage. Exiting..."
@@ -81,7 +90,7 @@ if [ "$system_ids" == "ALL" ]; then
     fi
 else
     # Check that the provided system_id is actually supported by TMAverage
-    check_supported=$($newest_python "$SCRIPT_DIR/TMAverageHelpers.py" "$ORACLE_SID" "$system_ids" 2>&1)
+    check_supported=$(python "$SCRIPT_DIR/TMAverageHelpers.py" "$ORACLE_SID" "$system_ids" 2>&1)
     if [ $? -ne 0 ]; then
         if [[ "$check_supported" == *"not supported by TMAverage"* ]]; then
             echo "ERROR: Database $ORACLE_SID system_id $system_ids is not supported by TMAverage. Exiting..."
@@ -94,7 +103,7 @@ else
 
 fi
 
-tmaverage_version=$($newest_python "$SCRIPT_DIR/TMAverageHelpers.py" version 2>&1)
+tmaverage_version=$(python "$SCRIPT_DIR/TMAverageHelpers.py" version 2>&1)
 if [ $? -ne 0 ]; then
     echo "ERROR: An error occurred while fetching TMAverage version. Exiting..."
     exit 1

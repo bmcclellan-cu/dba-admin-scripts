@@ -19,7 +19,7 @@
 # 
 # Author: Robert Schmidt
 # Created: June 6th, 2025
-# Last Modified: November 17th, 2025 - RS
+# Last Modified: January 26th, 2026 - RS
 ##########################################################################
 usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafile ] (optional, create TMAverage tablespace) ] [ -b (optional, create TMAverage tables) ] [ -v (optional, create venv in tmaverage script directory, does not require system_id ) ] [ -u (optional, create TMAverage user. Requires username & password fields) ] [ -o (optional, requires -u, grant user with access to OTFD packages) ] [ system_id ] [ username (optional) ] [ password (optional) ]"
 example1="Example: ./ConfigureTMAverageEnvironment.sh -t 1 /ssd_internal/Robert/AIMPROD_TMAVERAGE/tmaverage_table.dbf"
@@ -136,7 +136,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-
+# Configuration script is not guaranteed to be run when a venv exists, so get newest system python
 newest_python=$(ls /usr/bin/python3* | grep -oP 'python3\.\d+' | sort -V | tail -n 1)
 if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
     echo "$newest_python"
