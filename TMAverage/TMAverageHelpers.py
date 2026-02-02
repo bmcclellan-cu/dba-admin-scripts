@@ -2,6 +2,7 @@
 #          generates bash in order to allows the relevant bash scripts to access the
 #          configuration information.
 # 
+# 
 # Notes:   The configuration details are database-dependent, and the script needs to be
 #          passed the database name in order to correctly output the appropriate bash.
 # 
@@ -12,6 +13,13 @@
 #            tmaverage_table_check_columns and tmaverage_stats_check_columns variables. These
 #            should be update any time the DDL is updated in order to keep the check up-to-date.
 # 
+# Usage:
+#          python TMAverageHelpers.py [ <database> <system_id | list> ] OR [ version ]
+# 
+# Examples:
+#          python TMAverageHelpers.py ixpeprod 1
+#          python TMAverageHelpers.py version
+#          python TMAverageHelpers.py emadev list
 # 
 # Author: Robert Schmidt
 # Created: August 25th, 2025
@@ -19,7 +27,7 @@
 ##########################################################################
 import sys
 
-TMAVERAGE_VERSION = "2.0"
+TMAVERAGE_VERSION = "3.0"
 
 # Dictionary of databases and SIDs that the script is designed for. Any attempt 
 # to run any TMAverage scripts on SIDs or databases not listed here will fail and 
@@ -30,7 +38,7 @@ SUPPORTED_DB_SIDS = {
     "tsisprod": [1],
     "aimprod": [1],
     "ixpeprod": [1],
-    "emadev": range(1, 21), # SIDs 1-20.
+    "emadev": [19, 20],
 }
 
 # The schema where data is primarily stored (typically L1A), and where TMAverage tables
@@ -233,6 +241,9 @@ class TMAverageConfigs():
 # Gets called directly by bash scripts to set the correct environment variables. 
 # Print out the variable assignments, and the bash script will execute them via `exec`.
 if __name__ == "__main__":
+    if len(sys.argv) == 2 and sys.argv[1] == "version":
+        print(TMAVERAGE_VERSION)
+        exit(0)
     if len(sys.argv) != 3:
         print("ERROR: Must take database and SystemID parameter.")
         exit(1)
@@ -240,6 +251,13 @@ if __name__ == "__main__":
     database = sys.argv[1]
     sid = sys.argv[2]
 
+    if sid == "list":
+        try:
+            print(" ".join([str(x) for x in SUPPORTED_DB_SIDS[database]]))
+            exit(0)
+        except KeyError:
+            print(f"Database {database} is not supported by TMAverage. Exiting...")
+            exit(1)
     try:
         int(sid)
     except ValueError:

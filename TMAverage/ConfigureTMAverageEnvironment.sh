@@ -128,6 +128,15 @@ if [ -n "$sid_check" ]; then
     exit 1
 fi
 
+# Get MISC schema of database.
+misc_schema=$(GetSchemaName.sh -m -v)
+if [ $? -ne 0 ]; then
+    echo "$misc_schema"
+    echo "An error occurred while getting the MISC schema name. Exiting..."
+    exit 1
+fi
+
+
 newest_python=$(ls /usr/bin/python3* | grep -oP 'python3\.\d+' | sort -V | tail -n 1)
 if [ $? -ne 0 ] || [ -z "$newest_python" ]; then
     echo "$newest_python"
@@ -138,7 +147,7 @@ fi
 # If system_id is set, then get SID-dependent helper variables.
 if [ -n "$system_id" ]; then
     # Set config variables to default values:
-    tmaverage_table_name="";tmaverage_stats_name="";tablespace_name="";tmanalog_table_name="";
+    version="";tmaverage_table_name="";tmaverage_stats_name="";tablespace_name="";tmanalog_table_name="";
     telemetry_analog_conversions_name="";telemetry_item_definitions_name="";tmaverage_table_ddl="";tmaverage_stats_ddl=""
     tmaverage_table_check_columns="";tmaverage_stats_check_columns=""
 
@@ -192,6 +201,40 @@ fi
 
 # Create the TMAverage table if desired.
 if [ $table_opt -ne 0 ]; then
+    migration_status_check=$("$HOME/common/oracle/CheckIfTableExists.sh" "$misc_schema" MIGRATION_STATUS)
+    if [ $? -ne 0 ]; then
+        echo "$migration_status_check"
+        echo "An error occurred while running CheckIfTableExists.sh. Exiting..."
+        exit 1
+    elif [ "$migration_status_check" != "Yes" ]; then
+        echo "ERROR: $misc_schema.MIGRATION_STATUS table not found. Please create table then re-run script. Exiting..."
+        exit 1
+    fi
+
+    # Trap that enters a "Failure" record into MIGRATION_STATUS if this step fails
+    table_exit_handler() {
+        echo "Table creation/validation failed. Inserting record into MIGRATION_STATUS."
+        migration_status_insert=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+            set heading off
+            set feedback off
+            whenever oserror exit 1
+            whenever sqlerror exit 1
+
+            INSERT INTO $misc_schema.MIGRATION_STATUS (STATUS_TIMESTAMP, SOFTWARE_NAME, SID, UPDATE_VERSION, SOFTWARE_PATH, UPDATE_SUCCESS) VALUES
+            (CURRENT_TIMESTAMP, 'TMAverage (Tables)', $system_id, '$version', '$SCRIPT_DIR', 'Failure');
+EOD
+        )
+        if [ $? -ne 0 ]; then
+            echo "$migration_status_insert"
+            echo "An error occurred while inserting an update record into $misc_schema.MIGRATION_STATUS. Exiting..."
+        else
+            echo "Successfully inserted a record into $misc_schema.MIGRATION_STATUS."
+        fi
+        # Prevent the trap from being triggered twice
+        trap - EXIT INT TERM
+    }
+    trap table_exit_handler EXIT INT TERM # On exit, call table_exit_handler.
+
     # Check that tablespace exists.
     tablespace_check=$("$HOME/common/oracle/CheckIfTablespaceExists.sh" "$tablespace_name")
     if [ $? -ne 0 ]; then
@@ -253,9 +296,10 @@ EOD
                 exit 1
             fi
             if [[ $column_check != "Yes" ]]; then
-                echo "ERROR: Column $column is not present in $tmaverage_table_name. Please update the table DDL to match the following: "
+                echo "ERROR: Column $column is not present in $tmaverage_table_name. Please see the appropriate subpage to migrate TMAverage versions:"
+                echo "       https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/282113217/TMaverage+Release+history"
                 echo
-                echo
+                echo "       The resulting DDL should match the following:"
                 echo "$tmaverage_table_ddl"
                 exit 1
             fi
@@ -311,15 +355,39 @@ EOD
                 exit 1
             fi
             if [[ $column_check != "Yes" ]]; then
-                echo "ERROR: Column $column is not present in $tmaverage_stats_name. Please update the table DDL to match the following: "
+                echo "ERROR: Column $column is not present in $tmaverage_stats_name. Please see the appropriate subpage to migrate TMAverage versions:"
+                echo "       https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/282113217/TMaverage+Release+history"
                 echo
-                echo
+                echo "       The resulting DDL should match the following:"
                 echo "$tmaverage_stats_ddl"
                 exit 1
             fi
         done
         echo "Table exists and is up-to-date. Continuing..."
     fi
+
+    # Tables were updated/verified successfully, add record to MIGRATION_STATUS indicating current version
+    migration_status_insert=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+        set heading off
+        set feedback off
+        whenever oserror exit 1
+        whenever sqlerror exit 1
+
+        INSERT INTO $misc_schema.MIGRATION_STATUS (STATUS_TIMESTAMP, SOFTWARE_NAME, SID, UPDATE_VERSION, SOFTWARE_PATH, UPDATE_SUCCESS) VALUES
+        (CURRENT_TIMESTAMP, 'TMAverage (Tables)', $system_id, '$version', '$SCRIPT_DIR', 'Success');
+
+EOD
+    )
+    if [ $? -ne 0 ]; then
+        echo "$migration_status_insert"
+        echo "An error occurred while inserting an update record into $misc_schema.MIGRATION_STATUS. Exiting..."
+        exit 1
+    fi
+
+    echo "Successfully inserted a record into $misc_schema.MIGRATION_STATUS."
+
+    # Unset trap once update/validation is complete
+    trap - EXIT INT TERM
 fi
 
 # Create the requested user for TMAverage
@@ -426,14 +494,6 @@ EOD
         if [ $? -ne 0 ]; then
             echo "$otfd_execute"
             echo "An error occurred while granting access to the OTFD package to $username. Exiting..."
-            exit 1
-        fi
-
-        # Get MISC schema for GrantNewPermissions.sh
-        misc_schema=$(GetSchemaName.sh -m -v)
-        if [ $? -ne 0 ]; then
-            echo "$misc_schema"
-            echo "An error occurred while getting the MISC schema name. Exiting..."
             exit 1
         fi
         
