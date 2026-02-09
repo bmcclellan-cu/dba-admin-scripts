@@ -23,6 +23,9 @@ Methods:
   clearOption           - End-user application calls to revert an option to its default value.
   getVersion            - Get the version of both the generic and mission-specific packages.
 
+  queryTMDecom          - Gets the TMDecom records for a given OTFD Query
+  queryTSL              - Gets the TelemetryStorageLocation records for a given OTFD query.
+
   narrowStartStopTimes  - Used so the data from L0/L1 queries with multiple TSL or TMD rows don't overlap.
   queryL0               - Called by selectNumericTlm, queries L0_Packets and decoms telemetry items from the
                           returned packets based on the entries in TMDecom.
@@ -117,7 +120,7 @@ Notes:
 	  systemId, like VCs.
 *************************************************************************************************/
 
-CREATE OR REPLACE PACKAGE BODY onTheFlyDecom
+CREATE OR REPLACE PACKAGE BODY NEOS_MISC.onTheFlyDecom
 AS
 
 -- These options, and additional mission-specific options, are settable by calling the setOption
@@ -498,6 +501,169 @@ EXCEPTION
         logOTFD('prepareDebugSQL: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
         return query_str;  -- Return original query on error
 END prepareDebugSQL;
+
+/*************************************************************************************************
+Procedure: queryTMDecom
+
+Purpose:    Given a SID, APID, TLMID, start and stop time, opens a cursor containing all relevant decom maps.
+            This is done due to differences in the TMDecom table location and structure (EMA has a separate 
+            table for each SID, IXPE/NEOS has a single table with a SID column).
+
+Inputs:
+   
+    systemId_in          - The SID of the decom map.
+    apid_in              - The APID of the decom map.
+    TMDQueryStartTime_in - The beginning of the time period being queried for, inclusive.
+    TMDQueryStopTime_in  - The end of the time period being queried for, inclusive.
+    isLastTSLRow_in      - Is true if the relevant TSL row is the final one for the specific APID
+                           being queried for. Indicates that the end of the TMDecom query should
+                           be inclusive of the stop time, rather than exclusive. It is initially exclusive
+                           to avoid duplicate decom maps if their definitionStart values are in sequential 
+                           microseconds.
+
+Outputs:
+
+    cursor_out     - The cursor created for the query.
+    
+*************************************************************************************************/
+PROCEDURE queryTMDecom(
+    systemId_in IN NUMBER,
+    apid_in IN NUMBER,
+    tlmId_in IN NUMBER,
+    TMDQueryStartTime_in IN NUMBER,
+    TMDQueryStopTime_in IN NUMBER,
+    isLastTSLRow_in IN BOOLEAN,
+    cursor_out OUT curType
+    )
+IS 
+    tmdecom_table_name VARCHAR2(50);
+    decom_map_identifier VARCHAR(4); -- dmid or apid. Note that OTFD calls it apid internally regardless
+    query_sql CLOB; -- Practically unlimited length
+    name_value ONTHEFLYDECOM.name_value_t;
+    booleanOpString VARCHAR(2);
+BEGIN
+    ONTHEFLYDECOM.logOTFD('queryTMDecom: systemId_in=' || systemId_in ||
+                          ', apid_in=' || apid_in ||
+                          ', tlmId_in=' || tlmId_in || 
+                          ', TMDQueryStartTime_in=' || TMDQueryStartTime_in ||
+                          ', TMDQueryStopTime_in=' || TMDQueryStopTime_in || 
+                          ', isLastTSLRow_in=' || sys.diutil.bool_to_int(isLastTSLRow_in) , 2
+    );
+    name_value := ONTHEFLYDECOM.name_value_t( 
+        ':systemId_in' => TO_CHAR(systemId_in),
+        ':apid_in' => TO_CHAR(apid_in),
+        ':tlmId_in' => TO_CHAR(tlmId_in),
+        ':tmdqstarttime' => TO_CHAR(TMDQueryStartTime_in),
+        ':tmdqstoptime' => TO_CHAR(TMDQueryStopTime_in),
+        ':tlmId2_in' => TO_CHAR(tlmId_in)
+    );
+
+    IF (isLastTSLRow_in) THEN
+        booleanOpString := '<=';
+    ELSE
+        booleanOpString := '<';
+    END IF;
+
+    tmdecom_table_name := onTheFlyDecomMissionSpecific.getTableName(4, systemId_in);
+    decom_map_identifier := onTheFlyDecomMissionSpecific.getDecomIdentifier();
+
+    query_sql := '
+        SELECT :systemId_in AS systemId, ' || decom_map_identifier || ' as apid, startBit, length, dataType, definitionStart
+        FROM ' || tmdecom_table_name || '
+        WHERE ' || decom_map_identifier || '     = :apid_in
+          AND tlmId    = :tlmId_in
+          AND definitionStart ' || booleanOpString || ' :tmdqstoptime
+          AND definitionStart >= COALESCE(
+                (SELECT MAX(definitionStart)
+                   FROM ' || tmdecom_table_name || '
+                  WHERE tlmId    = :tlmId2_in
+                    AND definitionStart <= :tmdqstarttime
+                ), 0)
+        ORDER BY definitionStart';
+
+    ONTHEFLYDECOM.logOTFD('queryTMDecom: ' || ONTHEFLYDECOM.prepareDebugSQL(query_sql, name_value), 2);
+
+    OPEN cursor_out FOR query_sql
+        USING systemId_in,                -- :systemId_in
+              apid_in,                    -- :apid_in
+              tlmId_in,                   -- :tlmId_in
+              TMDQueryStopTime_in,        -- :tmdqstoptime
+              tlmId_in,                   -- :tlmId2_in (subquery)
+              TMDQueryStartTime_in;           
+END queryTMDecom;
+
+/*************************************************************************************************
+PROCEDURE: queryTSL
+
+Purpose:    Given a SID, APID, TLMID, start and stop time, opens a cursor containing all relevant 
+            TelemetryStorageLocation entries. This also has to take into account differing table names, 
+            column names, etc.
+
+Inputs:
+   
+    systemId_in          - The SID of the decom map.
+    apid_in              - The APID of the decom map.
+    TMDQueryStartTime_in - The beginning of the time period being queried for, inclusive.
+    TMDQueryStartTime_in - The end of the time period being queried for, inclusive.
+
+Outputs:
+
+    cursor_out     - The cursor created for the query.
+    
+*************************************************************************************************/
+PROCEDURE queryTSL(
+    systemId_in IN NUMBER,
+    tlmId_in IN NUMBER,
+    definitionStartTime_in IN NUMBER,
+    definitionStopTime_in IN NUMBER,
+    cursor_out OUT curType
+)
+IS
+    tsl_table_name VARCHAR(50);
+    decom_map_identifier VARCHAR(4);
+    query_sql CLOB;
+    name_value ONTHEFLYDECOM.name_value_t;
+BEGIN
+    ONTHEFLYDECOM.logOTFD('queryTSL: systemId_in=' || systemId_in ||
+                          ', tlmId_in=' || tlmId_in || 
+                          ', definitionStartTime_in=' || definitionStartTime_in ||
+                          ', definitionStopTime_in=' || definitionStopTime_in, 2
+    );
+    name_value := ONTHEFLYDECOM.name_value_t( 
+        ':tlmId_in' => TO_CHAR(tlmId_in),
+        ':definitionStartTime_in' => TO_CHAR(definitionStartTime_in),
+        ':definitionStopTime_in' => TO_CHAR(definitionStopTime_in),
+        ':tlmId2_in' => TO_CHAR(tlmId_in)    
+    );
+
+    tsl_table_name := onTheFlyDecomMissionSpecific.getTableName(3, systemId_in);
+    decom_map_identifier := onTheFlyDecomMissionSpecific.getDecomIdentifier();
+
+    query_sql := '
+        SELECT definitionStart,
+               isInL0,
+               isInL1,
+               ' || decom_map_identifier || ' as apid
+        FROM ' || tsl_table_name || '
+        WHERE tlmId = :tlmId_in
+          AND definitionStart <= :definitionStopTime_in
+          AND definitionStart >= COALESCE(
+                (SELECT MAX(definitionStart)
+                   FROM ' || tsl_table_name || '
+                  WHERE tlmId    = :tlmId2_in
+                    AND definitionStart <= :definitionStartTime_in
+                ), 0)
+        ORDER BY definitionStart, ' || decom_map_identifier;
+
+    ONTHEFLYDECOM.logOTFD('queryTSL: ' || ONTHEFLYDECOM.prepareDebugSQL(query_sql, name_value), 2);
+
+    OPEN cursor_out FOR query_sql
+        USING tlmId_in,         -- :tlmId_in (outer query)
+              definitionStopTime_in, -- :definitionStopTime_in
+              tlmId_in,         -- :tlmId2_in (subquery)
+              definitionStartTime_in; -- :definitionStartTime_in
+END queryTSL;
+
 
 
 /*************************************************************************************************
@@ -1461,7 +1627,7 @@ BEGIN
         -- Creates a cursor for the TelemetryStorageLocation table using the mission-specific code. This is primarily because
         -- EMA has a different decom-id system which needs to be accounted for. Note that this MUST return a cursor with the 
         -- ORDER BY clause 'ORDER BY definitionStart, apid'. 
-        onTheFlyDecomMissionSpecific.getTSLCur(systemId_in, tlmId_in, definitionStartTime, definitionStopTime, tsl_cursor);
+        queryTSL(systemId_in, tlmId_in, definitionStartTime, definitionStopTime, tsl_cursor);
         FETCH tsl_cursor BULK COLLECT INTO TSLRows;
         CLOSE tsl_cursor;
         
@@ -1610,7 +1776,7 @@ BEGIN
         BEGIN
             -- Get data from TMDecom.  For L0 queries, this gives the offset and size of the telemetry item
             -- (datatype is ignored, TelemetryItemDefinition is used).
-            onTheFlyDecomMissionSpecific.getDecomMapCur(systemId_in, TSLRows(i).apid, tlmId_in, TMDQueryStartTime, TMDQueryStopTime, isLastTSLRow, tmd_cursor);
+            queryTMDecom(systemId_in, TSLRows(i).apid, tlmId_in, TMDQueryStartTime, TMDQueryStopTime, isLastTSLRow, tmd_cursor);
             FETCH tmd_cursor BULK COLLECT INTO TMDRows; 
             CLOSE tmd_cursor;
             

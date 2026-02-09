@@ -39,7 +39,7 @@ Usage:
      @<full_path>/onTheFlyDecomMissionSpecificXXXX.pkb     -- compile the package body  
 
 *************************************************************************************************/
-CREATE OR REPLACE PACKAGE onTheFlyDecomMissionSpecific
+CREATE OR REPLACE PACKAGE NEOS_MISC.onTheFlyDecomMissionSpecific
 AS 
     TYPE curType IS REF CURSOR; -- Weakly typed cursor
 
@@ -52,16 +52,6 @@ AS
     FUNCTION getTimeColumnsL0 RETURN onTheFlyDecom.string_varray;
     FUNCTION getTimeColumnsL1 RETURN onTheFlyDecom.string_varray;
     FUNCTION getDecomIdentifier RETURN VARCHAR2;
-
-    PROCEDURE getDecomMapCur(
-        systemId_in IN NUMBER, apid_in IN NUMBER, tlmId_in IN NUMBER, TMDQueryStartTime_in IN NUMBER, 
-        TMDQueryStopTime_in IN NUMBER, isLastTSLRow_in IN BOOLEAN,
-        cursor_out OUT curType
-    );
-    PROCEDURE getTSLCur(
-        systemId_in IN NUMBER, tlmId_in IN NUMBER, definitionStartTime_in IN NUMBER, definitionStopTime_in IN NUMBER,
-        cursor_out OUT curType
-    );
 
     PROCEDURE addToL0Query(exeString IN OUT VARCHAR2, systemId_in IN NUMBER);
     PROCEDURE addToL1Query(exeString IN OUT VARCHAR2, systemId_in IN NUMBER);
