@@ -1592,8 +1592,14 @@ BEGIN
     apidArray := CSV2NestedTable( gblApids);
 
     -- Determine the datatype and check validity. This is static. 
-    EXECUTE IMMEDIATE 'SELECT dataType from TelemetryItemDefinition WHERE tlmId = ' || tlmId_in
-        INTO dataType;
+    BEGIN
+        EXECUTE IMMEDIATE 'SELECT dataType from TelemetryItemDefinition WHERE tlmId = ' || tlmId_in
+            INTO dataType;
+    EXCEPTION
+        WHEN NO_DATA_FOUND then
+        logOTFD('selectNumericTlm: tlmId ' || tlmId_in || ' does not exist.', 0);
+        RETURN;
+    END;
     
     logOTFD('selectNumericTlm: Retrieved dataType=' || dataType || ' for tlmId=' || tlmId_in, 2);
 
