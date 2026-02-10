@@ -120,7 +120,7 @@ Notes:
 	  systemId, like VCs.
 *************************************************************************************************/
 
-CREATE OR REPLACE PACKAGE BODY NEOS_MISC.onTheFlyDecom
+CREATE OR REPLACE PACKAGE BODY onTheFlyDecom
 AS
 
 -- These options, and additional mission-specific options, are settable by calling the setOption
@@ -597,6 +597,9 @@ PROCEDURE: queryTSL
 Purpose:    Given a SID, APID, TLMID, start and stop time, opens a cursor containing all relevant 
             TelemetryStorageLocation entries. This procedure also has to take into account differing 
             table names, column names, etc.
+
+            NOTE: The output from this query MUST be sorted by definitionStart, decom_map_identifier. 
+                  Later logic relies on this order to properly handle a tlmid spanning multiple APIDs.
 
 Inputs:
    
