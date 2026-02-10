@@ -27,7 +27,7 @@
 ##########################################################################
 import sys
 
-TMAVERAGE_VERSION = "3.2"
+TMAVERAGE_VERSION = "3.3"
 
 # Dictionary of databases and SIDs that the script is designed for. Any attempt 
 # to run any TMAverage scripts on SIDs or databases not listed here will fail and 
