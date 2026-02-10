@@ -336,7 +336,7 @@ BEGIN
     -- Note: Steve Monk previously had issues with the truncate command, but recent testing has not been able to duplicate those issues.
     EXECUTE IMMEDIATE 'TRUNCATE TABLE ONTHEFLYDECOM_ERRORS';
     missionSpecificVersion := onTheFlyDecomMissionSpecific.getVersion();
-    logOTFD( 'INFO multimission version: 0.2.3', -1);
+    logOTFD( 'INFO multimission version: 0.2.4', -1);
     logOTFD( 'INFO mission-specific version: ' || missionSpecificVersion, -1);
 END getVersion;
 
@@ -506,8 +506,7 @@ END prepareDebugSQL;
 Procedure: queryTMDecom
 
 Purpose:    Given a SID, APID, TLMID, start and stop time, opens a cursor containing all relevant decom maps.
-            This is done due to differences in the TMDecom table location and structure (EMA has a separate 
-            table for each SID, IXPE/NEOS has a single table with a SID column).
+            This procedure also has to take into account differing table names, column names, etc.
 
 Inputs:
    
@@ -537,8 +536,8 @@ PROCEDURE queryTMDecom(
     )
 IS 
     tmdecom_table_name VARCHAR2(50);
-    decom_map_identifier VARCHAR(4); -- dmid or apid. Note that OTFD calls it apid internally regardless
-    query_sql CLOB; -- Practically unlimited length
+    decom_map_identifier VARCHAR(4);    -- dmid or apid. Note that OTFD calls it apid internally regardless
+    query_sql CLOB;                     -- Practically unlimited length for query
     name_value ONTHEFLYDECOM.name_value_t;
     booleanOpString VARCHAR(2);
 BEGIN
@@ -589,15 +588,15 @@ BEGIN
               tlmId_in,                   -- :tlmId_in
               TMDQueryStopTime_in,        -- :tmdqstoptime
               tlmId_in,                   -- :tlmId2_in (subquery)
-              TMDQueryStartTime_in;           
+              TMDQueryStartTime_in;       -- :tmdqstarttime (subquery)
 END queryTMDecom;
 
 /*************************************************************************************************
 PROCEDURE: queryTSL
 
 Purpose:    Given a SID, APID, TLMID, start and stop time, opens a cursor containing all relevant 
-            TelemetryStorageLocation entries. This also has to take into account differing table names, 
-            column names, etc.
+            TelemetryStorageLocation entries. This procedure also has to take into account differing 
+            table names, column names, etc.
 
 Inputs:
    
@@ -620,8 +619,8 @@ PROCEDURE queryTSL(
 )
 IS
     tsl_table_name VARCHAR(50);
-    decom_map_identifier VARCHAR(4);
-    query_sql CLOB;
+    decom_map_identifier VARCHAR(4);    -- dmid or apid. Note that OTFD calls it apid internally regardless
+    query_sql CLOB;                     -- Practically unlimited length for query
     name_value ONTHEFLYDECOM.name_value_t;
 BEGIN
     ONTHEFLYDECOM.logOTFD('queryTSL: systemId_in=' || systemId_in ||

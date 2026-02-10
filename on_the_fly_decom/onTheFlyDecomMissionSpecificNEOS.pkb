@@ -60,7 +60,7 @@ FUNCTION getVersion
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'NEOS 0.1.0';
+    return 'NEOS 0.2.0';
 END getVersion;
 
 /*************************************************************************************************
@@ -155,18 +155,17 @@ FUNCTION getTableName( type_in IN NUMBER,
                        RETURN VARCHAR2
 IS
     databaseName VARCHAR2(64) := '';
-    schemaName VARCHAR(64) := '';
     tableName VARCHAR2(64) := '';
     tableNameExtension VARCHAR2(10) := '';
     invalidType EXCEPTION;
 BEGIN
     ONTHEFLYDECOM.logOTFD('getTableName: type_in=' || type_in || ', systemId_in=' || systemId_in, 2);
     IF    (type_in = 0) THEN
-        tableName := 'L0_Packets' || systemId_in;
+        tableName := 'L0_Packets';
     ELSIF (type_in = 1) THEN
-        tableName := 'TManalog'   || systemId_in;
+        tableName := 'TManalog';
     ELSIF (type_in = 2) THEN
-        tableName := 'TMdiscrete' || systemId_in;
+        tableName := 'TMdiscrete';
     ELSIF (type_in = 3) THEN
         tableName := 'TelemetryStorageLocation';
     ELSIF (type_in = 4) THEN

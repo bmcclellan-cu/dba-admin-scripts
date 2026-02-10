@@ -65,7 +65,7 @@ FUNCTION getVersion
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'EMA 0.1.1';
+    return 'EMA 0.1.2';
 END getVersion;
 
 /*************************************************************************************************
