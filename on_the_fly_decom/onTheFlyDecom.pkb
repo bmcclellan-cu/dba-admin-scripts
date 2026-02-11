@@ -160,6 +160,11 @@ TYPE tsl_row_t IS RECORD (
     apid            NUMBER
 );
 
+-- Define a custom exception to handle "table does not exist" errors cleanly.
+table_does_not_exist EXCEPTION;
+PRAGMA EXCEPTION_INIT(table_does_not_exist, -00942);
+
+
 /* sequence column (row counter) in onTheFlyDecom_errors. 
 Represents a single unique message. Duplicate sequence entries indicate a split message*/
 gblSequence NUMBER := 1;  
@@ -589,6 +594,16 @@ BEGIN
               TMDQueryStopTime_in,        -- :tmdqstoptime
               tlmId_in,                   -- :tlmId2_in (subquery)
               TMDQueryStartTime_in;       -- :tmdqstarttime (subquery)
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        logOTFD('queryTMDecom: ' || 'No TMDecom rows found for time range ' || TMDQueryStartTime_in || ' - ' || TMDQueryStopTime_in, 0);
+        RAISE; -- Procedure should fail outright, push error to main function.
+    WHEN TABLE_DOES_NOT_EXIST THEN
+        logOTFD('queryTMDecom: Table ' || tmdecom_table_name || ' does not exist or is inaccessible.', 0);
+        RAISE; -- Procedure should fail outright, push error to main function.
+    WHEN others THEN
+        logOTFD('queryTMDecom: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+        RETURN;
 END queryTMDecom;
 
 /*************************************************************************************************
@@ -664,8 +679,17 @@ BEGIN
               definitionStopTime_in, -- :definitionStopTime_in
               tlmId_in,         -- :tlmId2_in (subquery)
               definitionStartTime_in; -- :definitionStartTime_in
+EXCEPTION  
+    WHEN NO_DATA_FOUND THEN
+        logOTFD('queryTSL: ' || 'No TSL rows found for time range ' || definitionStartTime_in || ' - ' || definitionStopTime_in, 0);
+        RAISE; -- Procedure should fail outright, push error to main function.
+    WHEN TABLE_DOES_NOT_EXIST THEN
+        logOTFD('queryTSL: Table ' || tsl_table_name || ' does not exist or is inaccessible.', 0);
+        RAISE; -- Procedure should fail outright, push error to main function
+    WHEN others THEN
+        logOTFD('queryTSL: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+        RETURN;
 END queryTSL;
-
 
 
 /*************************************************************************************************
@@ -1888,8 +1912,6 @@ BEGIN
                 END IF;
             END LOOP;  -- end loop through TMdecom rows
             EXCEPTION
-                WHEN NO_DATA_FOUND THEN
-                    logOTFD('selectNumericTlm: ' || 'No TMDecom rows found for time range ' || TSLRowStartTime || ' - ' || TSLRowStopTime, 0);
                 WHEN others THEN
                     logOTFD('selectNumericTlm: fetch block: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
             END;    
@@ -1899,7 +1921,6 @@ BEGIN
         collateErrors();
 
         RETURN;
-
     EXCEPTION
         WHEN NO_DATA_FOUND THEN
             logOTFD('selectNumericTlm: No telemetryStorageLocation rows found for time range ' || definitionStartTime || ' - ' || definitionStopTime, 0);

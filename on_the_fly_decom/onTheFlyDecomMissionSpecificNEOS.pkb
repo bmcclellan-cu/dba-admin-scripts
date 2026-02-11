@@ -42,6 +42,10 @@ Notes:
 CREATE OR REPLACE PACKAGE BODY NEOS_MISC.onTheFlyDecomMissionSpecific
 AS
 
+-- Array of supported SIDs
+TYPE SIDsVARRAY IS TABLE of NUMBER(3);
+supportedSIDs SIDsVARRAY := SIDsVARRAY(1, 2);
+
 -- These options are settable by calling the setOption or clearOption procedure.
 -- An empty string means the option won't be used in queries.  I.e. either it
 -- hasn't yet been set by the user or the user reset it. These variables may be different
@@ -374,6 +378,13 @@ BEGIN
     -- Initialize outputs in case return with error.
     definitionStartTime := -1;
     definitionStopTime := -1;
+    
+    -- Check if SID is supported
+    IF not systemId_in MEMBER OF supportedSIDs THEN
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: EMA does not support SID ' || systemId_in || '.', 0);
+        RETURN 0;
+    END IF;
+
 
     -- If ASCT is specified, error immediately.
     IF startASCT_in >= 0 OR stopASCT_in >= 0 THEN

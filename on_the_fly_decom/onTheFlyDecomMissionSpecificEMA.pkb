@@ -41,6 +41,11 @@ Notes:
 CREATE OR REPLACE PACKAGE BODY EMA_MISC.onTheFlyDecomMissionSpecific
 AS
 
+
+-- Array of supported SIDs
+TYPE SIDsVARRAY IS TABLE of NUMBER(3);
+supportedSIDs SIDsVARRAY := SIDsVARRAY(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20);
+
 -- These options are settable by calling the setOption or clearOption procedure.
 -- A -1 value or empty string means the option won't be used in queries.  I.e. either it
 -- hasn't yet been set by the user, the user reset it.  These variables may be different
@@ -62,7 +67,7 @@ Purpose:    This procedure will return version string.
 
 *************************************************************************************************/
 FUNCTION getVersion
-         RETURN VARCHAR2
+    RETURN VARCHAR2
 IS
 BEGIN
     return 'EMA 0.1.2';
@@ -339,6 +344,12 @@ BEGIN
     definitionStartTime := -1;
     definitionStopTime := -1;
     definitionColumn := -1;
+
+    -- Check if SID is supported
+    IF not systemId_in MEMBER OF supportedSIDs THEN
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: EMA does not support SID ' || systemId_in || '.', 0);
+        RETURN 0;
+    END IF;
 
     -- If ERT or SCT are specified, error immediately.
     IF startERT_in >= 0 OR stopERT_in >= 0 OR startERT_in >= 0 OR stopERT_in >= 0 THEN
