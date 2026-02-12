@@ -600,9 +600,11 @@ EXCEPTION
         RAISE; -- Procedure should fail outright, push error to main function.
     WHEN TABLE_DOES_NOT_EXIST THEN
         logOTFD('queryTMDecom: Table ' || tmdecom_table_name || ' does not exist or is inaccessible.', 0);
+        logOTFD('queryTMDecom: Failed SQL: ' || ONTHEFLYDECOM.prepareDebugSQL(query_sql, name_value), 0);
         RAISE; -- Procedure should fail outright, push error to main function.
     WHEN others THEN
         logOTFD('queryTMDecom: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+        logOTFD('queryTMDecom: Failed SQL: ' || ONTHEFLYDECOM.prepareDebugSQL(query_sql, name_value), 0);
         RETURN;
 END queryTMDecom;
 
@@ -685,9 +687,11 @@ EXCEPTION
         RAISE; -- Procedure should fail outright, push error to main function.
     WHEN TABLE_DOES_NOT_EXIST THEN
         logOTFD('queryTSL: Table ' || tsl_table_name || ' does not exist or is inaccessible.', 0);
+        logOTFD('queryTSL: Failed SQL: ' || ONTHEFLYDECOM.prepareDebugSQL(query_sql, name_value), 0);
         RAISE; -- Procedure should fail outright, push error to main function
     WHEN others THEN
         logOTFD('queryTSL: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+        logOTFD('queryTSL: Failed SQL: ' || ONTHEFLYDECOM.prepareDebugSQL(query_sql, name_value), 0);
         RETURN;
 END queryTSL;
 
@@ -1313,8 +1317,13 @@ BEGIN
     RETURN;
 
     EXCEPTION
+    WHEN TABLE_DOES_NOT_EXIST THEN
+        logOTFD('queryL0: Table ' || tableName || ' does not exist or is inaccessible.', 0);
+        logOTFD('queryL0: Failed SQL: ' || prepareDebugSQL(exeString, name_value), 0);
+        RETURN;
     WHEN others THEN
         logOTFD('queryL0: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+        logOTFD('queryL0: Failed SQL: ' || prepareDebugSQL(exeString, name_value), 0);
         RETURN;
 END queryL0;
 
@@ -1491,9 +1500,14 @@ BEGIN
     RETURN;
     
 EXCEPTION
+    WHEN TABLE_DOES_NOT_EXIST THEN
+        logOTFD('queryL1: Table ' || tableName || ' does not exist or is inaccessible.', 0);
+        logOTFD('queryL1: Failed SQL: ' || prepareDebugSQL(exeString, name_value), 0);
+        RETURN;
     WHEN others THEN
         logOTFD('queryL1: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM || 
                 ' for tlmId=' || tlmId_in || ', systemId=' || systemId_in, 0);
+        logOTFD('queryL1: Failed SQL: ' || prepareDebugSQL(exeString, name_value), 0);
         RETURN;
 END queryL1;
 
