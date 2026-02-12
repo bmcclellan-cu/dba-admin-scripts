@@ -261,6 +261,7 @@ BEGIN
         -- is missing.  Plus have to use two single quotes on either side of filename if return the subquery
         -- in the string.  Here using a separate query to get fileId causes a single context switch between
         -- the PL/SQL and SQL engines, but should be negligible overall.
+        ONTHEFLYDECOM.logOTFD('addToL0Query: SELECT fileId from TelemetrySourceFiles WHERE filename=''' || gblTlmFileName || '''', 2);
         EXECUTE IMMEDIATE 'SELECT fileId from TelemetrySourceFiles WHERE filename=''' ||
      	                  gblTlmFileName || '''' INTO fileId;
         IF (fileId IS NULL) THEN
@@ -298,6 +299,7 @@ IS
 BEGIN
     ONTHEFLYDECOM.logOTFD('addToL1Query: exeString=' || exeString || ', systemId_in=' || systemId_in, 2);
     IF (LENGTH(gblTlmFileName) > 0) THEN
+        ONTHEFLYDECOM.logOTFD('addToL1Query: SELECT fileId from TelemetrySourceFiles WHERE filename=''' || gblTlmFileName || '''', 2);
         EXECUTE IMMEDIATE 'SELECT fileId from TelemetrySourceFiles WHERE filename=''' ||
      	                  gblTlmFileName || '''' INTO fileId;
         IF (fileId IS NULL) THEN
