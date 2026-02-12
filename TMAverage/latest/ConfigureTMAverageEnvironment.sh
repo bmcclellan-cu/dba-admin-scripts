@@ -25,8 +25,6 @@ usage="Usage: ./ConfigureTMAverageEnvironment.sh [ -t [ absolute path to datafil
 example1="Example: ./ConfigureTMAverageEnvironment.sh -t 1 /ssd_internal/Robert/AIMPROD_TMAVERAGE/tmaverage_table.dbf"
 example2="         ./ConfigureTMAverageEnvironment.sh -u -o -v 1 PROCESSTMIDTEST testPWD"
 
-# TODO: Remove Personal Path
-
 user_opt=0
 otfd_opt=0
 venv_opt=0
