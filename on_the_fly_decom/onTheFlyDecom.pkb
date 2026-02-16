@@ -136,7 +136,7 @@ gblDebugLevel      NUMBER := 0;           /* 0=errors,  1=warning, 2=verbose deb
 gblApids           VARCHAR2(128) := '-1'; /* comma-separated list of apids */
 gblDecomMapTimeGPS NUMBER := -1;          /* Overrides using start/stop times and TMdecom table for decom map time(s). */
 gblForceIsInL0     NUMBER := -1;          /* -1 = not in effect, 0 = isInL0=0, 1 = isInL0=1 */
-gblForceIsInL1     NUMBER := -1;          /* -1 = not in effect, 0 = isInL0=0, 1 = isInL0=1 */
+gblForceIsInL1     NUMBER := -1;          /* -1 = not in effect, 0 = isInL1=0, 1 = isInL1=1 */
 
 -- Make a type for the optional apid list.
 TYPE nestedTable_typ IS TABLE OF NUMBER;
@@ -600,9 +600,11 @@ EXCEPTION
         RAISE; -- Procedure should fail outright, push error to main function.
     WHEN TABLE_DOES_NOT_EXIST THEN
         logOTFD('queryTMDecom: Table ' || tmdecom_table_name || ' does not exist or is inaccessible.', 0);
+        logOTFD('queryTMDecom: Failed SQL: ' || ONTHEFLYDECOM.prepareDebugSQL(query_sql, name_value), 0);
         RAISE; -- Procedure should fail outright, push error to main function.
     WHEN others THEN
         logOTFD('queryTMDecom: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+        logOTFD('queryTMDecom: Failed SQL: ' || ONTHEFLYDECOM.prepareDebugSQL(query_sql, name_value), 0);
         RETURN;
 END queryTMDecom;
 
@@ -685,9 +687,11 @@ EXCEPTION
         RAISE; -- Procedure should fail outright, push error to main function.
     WHEN TABLE_DOES_NOT_EXIST THEN
         logOTFD('queryTSL: Table ' || tsl_table_name || ' does not exist or is inaccessible.', 0);
+        logOTFD('queryTSL: Failed SQL: ' || ONTHEFLYDECOM.prepareDebugSQL(query_sql, name_value), 0);
         RAISE; -- Procedure should fail outright, push error to main function
     WHEN others THEN
         logOTFD('queryTSL: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+        logOTFD('queryTSL: Failed SQL: ' || ONTHEFLYDECOM.prepareDebugSQL(query_sql, name_value), 0);
         RETURN;
 END queryTSL;
 
@@ -1313,8 +1317,13 @@ BEGIN
     RETURN;
 
     EXCEPTION
+    WHEN TABLE_DOES_NOT_EXIST THEN
+        logOTFD('queryL0: Table ' || tableName || ' does not exist or is inaccessible.', 0);
+        logOTFD('queryL0: Failed SQL: ' || prepareDebugSQL(exeString, name_value), 0);
+        RETURN;
     WHEN others THEN
         logOTFD('queryL0: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+        logOTFD('queryL0: Failed SQL: ' || prepareDebugSQL(exeString, name_value), 0);
         RETURN;
 END queryL0;
 
@@ -1491,9 +1500,14 @@ BEGIN
     RETURN;
     
 EXCEPTION
+    WHEN TABLE_DOES_NOT_EXIST THEN
+        logOTFD('queryL1: Table ' || tableName || ' does not exist or is inaccessible.', 0);
+        logOTFD('queryL1: Failed SQL: ' || prepareDebugSQL(exeString, name_value), 0);
+        RETURN;
     WHEN others THEN
         logOTFD('queryL1: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM || 
                 ' for tlmId=' || tlmId_in || ', systemId=' || systemId_in, 0);
+        logOTFD('queryL1: Failed SQL: ' || prepareDebugSQL(exeString, name_value), 0);
         RETURN;
 END queryL1;
 
@@ -1568,6 +1582,9 @@ IS
     -- Cursors for TMDecom and TelemetryStorageLocation queries.
     tmd_cursor curType;
     tsl_cursor curType;
+    
+    -- Track the last operation for error logging
+    lastOperation VARCHAR2(200);
 BEGIN 
     logOTFD('selectNumericTlm: systemId_in=' || systemId_in || 
             ', tlmId_in=' || tlmId_in || 
@@ -1581,8 +1598,12 @@ BEGIN
     -- A: Initialize procedure: Clear tables, validate inputs, handle APID logic.
 
     -- Note: Steve Monk previously had issues with the truncate command, but recent testing has not been able to duplicate those issues.
-    EXECUTE IMMEDIATE 'TRUNCATE TABLE onTheFlyDecom_results';
-    EXECUTE IMMEDIATE 'TRUNCATE TABLE onTheFlyDecom_errors';
+    lastOperation := 'TRUNCATE TABLE onTheFlyDecom_results';
+    logOTFD('selectNumericTlm: ' || lastOperation, 2);
+    EXECUTE IMMEDIATE lastOperation;
+    lastOperation := 'TRUNCATE TABLE onTheFlyDecom_errors';
+    logOTFD('selectNumericTlm: ' || lastOperation, 2);
+    EXECUTE IMMEDIATE lastOperation;
     gblSequence := 1;
     
     -- Determines which field to use for the time range, and returns which column to iterate over for
@@ -1617,7 +1638,9 @@ BEGIN
 
     -- Determine the datatype and check validity. This is static. 
     BEGIN
-        EXECUTE IMMEDIATE 'SELECT dataType from TelemetryItemDefinition WHERE tlmId = ' || tlmId_in
+        lastOperation := 'SELECT dataType from TelemetryItemDefinition WHERE tlmId = ' || tlmId_in;
+        logOTFD('selectNumericTlm: ' || lastOperation, 2);
+        EXECUTE IMMEDIATE lastOperation
             INTO dataType;
     EXCEPTION
         WHEN NO_DATA_FOUND then
@@ -1933,8 +1956,16 @@ BEGIN
             logOTFD('selectNumericTlm: Definition Error. Input parameters invalid.', 0);
             collateErrors();
             RETURN;
+        WHEN TABLE_DOES_NOT_EXIST THEN
+            logOTFD('selectNumericTlm: Table or view does not exist', 0);
+            logOTFD('selectNumericTlm: Failed operation: ' || lastOperation, 0);
+            collateErrors();
+            RETURN;
         WHEN others THEN
             logOTFD('selectNumericTlm: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+            IF lastOperation IS NOT NULL THEN
+                logOTFD('selectNumericTlm: Last operation: ' || lastOperation, 0);
+            END IF;
             collateErrors();
             RETURN;
 
