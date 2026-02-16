@@ -57,7 +57,7 @@ gblTlmFileName   VARCHAR2(128) := '';
 /*************************************************************************************************
 Function:  getVersion
 
-Purpose:    This procedure will return version string.
+Purpose:    This function will return version string.
 
 *************************************************************************************************/
 FUNCTION getVersion
@@ -84,7 +84,7 @@ FUNCTION setOption( optionName VARCHAR2,
 IS
     upperCaseOptionName VARCHAR2(128) := '';
 BEGIN
-    upperCaseOptionName := UPPER( optionName);
+    upperCaseOptionName := UPPER(optionName);
     IF (upperCaseOptionName = 'TLMFILENAME') THEN  -- NEOS only
         gblTlmFileName := optionValue;
     ELSE
@@ -124,7 +124,7 @@ END clearOption;
 /*************************************************************************************************
 Function:  getOptionsHelp
 
-Purpose:    This procedure returns an options help string.
+Purpose:    This function returns an options help string.
             This is intended to be used as a helper for the ONTHEFLYDECOM.setOption and clearOption procedures.
 
 *************************************************************************************************/
@@ -143,7 +143,7 @@ Function:   getTableName
 Purpose:    This function returns a table name constructed using the input type and systemId.
             Differing missions have different table names and schema placements.
 
-Input:      type_in     - NUMBER Determines how the VCs will be converted into table names.
+Input:      type_in     - NUMBER Determines which table to fetch.
                              0 Indicates some instance of the L0_Packets table is desired.
                              1 Indicates some instance of the TManalog table is desired.
                              2 Indicates some instance of the TMdiscrete table is desired.
@@ -158,9 +158,7 @@ FUNCTION getTableName( type_in IN NUMBER,
                        systemId_in IN NUMBER)
                        RETURN VARCHAR2
 IS
-    databaseName VARCHAR2(64) := '';
     tableName VARCHAR2(64) := '';
-    tableNameExtension VARCHAR2(10) := '';
     invalidType EXCEPTION;
 BEGIN
     ONTHEFLYDECOM.logOTFD('getTableName: type_in=' || type_in || ', systemId_in=' || systemId_in, 2);
@@ -225,7 +223,7 @@ BEGIN
 END getTimeColumnsL1;
 
 /************************************************************************************************* 
-Procedure:  getDecomIdentifier
+Function:  getDecomIdentifier
 
 Purpose:    Returns either 'apid' or 'dmid' based on what field is being used to determine the 
             decom map.
@@ -287,17 +285,19 @@ Procedure:   addToL1Query
 Purpose:    Adds any mission-specific SQL to the 'where' clause of the L1 data query.
             This proc must exist, even if it does nothing. Called by queryL1.
 
-Input:      query       - VARCHAR2
+Input:      exeString   - VARCHAR2
             systemId_in - NUMBER SID or schemaId, depending on mission.
 
-Output:     query       - May or may not have been updated.
+Output:     exeString   - May or may not have been updated.
 *************************************************************************************************/
 PROCEDURE addToL1Query( exeString IN OUT VARCHAR2,
                         systemId_in IN NUMBER)
 IS
     fileId NUMBER := -1;
+    l0_packets_name VARCHAR2(64);
 BEGIN
     ONTHEFLYDECOM.logOTFD('addToL1Query: exeString=' || exeString || ', systemId_in=' || systemId_in, 2);
+    l0_packets_name := getTableName(0, systemId_in);
     IF (LENGTH(gblTlmFileName) > 0) THEN
         ONTHEFLYDECOM.logOTFD('addToL1Query: SELECT fileId from TelemetrySourceFiles WHERE filename=''' || gblTlmFileName || '''', 2);
         EXECUTE IMMEDIATE 'SELECT fileId from TelemetrySourceFiles WHERE filename=''' ||
@@ -306,16 +306,15 @@ BEGIN
             ONTHEFLYDECOM.logOTFD('addToL1Query: gblTlmFileName="' || gblTlmFileName || '" is not valid, returns no file ID', 0);
             RETURN;
         END IF;
-        exeString := exeString || ' AND SCT_VTCW in (select SCT_VTCW from L0_Packets_SID' ||
-	             TO_CHAR(systemId_in) || ' where fileId=' || TO_CHAR(fileId) || ')';
-    END IF;
+        exeString := exeString || ' AND SCT_VTCW in (select SCT_VTCW from ' || l0_packets_name || ' where fileId=' || TO_CHAR(fileId) || ')';
+        END IF;
 EXCEPTION
     -- On exception return without altering exeString and log as error.
     WHEN NO_DATA_FOUND THEN
-        ONTHEFLYDECOM.logOTFD('addToL0Query: gblTlmFileName="' || gblTlmFileName || '" is not valid, returns no file ID', 0);
+        ONTHEFLYDECOM.logOTFD('addToL1Query: gblTlmFileName="' || gblTlmFileName || '" is not valid, returns no file ID', 0);
         RETURN;
     WHEN OTHERS THEN
-        ONTHEFLYDECOM.logOTFD('addToL0Query: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
+        ONTHEFLYDECOM.logOTFD('addToL1Query: others exception: ' || SQLCODE || ' -ERROR- ' || SQLERRM, 0);
         -- Re-raise unknown exception to main procedure.
         raise;
 END addToL1Query;

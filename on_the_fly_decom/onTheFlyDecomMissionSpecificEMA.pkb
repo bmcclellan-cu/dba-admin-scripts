@@ -27,7 +27,11 @@ Notes:
     PROCEDURE getDefinitionStartStopTimes
      
   2. Mission Specific Global Variables:
-    <None>
+     gblVCs:
+        Determines whether or not OTFD queries Realtime or Playback data:
+        1 = only Realtime
+        2 = only Playback
+        Any other value (defaults to 3) indicates both.
      
   3. Compiler Errors:
      - A login.sql file can cause compiler errors.
@@ -63,7 +67,7 @@ gblVCs     NUMBER := 3;          /* NUMBER interpreted as a bit field, specifyin
 /*************************************************************************************************
 Function:  getVersion
 
-Purpose:    This procedure will return version string.
+Purpose:    This function will return version string.
 
 *************************************************************************************************/
 FUNCTION getVersion
@@ -116,6 +120,7 @@ FUNCTION clearOption( optionName VARCHAR2)
 IS
     upperCaseOptionName VARCHAR2(128) := '';
 BEGIN
+    upperCaseOptionName := UPPER(optionName);
     IF (upperCaseOptionName = 'VCS') THEN
         gblVCs := -1;
     ELSIF (upperCaseOptionName = 'ALL') THEN
@@ -131,7 +136,7 @@ END clearOption;
 /*************************************************************************************************
 Function:  getOptionsHelp
 
-Purpose:    This procedure returns an options help string.
+Purpose:    This function returns an options help string.
             This is intended to be used as a helper for the ONTHEFLYDECOM.setOption and clearOption procedures.
 
 *************************************************************************************************/
@@ -163,7 +168,6 @@ FUNCTION getTableName( type_in IN NUMBER,
                        systemId_in IN NUMBER)
                        RETURN VARCHAR2
 IS
-    databaseName VARCHAR2(64) := '';
     tableName VARCHAR2(64) := '';
     tableNameExtension VARCHAR2(10) := '';
     invalidType EXCEPTION;
@@ -236,10 +240,10 @@ BEGIN
 END getTimeColumnsL1;
 
 /************************************************************************************************* 
-Procedure:  getDecomIdentifier
+Function:  getDecomIdentifier
 
 Purpose:    Returns either 'apid' or 'dmid' based on what field is being used to determine the 
-            decom map. This is only different for EMA, which uses 'dmid'.
+            decom map.
 
 *************************************************************************************************/
 FUNCTION getDecomIdentifier
@@ -264,7 +268,6 @@ Output:     exeString   - May or may not have been updated.
 PROCEDURE addToL0Query( exeString IN OUT VARCHAR2,
                         systemId_in IN NUMBER)
 IS
-    fileId NUMBER := -1;
 BEGIN
     ONTHEFLYDECOM.logOTFD('addToL0Query: exeString=' || exeString || ', systemId_in=' || systemId_in, 2);
     NULL;
@@ -276,10 +279,10 @@ Procedure:   addToL1Query
 Purpose:    Adds any mission-specific SQL to the 'where' clause of the L1 data query.
             This proc must exist, even if it does nothing. Called by queryL1.
 
-Input:      query       - VARCHAR2
+Input:      exeString   - VARCHAR2
             systemId_in - NUMBER SID or schemaId, depending on mission.
 
-Output:     query       - May or may not have been updated.
+Output:     exeString   - May or may not have been updated.
 *************************************************************************************************/
 PROCEDURE addToL1Query( exeString IN OUT VARCHAR2,
                         systemId_in IN NUMBER)
@@ -291,7 +294,7 @@ BEGIN
 END addToL1Query;
 
 /*************************************************************************************************
-FUNCTION: getDefinitionStartStopTimes
+Function: getDefinitionStartStopTimes
 
 Purpose:  Gets start/stop times for use in queries to the TelemetryStorageLocation and TMDecom tables.
           This does not narrow the query being made, but rather chooses which parameter to use to fetch
@@ -352,13 +355,13 @@ BEGIN
     END IF;
 
     -- If ERT or SCT are specified, error immediately.
-    IF startERT_in >= 0 OR stopERT_in >= 0 OR startERT_in >= 0 OR stopERT_in >= 0 THEN
+    IF startERT_in >= 0 OR stopERT_in >= 0 OR startSCT_in >= 0 OR stopSCT_in >= 0 THEN
         ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: EMA only supports querying by ASCT.', 0);
         RETURN 0;
     END IF;
 
     IF (startASCT_in >= 0 AND stopASCT_in >= 0)  THEN
-        -- Input ERT times are valid, so use them.
+        -- Input ASCT times are valid, so use them.
         definitionStartTime := startASCT_in;
         definitionStopTime  := stopASCT_in;
         definitionColumn    := 2;

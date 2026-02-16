@@ -136,7 +136,7 @@ gblDebugLevel      NUMBER := 0;           /* 0=errors,  1=warning, 2=verbose deb
 gblApids           VARCHAR2(128) := '-1'; /* comma-separated list of apids */
 gblDecomMapTimeGPS NUMBER := -1;          /* Overrides using start/stop times and TMdecom table for decom map time(s). */
 gblForceIsInL0     NUMBER := -1;          /* -1 = not in effect, 0 = isInL0=0, 1 = isInL0=1 */
-gblForceIsInL1     NUMBER := -1;          /* -1 = not in effect, 0 = isInL0=0, 1 = isInL0=1 */
+gblForceIsInL1     NUMBER := -1;          /* -1 = not in effect, 0 = isInL1=0, 1 = isInL1=1 */
 
 -- Make a type for the optional apid list.
 TYPE nestedTable_typ IS TABLE OF NUMBER;
