@@ -120,7 +120,7 @@ Notes:
 	  systemId, like VCs.
 *************************************************************************************************/
 
-CREATE OR REPLACE PACKAGE BODY onTheFlyDecom
+CREATE OR REPLACE PACKAGE BODY IXPE_MISC.onTheFlyDecom
 AS
 
 -- These options, and additional mission-specific options, are settable by calling the setOption
