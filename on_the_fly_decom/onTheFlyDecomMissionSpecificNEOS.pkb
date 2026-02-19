@@ -382,7 +382,7 @@ BEGIN
     
     -- Check if SID is supported
     IF not systemId_in MEMBER OF supportedSIDs THEN
-        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: EMA does not support SID ' || systemId_in || '.', 0);
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: NEOS does not support SID ' || systemId_in || '.', 0);
         RETURN 0;
     END IF;
 

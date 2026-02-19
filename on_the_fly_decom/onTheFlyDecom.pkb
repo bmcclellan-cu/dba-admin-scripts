@@ -201,6 +201,8 @@ IS
 BEGIN
     -- Determine the appropriate prefix based on the priority
     CASE priority
+        WHEN -1 THEN
+            messagePrefix := 'INFO: ';
         WHEN 0 THEN
             messagePrefix := 'ERROR: ';
         WHEN 1 THEN
@@ -219,7 +221,7 @@ BEGIN
 
             -- Get the next available 490 characters and prefix the appropriate prefix.
             messageRow := messagePrefix || SUBSTR(msg, rowStart, rowLength-10);
-            rowStart := rowStart + rowLength;
+            rowStart := rowStart + rowLength - 10;
             INSERT INTO ONTHEFLYDECOM_ERRORS (sequence, message, occurrences) VALUES (gblSequence, messageRow, 1);
         END LOOP;
         -- Only increase the sequence counter once per full message logged.
@@ -340,9 +342,10 @@ IS
 BEGIN
     -- Note: Steve Monk previously had issues with the truncate command, but recent testing has not been able to duplicate those issues.
     EXECUTE IMMEDIATE 'TRUNCATE TABLE ONTHEFLYDECOM_ERRORS';
+    gblSequence := 1;
     missionSpecificVersion := onTheFlyDecomMissionSpecific.getVersion();
-    logOTFD( 'INFO multimission version: 0.2.4', -1);
-    logOTFD( 'INFO mission-specific version: ' || missionSpecificVersion, -1);
+    logOTFD( 'multimission version: 0.2.4', -1);
+    logOTFD( 'mission-specific version: ' || missionSpecificVersion, -1);
 END getVersion;
 
 /*************************************************************************************************
@@ -764,6 +767,10 @@ BEGIN
     logOTFD('decomFromHexString: hexString_in=' || hexString_in || ', bitOffset_in=' || bitOffset_in || ', bitLength_in=' || bitLength_in || ', dataType_in=' || dataType_in, 3);
 
     -- First, the inputs are validated -----------------------------------------------------------
+    IF bitLength_in = 0 THEN
+        logOTFD('decomFromHexString: Input bitLength is invalid (bitLength=0).', 0);
+        return 0;
+    END IF;
     IF hexString_in = '' THEN
         logOTFD('decomFromHexString: Input hex string is empty!', 0);
         return 0;
@@ -1864,7 +1871,7 @@ BEGIN
                         ' for TSL row ' || i || ', definitionStart=' || TMDRows(j).definitionStart, 2);
 		    
                 IF (TMDRows(j).startBit = -1) THEN
-                    logOTFD('selectNumericTlm: TMDecom row Starting at ' || TMDRows(i).definitionStart || ' is an end marker (startBit -1). Skipping...', 2);
+                    logOTFD('selectNumericTlm: TMDecom row Starting at ' || TMDRows(j).definitionStart || ' is an end marker (startBit -1). Skipping...', 2);
                     CONTINUE;
                 END IF;
 
