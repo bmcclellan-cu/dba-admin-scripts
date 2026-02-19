@@ -120,7 +120,7 @@ Notes:
 	  systemId, like VCs.
 *************************************************************************************************/
 
-CREATE OR REPLACE PACKAGE BODY IXPE_MISC.onTheFlyDecom
+CREATE OR REPLACE PACKAGE BODY onTheFlyDecom
 AS
 
 -- These options, and additional mission-specific options, are settable by calling the setOption
@@ -1171,12 +1171,15 @@ BEGIN
     bitOffsetInSubstring := startBit - byteOffset*8;
     byteOffset := byteOffset + 1;  -- starts with 1 for dbms_lob.substr()
     
+    IF (gblDebugLevel >= 1) THEN
+        monitor_value := ' /*+ monitor */ ';
+    END IF;
+
     -- Make an associative array to tell prepareDebugSQL to replace with actual values.
     name_value := name_value_t( ':nBytes'      => TO_CHAR(nBytes),
                                 ':byteOffset'  => TO_CHAR(byteOffset),
                                 ':apid'        => TO_CHAR(apid));
     
-    monitor_value := ' /*+ monitor */ ';
     -- Formulate invariant parts of the query string.
 
     -- A call like this to retrieve_eng will produce a query like this:
