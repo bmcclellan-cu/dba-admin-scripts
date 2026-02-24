@@ -70,51 +70,54 @@ Usage:
     execute onTheFlyDecom.setOption(<OptionName>, <OptionValue>);
     execute onTheFlyDecom.clearOption(<OptionName>); -- Pass 'ALL' to clear all options.
 Notes:
-  1. Overview:
-     See the OnTheFlyDecom.txt document.
-     See OTFD Documentation: https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/219810895/On-The-Fly-Decom+OTFD
+    1.  Overview:
+        See the OnTheFlyDecom.txt document.
+        See OTFD Documentation: https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/219810895/On-The-Fly-Decom+OTFD
      
-  2. Uses two Oracle global temporary tables:
-     Oracle global temporary tables have the same name, but different contents for each connection.
-     They must be created once by a DBA, like other permanent tables.
-     The code clears these tables before each invocation of selectNumericTlm.
-     The code also clears OnTheFlyDecom_errors before each invocation of setOption and clearOption.
-     a. The onTheFlyDecom_results table stores the results of selectNumericTlm, which the application can
-        query to get the data.
-     b. The onTheFlyDecom_errors table stores errors/debug messages depending on the DEBUGLEVEL, and can also be 
-        queried by the end-user.
+    2.  Uses two Oracle global temporary tables:
+        Oracle global temporary tables have the same name, but different contents for each connection.
+        They must be created once by a DBA, like other permanent tables.
+        The code clears these tables before each invocation of selectNumericTlm.
+        The code also clears OnTheFlyDecom_errors before each invocation of setOption and clearOption.
+            a.  The onTheFlyDecom_results table stores the results of selectNumericTlm, which the application can
+                query to get the data.
+            b.  The onTheFlyDecom_errors table stores errors/debug messages depending on the DEBUGLEVEL, and can also be 
+                queried by the end-user.
 
-  3. Compiler Errors:
-     - If the ampersand character is present in a comment, package compilation will fail and give the following prompt:
-       Enter value for t:  (where t is the letter after the ampersand)
+    3.  Compiler Errors:
+         - If the ampersand character is present in a comment, package compilation will fail and give the following prompt:
+            Enter value for t:  (where t is the letter after the ampersand)
 
-  4. Exception Handling and End-User Error Handling
-     - If you let an exception propagate to the caller of the procedure, most SQL clients automatically rollback
-       the global temporary table state to before the procedure was called, clearing the onTheFlyDecom_errors and 
-       onTheFlyDecom_results table. All exceptions must be caught and handled so the end-user application can get
-       useful error messages.
-     - The end user is expected to check the onTheFlyDecom_errors table after each call to
-       selectNumericTlm, setOption and clearOption.  If the user has not increased the debug level
-       over the default, then zero rows means no errors.  If the user has increased the debug level,
-       and there are rows in the table, then the user should query the table to find out if any
-       of them start with "ERROR", "WARNING", "DEBUG", or "V-DEBUG", to determine the error status of the last called
-       procedure.
-     - The user-callable procedures do not return status, because output variables and function
-       return values from stored procedures/functions are harder to program in some languages.
+    4.  Exception Handling and End-User Error Handling
+         -  If you let an exception propagate to the caller of the procedure, most SQL clients automatically rollback
+            the global temporary table state to before the procedure was called, clearing the onTheFlyDecom_errors and 
+            onTheFlyDecom_results table. All exceptions must be caught and handled so the end-user application can get
+            useful error messages.
 
-  5. ERT vs SCT:
-     - ERT (Earth Received Time) is the wall clock time when the packet was received at a ground station. 
-       SCT (Spacecraft Time) refers to the time embedded in telemetry packets, converted to UTC. 
-       ASCT (Adjusted Spacecraft Time) is intended to be the wall-clock time the data was generated, accounting
+         -  The end user is expected to check the onTheFlyDecom_errors table after each call to
+            selectNumericTlm, setOption and clearOption.  If the user has not increased the debug level
+            over the default, then zero rows means no errors.  If the user has increased the debug level,
+            and there are rows in the table, then the user should query the table to find out if any
+            of them start with "ERROR", "WARNING", "DEBUG", or "V-DEBUG", to determine the error status of the last called
+            procedure.
+
+         -  The user-callable procedures do not return status, because output variables and function
+            return values from stored procedures/functions are harder to program in some languages.
+
+    5.  ERT vs SCT:
+         -  ERT (Earth Received Time) is the wall clock time when the packet was received at a ground station. 
+            SCT (Spacecraft Time) refers to the time embedded in telemetry packets, converted to UTC. 
+            ASCT (Adjusted Spacecraft Time) is intended to be the wall-clock time the data was generated, accounting
             and adjusting for jamming Spacecraft time into the future during testing.
-     - Data requests before launch often specify only an ERT range (or ASCT for EMA), or both an ERT range
-       and an SCT range (for playback data). getDefinitionStartStopTimes is used to determine what time input
-       to use to query the TelemetryStorageLocation and TMDecom tables. This may have issues with playback data
-       because ERT is a relatively short time period during which a large time range of data may have been received
-       at once. If SCT is jammed to be significantly different from ERT and queries using that SCT are made, the 
-       incorrect Decom Maps may be selected. After launch, this issue is fairly minor, as SCT should accurately 
-       reflect wall-clock time, and will roughly correlate with ERT.
-          
+
+         -  Data requests before launch often specify only an ERT range (or ASCT for EMA), or both an ERT range
+            and an SCT range (for playback data). getDefinitionStartStopTimes is used to determine what time input
+            to use to query the TelemetryStorageLocation and TMDecom tables. This may have issues with playback data
+            because ERT is a relatively short time period during which a large time range of data may have been received
+            at once. If SCT is jammed to be significantly different from ERT and queries using that SCT are made, the 
+            incorrect Decom Maps may be selected. After launch, this issue is fairly minor, as SCT should accurately 
+            reflect wall-clock time, and will roughly correlate with ERT.
+
     Q: What if we wanted to treat playback, real-time and EMM snorkel data differently w.r.t. ingesting
           into L0 or L1?  Possibilities:  TSL would need either more systemIds, or a new column extending
 	  systemId, like VCs.
@@ -217,7 +220,7 @@ BEGIN
     -- Only log if the logging level is high enough to allow it
     IF (priority <= gblDebugLevel) THEN
         LOOP
-            EXIT WHEN rowStart >= LENGTH(msg);
+            EXIT WHEN rowStart > LENGTH(msg);
 
             -- Get the next available 490 characters and prefix the appropriate prefix.
             messageRow := messagePrefix || SUBSTR(msg, rowStart, rowLength-10);
@@ -315,7 +318,7 @@ Input:      array_in - string_varray (VARRAY(3) OF VARCHAR(200)) The array to co
 *************************************************************************************************/
 FUNCTION string_varrayToCSV(array_in IN string_varray)
 RETURN VARCHAR2 IS
-    l_result VARCHAR2(32767);
+    l_result VARCHAR2(700);
 BEGIN
     -- Unable to inline-unpack the string_varray, so logs the unpacked array once the procedure returns.
     logOTFD('string_varrayToCSV called with array_in=<not_unpackable>', 2);
@@ -489,7 +492,7 @@ FUNCTION prepareDebugSQL(
     RETURN VARCHAR2
 IS
     name VARCHAR2(64);
-    result CLOB;
+    result VARCHAR2(2000);
 BEGIN
     -- Do not log unless V-DEBUG is set. The whole point of the procedure is to cleanup the logged output.
     logOTFD('prepareDebugSQL: query_str=' || query_str || ', name_value=<not_unpackable>', 3);
@@ -541,11 +544,11 @@ PROCEDURE queryTMDecom(
     cursor_out OUT curType
     )
 IS 
-    tmdecom_table_name VARCHAR2(50);
-    decom_map_identifier VARCHAR(4);    -- dmid or apid. Note that OTFD calls it apid internally regardless
-    query_sql CLOB;                     -- Practically unlimited length for query
+    tmdecom_table_name VARCHAR2(64);
+    decom_map_identifier VARCHAR2(4);   -- dmid or apid. Note that OTFD calls it apid internally regardless
+    query_sql VARCHAR2(2000);           -- Full SQL query
     name_value ONTHEFLYDECOM.name_value_t;
-    booleanOpString VARCHAR(2);
+    booleanOpString VARCHAR2(2);
 BEGIN
     ONTHEFLYDECOM.logOTFD('queryTMDecom: systemId_in=' || systemId_in ||
                           ', apid_in=' || apid_in ||
@@ -636,9 +639,9 @@ PROCEDURE queryTSL(
     cursor_out OUT curType
 )
 IS
-    tsl_table_name VARCHAR(50);
-    decom_map_identifier VARCHAR(4);    -- dmid or apid. Note that OTFD calls it apid internally regardless
-    query_sql CLOB;                     -- Practically unlimited length for query
+    tsl_table_name VARCHAR2(64);
+    decom_map_identifier VARCHAR2(4);   -- dmid or apid. Note that OTFD calls it apid internally regardless
+    query_sql VARCHAR2(2000);           -- Full SQL query
     name_value ONTHEFLYDECOM.name_value_t;
 BEGIN
     ONTHEFLYDECOM.logOTFD('queryTSL: systemId_in=' || systemId_in ||
@@ -953,7 +956,7 @@ BEGIN
         EXCEPTION
             WHEN VALUE_ERROR OR INVALID_NUMBER THEN
                 logOTFD('CSV2NestedTable: Failed to convert element "' || l_element || '" to number', 0);
-                RETURN nestedTable_typ(-1);
+                CONTINUE;
         END;
         l_index := l_comma_index + 1;
     END LOOP;
@@ -1055,7 +1058,7 @@ PROCEDURE queryL0
     doInclusiveQuery IN BOOLEAN,
     definitionColumn IN NUMBER)    -- Column to apply doInclusiveQuery on.
 IS
-    tableName VARCHAR2(200); 
+    tableName VARCHAR2(64); 
     
     -- The following are set from the 'decomMap' input argument:
     apid      NUMBER;   -- The apid of the packets in the L0_Packets table to query from.
@@ -1071,12 +1074,12 @@ IS
                         -- 'D' = discrete, output as an unsigned integer (no negative states!)
     
     -- Used to stitch together the query for L0_PACKETS.
-    exeString        CLOB;
-    exeStringPart1   CLOB;
-    exeStringPart2   CLOB;
+    exeString        VARCHAR2(2000);
+    exeStringPart1   VARCHAR2(1000);
+    exeStringPart2   VARCHAR2(1000);
 
     -- Is set based on if doInclusiveQuery is set. True: <=, False: <
-    booleanOpString  VARCHAR2(10);
+    booleanOpString  VARCHAR2(2);
 
     name_value name_value_t;    -- Mapping of name to value for each of the bind variables in the query.
     monitor_value VARCHAR2(20); -- This string is set to inject the monitor flag into SQL queries made.
@@ -1089,7 +1092,7 @@ IS
     TYPE result_row_t IS RECORD( SCT NUMBER(16),
                                  ERT NUMBER(16),
                                  ASCT NUMBER(16),
-                                 hexString VARCHAR(16));
+                                 hexString VARCHAR2(16));
 
     -- PL/SQL table to hold the L0_Packets query results before decomming.
     row result_row_t;
@@ -1126,7 +1129,7 @@ IS
     -- Determines what columns get retrieved from L0 and what placeholder to use if they are not present. 
     -- Expects to get them in the order SCT, ERT, ASCT.
     select_time_columns string_varray; -- Note: string_varray is a custom datatype that supports a max of 3 items.
-    select_time_columns_string VARCHAR2(200);
+    select_time_columns_string VARCHAR2(70);
     sct_time_column VARCHAR2(20);
     ert_time_column VARCHAR2(20);
     asct_time_column VARCHAR2(20);
@@ -1369,12 +1372,12 @@ PROCEDURE queryL1
     doInclusiveQuery IN BOOLEAN,
     definitionColumn IN NUMBER)  -- Column to apply doInclusiveQuery on, as well as the column to narrow to TSL record.
 IS
-    exeString CLOB; -- This string contains sql commands to be executed
-    tableName VARCHAR2(200); -- Name of the L1 table. This varies between missions and is pulled from the mission-specific code.
+    exeString VARCHAR2(2000); -- This string contains sql commands to be executed
+    tableName VARCHAR2(64); -- Name of the L1 table. This varies between missions and is pulled from the mission-specific code.
     name_value name_value_t; -- Mapping of bind variable names to values for debug output.
 
     -- Is set based on if doInclusiveQuery is set. True: <=, False: <
-    booleanOpString VARCHAR(2);
+    booleanOpString VARCHAR2(2);
 
     -- Contain the bounds for the definition column.
     queryStart NUMBER;
@@ -1383,7 +1386,7 @@ IS
     -- Determines what columns get retrieved from L0 and what placeholder to use if they are not present. 
     -- Expects to get them in the order SCT, ERT, ASCT.
     select_time_columns string_varray; -- Note: string_varray is a custom datatype that supports a max of 3 items.
-    select_time_columns_string VARCHAR2(200);
+    select_time_columns_string VARCHAR2(70);
     sct_time_column VARCHAR2(20);
     ert_time_column VARCHAR2(20);
     asct_time_column VARCHAR2(20);
@@ -1420,7 +1423,9 @@ BEGIN
     -- Make an associative array to tell prepareDebugSQL the variable names to replace with actual values
     name_value := name_value_t( ':tlmId_in' => TO_CHAR(tlmId_in));  -- This is the only bind var in use currently. Everything else is string-concatenated in.
 
-    monitor_value := ' /*+ monitor */ ';
+    IF (gblDebugLevel >= 1) THEN
+        monitor_value := ' /*+ monitor */ ';
+    END IF;
 
     select_time_columns := onTheFlyDecomMissionSpecific.getTimeColumnsL1;
     select_time_columns_string := string_varrayToCSV(select_time_columns);
