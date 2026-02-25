@@ -254,7 +254,7 @@ IS
     fileId NUMBER := -1;
 BEGIN
     ONTHEFLYDECOM.logOTFD('addToL0Query: exeString=' || exeString || ', systemId_in=' || systemId_in, 2);
-    IF (LENGTH(gblTlmj) > 0) THEN
+    IF (LENGTH(gblTlmFileName) > 0) THEN
         -- Note:  getting fileId in a subquery doesn't work, get an Oracle error saying a right parenthesis
         -- is missing.  Plus have to use two single quotes on either side of filename if return the subquery
         -- in the string.  Here using a separate query to get fileId causes a single context switch between

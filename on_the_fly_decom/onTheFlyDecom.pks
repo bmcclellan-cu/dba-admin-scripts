@@ -8,7 +8,7 @@ CREATE OR REPLACE PACKAGE onTheFlyDecom
 AS
     -- Note: string_varray is used both in the mission-specific code and the generic code, so it is only defined in the package 
     -- here and referenced as ONTHEFLYDECOM.string_varray in the mission-specific code due to typing issues.
-    TYPE string_varray IS VARRAY(3) OF VARCHAR2(200);
+    TYPE string_varray IS VARRAY(3) OF VARCHAR2(20);
 
     -- Make a type for input to prepareDebugSQL.
     TYPE name_value_t IS TABLE OF VARCHAR2(64) INDEX BY VARCHAR2(64);

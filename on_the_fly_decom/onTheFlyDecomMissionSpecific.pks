@@ -18,9 +18,6 @@ Methods:
                                   3 columns (SCT, ERT, ASCT).
     getDecomIdentifier          - Gets the column name to identify decom maps. EMA uses dmid, 
                                   standard is apid.
-    getDecomMapCur              - Returns an opened cursor for a given decom map query. 
-                                  Initially required to accommodate EMA.
-    getTSLCur                   - Returns an opened cursor for a given TSL query. 
                                   Initially required to accommodate EMA.
     addToL0Query                - Append any additional query restrictions at the end of an L0 query
                                   used by IXPE to query by filename.

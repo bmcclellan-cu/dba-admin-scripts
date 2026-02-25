@@ -122,9 +122,9 @@ IS
 BEGIN
     upperCaseOptionName := UPPER(optionName);
     IF (upperCaseOptionName = 'VCS') THEN
-        gblVCs := -1;
+        gblVCs := 3;
     ELSIF (upperCaseOptionName = 'ALL') THEN
-        gblVCs := -1;
+        gblVCs := 3;
     ELSE
         RETURN 0;
     END IF;
