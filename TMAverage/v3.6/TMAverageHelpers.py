@@ -52,17 +52,10 @@ DATA_SCHEMAS = {
     "evep12c":  "EVE_L1A",
     "tsisprod": "TSIS_L1A",
     "ixpeprod": "IXPE_L1A",
-<<<<<<< Updated upstream
-    "neosd19":  "NEOS_L1A",
-    "neosprod": "NEOS_L1A",
-    "emadev": "EMA_SCHEMA<SID>",  # (EMA) Data is separated by SID/Schema
-    "emapre": "EMA_SCHEMA<SID>",
-=======
     "neosd19":  "NEOS_SCHEMA<SID>",
     "neosprod": "NEOS_SCHEMA<SID>",
     "emadev":   "EMA_SCHEMA<SID>",  # (EMA) Data is separated by SID/Schema
     "emapre":   "EMA_SCHEMA<SID>",
->>>>>>> Stashed changes
 }
 
 # Primary metadata schemas.
@@ -85,11 +78,8 @@ TMANALOG_DBS = {
     "emadev":   "<DATA_SCHEMA>.TMANALOG",
     "emapre":   "<DATA_SCHEMA>.TMANALOG",
     "aimprod":  "<DATA_SCHEMA>.TMANALOG_TABLE",
-<<<<<<< Updated upstream
-=======
     "neosd19":  "<DATA_SCHEMA>.TMANALOG",
     "neosprod": "<DATA_SCHEMA>.TMANALOG",
->>>>>>> Stashed changes
     "*":        "<DATA_SCHEMA>.TMANALOG_SID<SID>",
 }
 
@@ -98,11 +88,8 @@ TMANALOG_DBS = {
 TMAVERAGE_TAB_NAME = {
     "emadev":   "TMAVERAGE",
     "emapre":   "TMAVERAGE",
-<<<<<<< Updated upstream
-=======
     "neosd19":  "TMAVERAGE",
     "neosprod": "TMAVERAGE",
->>>>>>> Stashed changes
     "*":        "TMAVERAGE_SID<SID>"
 }
 
@@ -116,11 +103,8 @@ TMAVERAGE_STATS_NAME = "<DATA_SCHEMA>.TMAVERAGE_STATS"
 TABLESPACE_NAME = {
     "emadev":   "<DATA_SCHEMA>_TMAVERAGE",
     "emapre":   "<DATA_SCHEMA>_TMAVERAGE",
-<<<<<<< Updated upstream
-=======
     "neosd19":  "<DATA_SCHEMA>_TMAVERAGE",
     "neosprod": "<DATA_SCHEMA>_TMAVERAGE",
->>>>>>> Stashed changes
     "*":        "TMAVERAGE_SID<SID>",
 }
 
