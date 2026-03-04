@@ -728,8 +728,8 @@ def process_values_by_tmid(
     for i in range(len(calibration_sets)):
         calibration_set = calibration_sets[i]
         definition_start = calibration_set[8]
-        low_value = float(calibration_set[9])
-        high_value = float(calibration_set[10])
+        low_value = float(calibration_set[9]) if calibration_set[9] else None
+        high_value = float(calibration_set[10]) if calibration_set[10] else None
 
         # Get next-largest DEFINITIONSTART (note that there can be multiple records with the same DEFINITIONSTART for segmented
         # calibrations)
