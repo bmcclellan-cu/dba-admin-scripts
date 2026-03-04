@@ -52,7 +52,7 @@ DATA_SCHEMAS = {
     "evep12c":   "EVE_L1A",
     "tsisprod": "TSIS_L1A",
     "ixpeprod": "IXPE_L1A",
-    "neosd19":  "NEOS_SCHEMA<SID>",
+    "neosd19":  "NEOS_L1A",
     "neosprod": "NEOS_L1A",
     "emadev": "EMA_SCHEMA<SID>",  # (EMA) Data is separated by SID/Schema
     "emapre": "EMA_SCHEMA<SID>",
