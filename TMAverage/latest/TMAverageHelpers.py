@@ -253,7 +253,7 @@ class TMAverageConfigs():
         attributes = vars(self)
 
         for key in attributes.keys():
-            if key == "SID" and database in ["neosd19", "neosprod", "emapre", "emadev"]:
+            if key == "SID" and self.DATABASE in ["neosd19", "neosprod", "emapre", "emadev"]:
                 config_item = config_item.replace(f"<{key}>", str(attributes[key]).zfill(2))
             else:
                 config_item = config_item.replace(f"<{key}>", str(attributes[key]))
