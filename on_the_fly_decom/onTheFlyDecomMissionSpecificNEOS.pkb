@@ -64,7 +64,7 @@ FUNCTION getVersion
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'NEOS 0.2.0';
+    return 'NEOS 0.2.1';
 END getVersion;
 
 /*************************************************************************************************
@@ -389,7 +389,7 @@ BEGIN
 
     -- If ASCT is specified, error immediately.
     IF startASCT_in >= 0 OR stopASCT_in >= 0 THEN
-        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: NEOS Only supports querying by ERT, SCT.', 0);
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: NEOS Only supports querying by ERT, SCT. You queried by ASCT: startASCT_in=' || startASCT_in || ', stopASCT_in=' || stopASCT_in || '.', 0);
         RETURN 0;
     END IF;
 

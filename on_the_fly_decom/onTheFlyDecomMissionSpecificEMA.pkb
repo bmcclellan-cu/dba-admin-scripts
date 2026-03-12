@@ -74,7 +74,7 @@ FUNCTION getVersion
     RETURN VARCHAR2
 IS
 BEGIN
-    return 'EMA 0.1.2';
+    return 'EMA 0.1.3';
 END getVersion;
 
 /*************************************************************************************************
@@ -355,8 +355,11 @@ BEGIN
     END IF;
 
     -- If ERT or SCT are specified, error immediately.
-    IF startERT_in >= 0 OR stopERT_in >= 0 OR startSCT_in >= 0 OR stopSCT_in >= 0 THEN
-        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: EMA only supports querying by ASCT.', 0);
+    IF startSCT_in >= 0 OR stopSCT_in >= 0 THEN
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: EMA only supports querying by ASCT. You queried by SCT: startSCT_in=' || startSCT_in || ', stopSCT_in=' || stopSCT_in || '.', 0);
+        RETURN 0;
+    ELSIF startERT_in >= 0 OR stopERT_in >= 0 THEN
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: EMA only supports querying by ASCT. You queried by ERT: startERT_in=' || startERT_in || ', stopERT_in=' || stopERT_in || '.', 0);
         RETURN 0;
     END IF;
 
