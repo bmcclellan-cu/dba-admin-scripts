@@ -169,8 +169,8 @@ EOD
         base_version="$(echo "$package_versions" | sed -n '1 p')"
         mission_version="$(echo "$package_versions" | sed -n '2 p')"
 
-        base_version="${base_version#INFO multimission version: }"
-        mission_version="${mission_version#INFO mission-specific version: }"
+        base_version="${base_version#INFO: multimission version: }"
+        mission_version="${mission_version#INFO: mission-specific version: }"
     fi
 fi
 
