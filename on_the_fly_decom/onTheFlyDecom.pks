@@ -4,7 +4,7 @@ File:       onTheFlyDecom.pks (package spec)
 Purpose:    Defines which methods in the body are callable from the application (end-user).
             See body, onTheFlyDecom.pkb, for documentation.
 *************************************************************************************************/
-CREATE OR REPLACE PACKAGE onTheFlyDecom
+CREATE OR REPLACE PACKAGE NEOS_MISC.onTheFlyDecom
 AS
     -- Note: string_varray is used both in the mission-specific code and the generic code, so it is only defined in the package 
     -- here and referenced as ONTHEFLYDECOM.string_varray in the mission-specific code due to typing issues.

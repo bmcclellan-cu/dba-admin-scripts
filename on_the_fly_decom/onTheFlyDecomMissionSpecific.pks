@@ -36,7 +36,7 @@ Usage:
      @<full_path>/onTheFlyDecomMissionSpecificXXXX.pkb     -- compile the package body  
 
 *************************************************************************************************/
-CREATE OR REPLACE PACKAGE onTheFlyDecomMissionSpecific
+CREATE OR REPLACE PACKAGE NEOS_MISC.onTheFlyDecomMissionSpecific
 AS 
     TYPE curType IS REF CURSOR; -- Weakly typed cursor
 

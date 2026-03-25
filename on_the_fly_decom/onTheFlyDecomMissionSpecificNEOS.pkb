@@ -387,11 +387,28 @@ BEGIN
     END IF;
 
 
-    -- If ASCT is specified, error immediately.
-    IF startASCT_in >= 0 OR stopASCT_in >= 0 THEN
-        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: NEOS Only supports querying by ERT, SCT. You queried by ASCT: startASCT_in=' || startASCT_in || ', stopASCT_in=' || stopASCT_in || '.', 0);
-        RETURN 0;
+    IF systemId_in == 1 THEN
+        IF NOT (startSCT_in >= 0 AND stopSCT_In >= 0) THEN
+            ONTHEFLYDECOM.logOTFD('schema01: supports queries by SCT (required); ERT is optional. SCT is missing values.', 0)
+            RETURN 0
+        END IF;
+          -- If ASCT is specified, error immediately.
+        IF startASCT_in >= 0 OR stopASCT_in >= 0 THEN
+            ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: NEOS Only supports querying by ERT, SCT. You queried by ASCT: startASCT_in=' || startASCT_in || ', stopASCT_in=' || stopASCT_in || '.', 0);
+            RETURN 0;
+        END IF;
+    ELSIF systemId_in == 2 THEN
+        IF NOT (startERT_in >= 0 AND stopERT_In >= 0) THEN
+            ONTHEFLYDECOM.logOTFD('schema02: supports queries by ERT (required); SCT is optional.', 0)
+            RETURN 0;
+        END IF;
+          -- If ASCT is specified, error immediately.
+        IF startASCT_in >= 0 OR stopASCT_in >= 0 THEN
+            ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: NEOS Only supports querying by ERT, SCT. You queried by ASCT: startASCT_in=' || startASCT_in || ', stopASCT_in=' || stopASCT_in || '.', 0);
+            RETURN 0;
+        END IF;
     END IF;
+
 
     -- If an ERT range was specified, use it as the time range for the queries.
     -- Otherwise assume SCT can be used for the time range when querying these tables.
