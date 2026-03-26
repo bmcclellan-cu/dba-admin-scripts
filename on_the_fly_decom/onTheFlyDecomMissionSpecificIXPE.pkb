@@ -390,7 +390,7 @@ BEGIN
 
     -- If ASCT is specified, error immediately.
     IF (startASCT_in >= 0 OR stopASCT_in >= 0) THEN
-        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: IXPE Only supports querying by ERT, SCT. You queried by ASCT: startASCT_in=' || startASCT_in || ', stopASCT_in=' || stopASCT_in || '.', 0);
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: IXPE supports queries by SCT (required); ERT is optional. ASCT was used in the query which is unsupported for IXPE.', 0);
         RETURN 0;
     END IF;
 

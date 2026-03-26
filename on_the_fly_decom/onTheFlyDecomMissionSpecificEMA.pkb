@@ -356,10 +356,10 @@ BEGIN
 
     -- If ERT or SCT are specified, error immediately.
     IF startSCT_in >= 0 OR stopSCT_in >= 0 THEN
-        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: EMA only supports querying by ASCT. You queried by SCT: startSCT_in=' || startSCT_in || ', stopSCT_in=' || stopSCT_in || '.', 0);
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: EMA only supports queries by ASCT (required). SCT was used which is unsupported by EMA.', 0);
         RETURN 0;
     ELSIF startERT_in >= 0 OR stopERT_in >= 0 THEN
-        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: EMA only supports querying by ASCT. You queried by ERT: startERT_in=' || startERT_in || ', stopERT_in=' || stopERT_in || '.', 0);
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: EMA only supports queries by ASCT (required). ERT was used which is unsupported by EMA.', 0);
         RETURN 0;
     END IF;
 
@@ -369,6 +369,7 @@ BEGIN
         definitionStopTime  := stopASCT_in;
         definitionColumn    := 2;
     ELSE
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: EMA only supports queries by ASCT (required). Both startASCT_in and stopASCT_in must be at least 0.', 0)
         RETURN 0;
     END IF;
     RETURN 1;
