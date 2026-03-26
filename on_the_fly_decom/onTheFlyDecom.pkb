@@ -123,7 +123,7 @@ Notes:
 	  systemId, like VCs.
 *************************************************************************************************/
 
-CREATE OR REPLACE PACKAGE BODY NEOS_MISC.onTheFlyDecom
+CREATE OR REPLACE PACKAGE BODY onTheFlyDecom
 AS
 
 -- These options, and additional mission-specific options, are settable by calling the setOption
