@@ -396,7 +396,7 @@ BEGIN
 
     -- Require that SCT is present for all queries.
     IF (startSCT_in < 0 OR stopSCT_in < 0) THEN
-        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: Incomplete query provided. Missing start/stop SCT.', 0);
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: IXPE supports queries by SCT (required); ERT is optional. Missing start/stop SCT.', 0);
         RETURN 0;
     END IF; 
 
