@@ -369,7 +369,7 @@ BEGIN
         definitionStopTime  := stopASCT_in;
         definitionColumn    := 2;
     ELSE
-        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: EMA only supports queries by ASCT (required). Both startASCT_in and stopASCT_in must be at least 0.', 0)
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: EMA only supports queries by ASCT (required). Both startASCT_in and stopASCT_in must be at least 0.', 0);
         RETURN 0;
     END IF;
     RETURN 1;

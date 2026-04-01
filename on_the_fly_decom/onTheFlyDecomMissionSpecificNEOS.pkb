@@ -387,19 +387,19 @@ BEGIN
     END IF;
 
 
-    IF systemId_in == 1 THEN
+    IF systemId_in = 1 THEN
         IF NOT (startSCT_in >= 0 AND stopSCT_In >= 0) THEN
-            ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: NEOS schema01 supports queries by SCT (required); ERT is optional. Both startSCT_in and stopSCT_in must be at least 0.', 0)
-            RETURN 0
+            ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: NEOS schema01 supports queries by SCT (required); ERT is optional. Both startSCT_in and stopSCT_in must be at least 0.', 0);
+            RETURN 0;
         END IF;
           -- If ASCT is specified, error immediately.
         IF startASCT_in >= 0 OR stopASCT_in >= 0 THEN
             ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: NEOS schema01 supports queries by SCT (required); ERT is optional. ASCT was used in the query which is unsupported for NEOS schema01.', 0);
             RETURN 0;
         END IF;
-    ELSIF systemId_in == 2 THEN
+    ELSIF systemId_in = 2 THEN
         IF NOT (startERT_in >= 0 AND stopERT_In >= 0) THEN
-            ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: NEOS schema02 supports queries by ERT (required); SCT is optional. Both startSCT_in and stopSCT_in must be at least 0.', 0)
+            ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: NEOS schema02 supports queries by ERT (required); SCT is optional. Both startSCT_in and stopSCT_in must be at least 0.', 0);
             RETURN 0;
         END IF;
           -- If ASCT is specified, error immediately.
