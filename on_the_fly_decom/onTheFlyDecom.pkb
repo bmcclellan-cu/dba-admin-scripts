@@ -347,7 +347,7 @@ BEGIN
     EXECUTE IMMEDIATE 'TRUNCATE TABLE ONTHEFLYDECOM_ERRORS';
     gblSequence := 1;
     missionSpecificVersion := onTheFlyDecomMissionSpecific.getVersion();
-    logOTFD( 'multimission version: 0.2.4', -1);
+    logOTFD( 'multimission version: 0.2.5', -1);
     logOTFD( 'mission-specific version: ' || missionSpecificVersion, -1);
 END getVersion;
 
