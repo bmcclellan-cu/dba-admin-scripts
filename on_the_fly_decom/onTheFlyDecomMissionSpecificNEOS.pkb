@@ -150,6 +150,7 @@ Input:      type_in     - NUMBER Determines which table to fetch.
                              3 Indicates some instance of TelemetryStorageLocation is desired.
                              4 Indicates some instance of TMDecom is desired.
                              5 Indicates some instance of TelemetryItemDefinition is desired.
+                            10 Indicates some instance of the mission-specific TelemetrySourceFiles table is desired.
             systemId_in - NUMBER SID or schemaId, depending on mission.
 
 Returns:    A table name as a VARCHAR2
@@ -175,6 +176,8 @@ BEGIN
         tableName := 'TMDecom';
     ELSIF (type_in = 5) THEN
         return 'NEOS_CT.TelemetryItemDefinition';
+    ELSIF (type_in = 10) THEN
+        return 'NEOS_MISC.TelemetrySourceFiles';
     ELSE
         RAISE invalidType;
     END IF;
@@ -255,15 +258,17 @@ PROCEDURE addToL0Query( exeString IN OUT VARCHAR2,
                         systemId_in IN NUMBER)
 IS
     fileId NUMBER := -1;
+    telemetry_source_files_table_name VARCHAR2(64);
 BEGIN
     ONTHEFLYDECOM.logOTFD('addToL0Query: exeString=' || exeString || ', systemId_in=' || systemId_in, 2);
+    telemetry_source_files_table_name := getTableName(10, systemId_in);
     IF (LENGTH(gblTlmFileName) > 0) THEN
         -- Note:  getting fileId in a subquery doesn't work, get an Oracle error saying a right parenthesis
         -- is missing.  Plus have to use two single quotes on either side of filename if return the subquery
         -- in the string.  Here using a separate query to get fileId causes a single context switch between
         -- the PL/SQL and SQL engines, but should be negligible overall.
-        ONTHEFLYDECOM.logOTFD('addToL0Query: SELECT fileId from TelemetrySourceFiles WHERE filename=''' || gblTlmFileName || '''', 2);
-        EXECUTE IMMEDIATE 'SELECT fileId from TelemetrySourceFiles WHERE filename=''' ||
+        ONTHEFLYDECOM.logOTFD('addToL0Query: SELECT fileId from ' || telemetry_source_files_table_name || ' WHERE filename=''' || gblTlmFileName || '''', 2);
+        EXECUTE IMMEDIATE 'SELECT fileId from ' || telemetry_source_files_table_name || ' WHERE filename=''' ||
      	                  gblTlmFileName || '''' INTO fileId;
         IF (fileId IS NULL) THEN
             ONTHEFLYDECOM.logOTFD('addToL0Query: gblTlmFileName="' || gblTlmFileName || '" is not valid, returns no file ID', 0);
@@ -298,12 +303,14 @@ PROCEDURE addToL1Query( exeString IN OUT VARCHAR2,
 IS
     fileId NUMBER := -1;
     l0_packets_name VARCHAR2(64);
+    telemetry_source_files_table_name VARCHAR2(64);
 BEGIN
     ONTHEFLYDECOM.logOTFD('addToL1Query: exeString=' || exeString || ', systemId_in=' || systemId_in, 2);
     l0_packets_name := getTableName(0, systemId_in);
+    telemetry_source_files_table_name := getTableName(10, systemId_in);
     IF (LENGTH(gblTlmFileName) > 0) THEN
-        ONTHEFLYDECOM.logOTFD('addToL1Query: SELECT fileId from TelemetrySourceFiles WHERE filename=''' || gblTlmFileName || '''', 2);
-        EXECUTE IMMEDIATE 'SELECT fileId from TelemetrySourceFiles WHERE filename=''' ||
+        ONTHEFLYDECOM.logOTFD('addToL1Query: SELECT fileId from ' || telemetry_source_files_table_name || ' WHERE filename=''' || gblTlmFileName || '''', 2);
+        EXECUTE IMMEDIATE 'SELECT fileId from ' || telemetry_source_files_table_name || ' WHERE filename=''' ||
      	                  gblTlmFileName || '''' INTO fileId;
         IF (fileId IS NULL) THEN
             ONTHEFLYDECOM.logOTFD('addToL1Query: gblTlmFileName="' || gblTlmFileName || '" is not valid, returns no file ID', 0);
