@@ -149,6 +149,7 @@ Input:      type_in     - NUMBER Determines which table to fetch.
                              2 Indicates some instance of the TMdiscrete table is desired.
                              3 Indicates some instance of TelemetryStorageLocation is desired.
                              4 Indicates some instance of TMDecom is desired.
+                             5 Indicates some instance of TelemetryItemDefinition is desired.
             systemId_in - NUMBER SID or schemaId, depending on mission.
 
 Returns:    A table name as a VARCHAR2
@@ -172,6 +173,8 @@ BEGIN
         tableName := 'TelemetryStorageLocation';
     ELSIF (type_in = 4) THEN
         tableName := 'TMDecom';
+    ELSIF (type_in = 5) THEN
+        return 'NEOS_CT.TelemetryItemDefinition';
     ELSE
         RAISE invalidType;
     END IF;
