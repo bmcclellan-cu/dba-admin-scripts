@@ -1639,7 +1639,7 @@ BEGIN
 
     -- Determine the datatype and check validity. This is static. 
     BEGIN
-        telemetry_item_definition_table_name := getTableName(5, systemId_in);
+        telemetry_item_definition_table_name := onTheFlyDecomMissionSpecific.getTableName(5, systemId_in);
         lastOperation := 'SELECT dataType from ' || telemetry_item_definition_table_name || ' WHERE tlmId = ' || tlmId_in;
         logOTFD('selectNumericTlm: ' || lastOperation, 2);
         EXECUTE IMMEDIATE lastOperation
