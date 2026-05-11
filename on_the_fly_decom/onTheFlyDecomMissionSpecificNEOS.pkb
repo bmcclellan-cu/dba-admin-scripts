@@ -399,7 +399,7 @@ BEGIN
         END IF;
     ELSIF systemId_in = 2 THEN
         IF NOT (startERT_in >= 0 AND stopERT_In >= 0) THEN
-            ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: NEOS schema02 supports queries by ERT (required); SCT is optional. Both startSCT_in and stopSCT_in must be at least 0.', 0);
+            ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: NEOS schema02 supports queries by ERT (required); SCT is optional. Both startERT_in and stopERT_in must be at least 0.', 0);
             RETURN 0;
         END IF;
           -- If ASCT is specified, error immediately.
