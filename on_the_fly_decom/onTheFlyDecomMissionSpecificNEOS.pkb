@@ -64,7 +64,7 @@ FUNCTION getVersion
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'NEOS 0.2.1';
+    return 'NEOS 0.2.2';
 END getVersion;
 
 /*************************************************************************************************
