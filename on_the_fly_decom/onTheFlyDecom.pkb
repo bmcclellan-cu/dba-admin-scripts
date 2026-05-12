@@ -347,7 +347,7 @@ BEGIN
     EXECUTE IMMEDIATE 'TRUNCATE TABLE ONTHEFLYDECOM_ERRORS';
     gblSequence := 1;
     missionSpecificVersion := onTheFlyDecomMissionSpecific.getVersion();
-    logOTFD( 'multimission version: 0.2.4', -1);
+    logOTFD( 'multimission version: 0.2.5', -1);
     logOTFD( 'mission-specific version: ' || missionSpecificVersion, -1);
 END getVersion;
 
@@ -1581,6 +1581,8 @@ IS
     -- Cursors for TMDecom and TelemetryStorageLocation queries.
     tmd_cursor curType;
     tsl_cursor curType;
+
+    telemetry_item_definition_table_name VARCHAR(64);
     
     -- Track the last operation for error logging
     lastOperation VARCHAR2(200);
@@ -1637,7 +1639,8 @@ BEGIN
 
     -- Determine the datatype and check validity. This is static. 
     BEGIN
-        lastOperation := 'SELECT dataType from TelemetryItemDefinition WHERE tlmId = ' || tlmId_in;
+        telemetry_item_definition_table_name := onTheFlyDecomMissionSpecific.getTableName(5, systemId_in);
+        lastOperation := 'SELECT dataType from ' || telemetry_item_definition_table_name || ' WHERE tlmId = ' || tlmId_in;
         logOTFD('selectNumericTlm: ' || lastOperation, 2);
         EXECUTE IMMEDIATE lastOperation
             INTO dataType;
