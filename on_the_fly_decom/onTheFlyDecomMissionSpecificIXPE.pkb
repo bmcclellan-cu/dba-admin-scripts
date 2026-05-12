@@ -66,7 +66,7 @@ FUNCTION getVersion
          RETURN VARCHAR2
 IS
 BEGIN
-    return 'IXPE 0.2.3';
+    return 'IXPE 0.2.4';
 END getVersion;
 
 /*************************************************************************************************
@@ -390,13 +390,13 @@ BEGIN
 
     -- If ASCT is specified, error immediately.
     IF (startASCT_in >= 0 OR stopASCT_in >= 0) THEN
-        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: IXPE Only supports querying by ERT, SCT.', 0);
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: IXPE supports queries by SCT (required); ERT is optional. ASCT was used in the query which is unsupported for IXPE.', 0);
         RETURN 0;
     END IF;
 
     -- Require that SCT is present for all queries.
     IF (startSCT_in < 0 OR stopSCT_in < 0) THEN
-        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: Incomplete query provided. Missing start/stop SCT.', 0);
+        ONTHEFLYDECOM.logOTFD('getDefinitionStartStopTimes: IXPE supports queries by SCT (required); ERT is optional. Missing start/stop SCT.', 0);
         RETURN 0;
     END IF; 
 
