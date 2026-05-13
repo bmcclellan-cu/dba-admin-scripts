@@ -246,9 +246,9 @@ if [ $? -ne 0 ]; then
     exit 1
 elif [ "$temp_undo_enabled" != "TRUE" ]; then
     exit_status=1
-    echo "ERROR: Database parameter 'temp_undo_enabled' must be 'TRUE', currently is '$temp_undo_enabled'. This causes Oracle to write "
-    echo "       undo logs to disk for global temp tables, which causes a massive performance bottleneck for OTFD. Please run the below"
-    echo "       command to update the parameter:"
+    echo "ERROR: Database parameter 'temp_undo_enabled' must be 'TRUE', currently is '$temp_undo_enabled'. Setting this prevents Oracle from "
+    echo "       writing redo/undo logs for Global Temp Tables, and this being unset causes a significant performance bottleneck for OTFD."
+    echo "       Please run the below SQL to update the parameter:"
     echo "           ALTER SYSTEM SET TEMP_UNDO_ENABLED = TRUE scope=both;"
     echo
 fi
