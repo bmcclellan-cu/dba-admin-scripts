@@ -238,12 +238,12 @@ if [ "$update_status" == "Success" ] && { [ "$results_table_check" != "Yes" ] ||
     exit_status=1
     echo "ERROR: $misc_schema.MIGRATION_STATUS reports that the DB is currently on version $db_version, but"
     echo "       ONTHEFLYDECOM_ERRORS and/or ONTHEFLYDECOM_RESULTS are missing. These tables must be created"
-    echo "       for OnTheFlyDecom to function. Exiting..."
+    echo "       for OnTheFlyDecom to function. "
     echo
 elif [ "$update_status" != "Success" ]; then
     exit_status=1
     echo "ERROR: $misc_schema.MIGRATION_STATUS reports that the last update did not succeed (Status=$update_status). "
-    echo "       Please update the database and update $misc_schema.MIGRATION_STATUS once this is completed. Exiting..."
+    echo "       Please update the database and update $misc_schema.MIGRATION_STATUS once this is completed. "
     echo
 fi
 
@@ -255,9 +255,36 @@ otfd_major_v=$(echo "$base_version" | awk -F '.' '{print $2}')
 if [ "$db_major_v" -ne "$otfd_major_v" ]; then
     exit_status=1
     echo "ERROR: Database and software have mismatched major versions. Please update the database or software to prevent compatibility issues."
-    echo "       Update $misc_schema.MIGRATION_STATUS once the database is updated. Exiting..."
-    exit 1
+    echo "       Update $misc_schema.MIGRATION_STATUS once the database is updated."
+    echo
 fi
 
+temp_undo_enabled=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+    whenever oserror exit 1
+    whenever sqlerror exit 1
+
+    set feedback off
+    set heading off
+    set pagesize 0
+    select value from v\$parameter where name = 'temp_undo_enabled';
+EOD
+)
+if [ $? -ne 0 ]; then
+    echo "$temp_undo_enabled"
+    echo "An error occurred while checking 'temp_undo_enabled' parameter. Exiting..."
+    exit 1
+elif [ "$temp_undo_enabled" != "TRUE" ]; then
+    echo "ERROR: Database parameter 'temp_undo_enabled' must be 'TRUE', currently is '$temp_undo_enabled'. This causes Oracle to write "
+    echo "       undo logs to disk for global temp tables, which causes a massive performance bottleneck for OTFD. Please run the below"
+    echo "       command to update the parameter:"
+    echo "           ALTER SYSTEM SET TEMP_UNDO_ENABLED = TRUE scope=both;"
+    echo
+fi
+
+if [ "$exit_status" -ne 0 ]; then
+    echo "One or more errors with OTFD were detected. See above output for more details."
+else
+    echo "Script finished successfully, no errors detected!"
+fi
 
 exit $exit_status
