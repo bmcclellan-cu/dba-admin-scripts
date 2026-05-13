@@ -14,7 +14,7 @@
 # Author: Robert Schmidt
 #
 # Created on: September 11th, 2025
-# Last updated: April 15th, 2026 - RS
+# Last updated: May 13th, 2026 - RS
 ################################################################################
 
 
@@ -43,6 +43,8 @@ elif [ $# -gt 1 ]; then
     exit 1
 fi
 
+exit_status=0
+
 sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I)
 if [ -n "$sid_check" ]; then
     if [ "$sid_check" == "-1" ]; then
@@ -61,7 +63,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Check if ONTHEFLYDECOM_ERRORS and ONTHEFLYDECOM_RESULTS exist.
+# Check if ONTHEFLYDECOM_ERRORS, ONTHEFLYDECOM_RESULTS, and MIGRATION_STATUS tables exist.
 results_table_check=$("$HOME/common/oracle/CheckIfTableExists.sh" "$misc_schema" ONTHEFLYDECOM_RESULTS)
 if [ $? -ne 0 ]; then
     echo "$results_table_check"
@@ -83,6 +85,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# Only check database version if MIGRATION_STATUS table exists.
 if [ "$migration_table_check" == "Yes" ]; then
     # Get the status and version of OTFD DB Tables
     migration_status=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
@@ -227,12 +230,33 @@ if [ -n "$additional_packages_tables" ]; then
     echo
 fi
 
+temp_undo_enabled=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+    whenever oserror exit 1
+    whenever sqlerror exit 1
+
+    set feedback off
+    set heading off
+    set pagesize 0
+    select value from v\$parameter where name = 'temp_undo_enabled';
+EOD
+)
+if [ $? -ne 0 ]; then
+    echo "$temp_undo_enabled"
+    echo "An error occurred while checking 'temp_undo_enabled' parameter. Exiting..."
+    exit 1
+elif [ "$temp_undo_enabled" != "TRUE" ]; then
+    exit_status=1
+    echo "ERROR: Database parameter 'temp_undo_enabled' must be 'TRUE', currently is '$temp_undo_enabled'. This causes Oracle to write "
+    echo "       undo logs to disk for global temp tables, which causes a massive performance bottleneck for OTFD. Please run the below"
+    echo "       command to update the parameter:"
+    echo "           ALTER SYSTEM SET TEMP_UNDO_ENABLED = TRUE scope=both;"
+    echo
+fi
+
 # Only perform validation on MIGRATION_STATUS results if data was returned.
 if [ -z "$migration_status" ]; then
     exit 0
 fi
-
-exit_status=0
 
 if [ "$update_status" == "Success" ] && { [ "$results_table_check" != "Yes" ] || [ "$error_table_check" != "Yes" ]; }; then
     exit_status=1
@@ -256,28 +280,6 @@ if [ "$db_major_v" -ne "$otfd_major_v" ]; then
     exit_status=1
     echo "ERROR: Database and software have mismatched major versions. Please update the database or software to prevent compatibility issues."
     echo "       Update $misc_schema.MIGRATION_STATUS once the database is updated."
-    echo
-fi
-
-temp_undo_enabled=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
-    whenever oserror exit 1
-    whenever sqlerror exit 1
-
-    set feedback off
-    set heading off
-    set pagesize 0
-    select value from v\$parameter where name = 'temp_undo_enabled';
-EOD
-)
-if [ $? -ne 0 ]; then
-    echo "$temp_undo_enabled"
-    echo "An error occurred while checking 'temp_undo_enabled' parameter. Exiting..."
-    exit 1
-elif [ "$temp_undo_enabled" != "TRUE" ]; then
-    echo "ERROR: Database parameter 'temp_undo_enabled' must be 'TRUE', currently is '$temp_undo_enabled'. This causes Oracle to write "
-    echo "       undo logs to disk for global temp tables, which causes a massive performance bottleneck for OTFD. Please run the below"
-    echo "       command to update the parameter:"
-    echo "           ALTER SYSTEM SET TEMP_UNDO_ENABLED = TRUE scope=both;"
     echo
 fi
 
