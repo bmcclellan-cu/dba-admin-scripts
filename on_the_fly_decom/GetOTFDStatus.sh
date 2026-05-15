@@ -107,6 +107,7 @@ EOD
         exit 1
     fi
 
+    # If a record exists in migration_status, extract timestamp, version, and status from it.
     if [ -n "$migration_status" ]; then
         migration_status=$(echo "$migration_status" | tr -d '\n')
         IFS='|' read -r update_timestamp db_version update_status <<< "$migration_status"
@@ -116,11 +117,7 @@ EOD
         else
             update_status_formatted="($update_status)"
         fi
-    else
-        echo "WARNING: No record found in $misc_schema.MIGRATION_STATUS. Using fallback option of reporting table existence."
     fi
-else
-    echo "WARNING: Table $misc_schema.MIGRATION_STATUS does not exist. Using fallback option of reporting table existence."
 fi
 
 # Check that the OTFD packages exist.
@@ -254,33 +251,34 @@ elif [ "$temp_undo_enabled" != "TRUE" ]; then
 fi
 
 # Only perform validation on MIGRATION_STATUS results if data was returned.
-if [ -z "$migration_status" ]; then
-    exit 0
-fi
+if [ -n "$migration_status" ]; then
+    if [ "$update_status" == "Success" ] && { [ "$results_table_check" != "Yes" ] || [ "$error_table_check" != "Yes" ]; }; then
+        exit_status=1
+        echo "ERROR: $misc_schema.MIGRATION_STATUS reports that the DB is currently on version $db_version, but"
+        echo "       ONTHEFLYDECOM_ERRORS and/or ONTHEFLYDECOM_RESULTS are missing. These tables must be created"
+        echo "       for OnTheFlyDecom to function. "
+        echo
+    elif [ "$update_status" != "Success" ]; then
+        exit_status=1
+        echo "ERROR: $misc_schema.MIGRATION_STATUS reports that the last update did not succeed (Status=$update_status). "
+        echo "       Please update the database and update $misc_schema.MIGRATION_STATUS once this is completed. "
+        echo
+    fi
 
-if [ "$update_status" == "Success" ] && { [ "$results_table_check" != "Yes" ] || [ "$error_table_check" != "Yes" ]; }; then
-    exit_status=1
-    echo "ERROR: $misc_schema.MIGRATION_STATUS reports that the DB is currently on version $db_version, but"
-    echo "       ONTHEFLYDECOM_ERRORS and/or ONTHEFLYDECOM_RESULTS are missing. These tables must be created"
-    echo "       for OnTheFlyDecom to function. "
-    echo
-elif [ "$update_status" != "Success" ]; then
-    exit_status=1
-    echo "ERROR: $misc_schema.MIGRATION_STATUS reports that the last update did not succeed (Status=$update_status). "
-    echo "       Please update the database and update $misc_schema.MIGRATION_STATUS once this is completed. "
-    echo
-fi
+    # Check that the major version numbers of the database and the OTFD package match. 
+    # Major version number changes indicate an interface or table change, and should always match
+    db_major_v=$(echo "$db_version" | awk -F '.' '{print $2}')
+    otfd_major_v=$(echo "$base_version" | awk -F '.' '{print $2}')
 
-# Check that the major version numbers of the database and the OTFD package match. 
-# Major version number changes indicate an interface or table change, and should always match
-db_major_v=$(echo "$db_version" | awk -F '.' '{print $2}')
-otfd_major_v=$(echo "$base_version" | awk -F '.' '{print $2}')
-
-if [ "$db_major_v" -ne "$otfd_major_v" ]; then
-    exit_status=1
-    echo "ERROR: Database and software have mismatched major versions. Please update the database or software to prevent compatibility issues."
-    echo "       Update $misc_schema.MIGRATION_STATUS once the database is updated."
-    echo
+    if [ "$db_major_v" -ne "$otfd_major_v" ]; then
+        exit_status=1
+        echo "ERROR: Database and software have mismatched major versions. Please update the database or software to prevent compatibility issues."
+        echo "       Update $misc_schema.MIGRATION_STATUS once the database is updated."
+        echo
+    fi
+else
+    echo "WARNING: Unable to determine database version from $misc_schema.MIGRATION_STATUS. Either $misc_schema.MIGRATION_STATUS"
+    echo "         does not exist or has no rows. Skipping database version validation."
 fi
 
 if [ "$exit_status" -ne 0 ]; then
