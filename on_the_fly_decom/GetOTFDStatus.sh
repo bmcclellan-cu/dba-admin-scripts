@@ -43,7 +43,7 @@ elif [ $# -gt 1 ]; then
     exit 1
 fi
 
-exit_status=0
+database_status=0
 
 sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I)
 if [ -n "$sid_check" ]; then
@@ -242,7 +242,7 @@ if [ $? -ne 0 ]; then
     echo "An error occurred while checking 'temp_undo_enabled' parameter. Exiting..."
     exit 1
 elif [ "$temp_undo_enabled" != "TRUE" ]; then
-    exit_status=1
+    database_status=1
     echo "ERROR: Database parameter 'temp_undo_enabled' must be 'TRUE', currently is '$temp_undo_enabled'. Setting this prevents Oracle from "
     echo "       writing redo/undo logs for Global Temp Tables, and this being unset causes a significant performance bottleneck for OTFD."
     echo "       Please run the below SQL to update the parameter:"
@@ -253,13 +253,13 @@ fi
 # Only perform validation on MIGRATION_STATUS results if data was returned.
 if [ -n "$migration_status" ]; then
     if [ "$update_status" == "Success" ] && { [ "$results_table_check" != "Yes" ] || [ "$error_table_check" != "Yes" ]; }; then
-        exit_status=1
+        database_status=1
         echo "ERROR: $misc_schema.MIGRATION_STATUS reports that the DB is currently on version $db_version, but"
         echo "       ONTHEFLYDECOM_ERRORS and/or ONTHEFLYDECOM_RESULTS are missing. These tables must be created"
         echo "       for OnTheFlyDecom to function. "
         echo
     elif [ "$update_status" != "Success" ]; then
-        exit_status=1
+        database_status=1
         echo "ERROR: $misc_schema.MIGRATION_STATUS reports that the last update did not succeed (Status=$update_status). "
         echo "       Please update the database and update $misc_schema.MIGRATION_STATUS once this is completed. "
         echo
@@ -270,8 +270,9 @@ if [ -n "$migration_status" ]; then
     db_major_v=$(echo "$db_version" | awk -F '.' '{print $2}')
     otfd_major_v=$(echo "$base_version" | awk -F '.' '{print $2}')
 
-    if [ "$db_major_v" -ne "$otfd_major_v" ]; then
-        exit_status=1
+    # Only validate database version if package successfully loaded.
+    if [ "$base_version" != "Compilation Error" ] && [ "$base_version" != "Not Loaded" ] && [ "$db_major_v" -ne "$otfd_major_v" ]; then
+        database_status=1
         echo "ERROR: Database and software have mismatched major versions. Please update the database or software to prevent compatibility issues."
         echo "       Update $misc_schema.MIGRATION_STATUS once the database is updated."
         echo
@@ -281,10 +282,8 @@ else
     echo "         does not exist or has no rows. Skipping database version validation."
 fi
 
-if [ "$exit_status" -ne 0 ]; then
-    echo "One or more errors with OTFD were detected. See above output for more details."
-else
-    echo "Script finished successfully, no errors detected!"
+if [ "$database_status" -ne 0 ]; then
+    echo "One or more OTFD database anomalies were detected. See above output for more details."
 fi
 
-exit $exit_status
+exit 0
