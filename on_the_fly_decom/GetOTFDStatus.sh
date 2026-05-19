@@ -290,6 +290,7 @@ fi
 
 if [ "$database_status" -ne 0 ]; then
     echo "One or more OTFD database anomalies were detected. See above output for more details."
+    exit 1
 fi
 
 exit 0
