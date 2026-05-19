@@ -161,6 +161,7 @@ EOD
     if [[ $package_versions == *"ORA-04063"* ]]; then
         base_version="Compilation Error" # Compilation error, package inaccessible
         mission_version="Compilation Error"
+        database_status=1
     elif [ $error_code -ne 0 ]; then
         echo "$package_versions"
         echo "An error occurred while checking version of base OTFD package. Exiting..."
@@ -176,9 +177,11 @@ fi
 
 if [ "$base_package_check" != "Yes" ]; then
     base_version="Not Loaded"
+    database_status=1
 fi
 if [ "$mission_package_check" != "Yes" ]; then
     mission_version="Not Loaded"
+    database_status=1
 fi
 
 if [ -n "$migration_status" ]; then
@@ -189,12 +192,14 @@ else
         echo "ONTHEFLYDECOM_RESULTS:    Exists"
     else
         echo "ONTHEFLYDECOM_RESULTS:    Does Not Exist"
+        database_status=1
     fi
 
     if [ "$error_table_check" == "Yes" ]; then
         echo "ONTHEFLYDECOM_ERRORS:     Exists"
     else
         echo "ONTHEFLYDECOM_ERRORS:     Does Not Exist"
+        database_status=1
     fi
 fi
 echo "Base OTFD Package:        $base_version"
@@ -221,6 +226,7 @@ if [ $? -ne 0 ]; then
 fi
 
 if [ -n "$additional_packages_tables" ]; then
+    database_status=1
     echo
     echo "WARNING: The ONTHEFLYDECOM Package and/or ONTHEFLYDECOM tables were found outside of the MISC schema. Tables and Packages are listed below: "
     echo "$additional_packages_tables"
