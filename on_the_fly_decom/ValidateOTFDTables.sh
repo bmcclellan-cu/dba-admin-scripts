@@ -4,7 +4,7 @@
 #           between tables.
 # 
 # Checks:   
-#           - packet_size: Checks if any of the packets in L0_Packets will be too small
+#           - packet_length: Checks if any of the packets in L0_Packets will be too small
 #                          to be decommuted by their corresponding TMDecom map. 
 #                          WARNING: This test requires an almost full scan of the L0_Packets table
 #                          and may take a long time to complete.
@@ -16,9 +16,6 @@
 # 
 #           - tsl_l0_tmdecom: Checks that TSL entries pointing to L0 also have corresponding TMDecom 
 #                             rows.
-# 
-#           - tsl_inaccessible_packets: Checks if any packets exist that will not be accessible by OTFD due to 
-#                                       the value of DEFINITIONSTART.
 # 
 #           - tmdecom_l0_tsl: Checks that, for every TMDecom entry, there is a tsl entry with isInL0 set to 1.
 #                             If this is not the case, the TMDecom entry will be unused by OTFD.
@@ -113,24 +110,19 @@ if [[ "$ORACLE_SID" == "ixpe"* ]]; then
     tsl_name="$misc_schema.TelemetryStorageLocation"
     l0_packets_name="IXPE_L0.L0_Packets_SID$system_id"
     decom_id="APID"
-    sid_id="SYSTEMID"
-    time_id="SCT_VTCW"
+    sid_clause=" AND SYSTEMID=$system_id"
 elif [[ "$ORACLE_SID" == "ema"* ]]; then
     padded_sid=$(printf %02d "$system_id")
     tmdecom_name="EMA_SCHEMA$padded_sid.TMDecom"
     tsl_name="EMA_SCHEMA$padded_sid.TelemetryStorageLocation"
     l0_packets_name="EMA_SCHEMA$padded_sid.L0_Packets"
     decom_id="DMID"
-    sid_id="$system_id"
-    time_id="ASCT"
 elif [[ "$ORACLE_SID" == "neos"* ]]; then
     padded_sid=$(printf %02d "$system_id")
     tmdecom_name="NEOS_SCHEMA$padded_sid.TMDecom"
     tsl_name="NEOS_SCHEMA$padded_sid.TelemetryStorageLocation"
     l0_packets_name="NEOS_SCHEMA$padded_sid.L0_Packets"
     decom_id="DMID"
-    sid_id="$system_id"
-    time_id="ERT"
 else
     echo "ERROR: Database $ORACLE_SID is not supported by OnTheFlyDecom (supported: ixpe*,ema*,neos*). Exiting..."
     exit 1
@@ -148,9 +140,9 @@ declare -A TEST_DESCRIPTION
 
 # Check for invalid TMDecom entries (LENGTH > 64)
 TEST_SQL[length_gt_64]=$(cat <<SQL
-    SELECT '    TLMID ' || tlmid || ' (' || '${decom_id}' || ' ' || ${decom_id} || '): Decom map length ' || length || ' exceeds 64 bits.'
+    SELECT '    TLMID ' || tlmid || ' (' || '${decom_id}' || ' ' || ${decom_id} || ', SID=$system_id): Decom map length ' || length || ' exceeds 64 bits.'
     FROM ${tmdecom_name}
-    WHERE length > 64
+    WHERE length > 64 $sid_clause
     GROUP BY tlmid, ${decom_id}, length
     ORDER BY tlmid, ${decom_id};
 SQL
@@ -160,7 +152,7 @@ TEST_DESCRIPTION[length_gt_64]="Checks if any entries in TMDecom have LENGTH val
 # Scan L0_Packets for packets that are not long enough. 
 # TODO: Take into account time-variant TMDecom entries.
 TEST_SQL[packet_length]=$(cat <<SQL
-    SELECT '    TLMID ' || d.TLMID || ' (${decom_id} ' || d.${decom_id} || 
+    SELECT '    TLMID ' || d.TLMID || ' (${decom_id} ' || d.${decom_id} || ', SID=$system_id' ||
     '): Datatype=' || t.DATATYPE || ', Startbit=' || d.STARTBIT || ', Length=' || d.LENGTH || 
     ' out of range of min packet length ' || min(p.LENGTH * 8) || '. Max packet length is ' || max(p.LENGTH * 8)
     FROM (
@@ -168,7 +160,7 @@ TEST_SQL[packet_length]=$(cat <<SQL
         JOIN ${l0_packets_name} p ON p.${decom_id} = d.${decom_id}
     ) 
     LEFT JOIN ${telemetry_item_definition_name} t ON t.TLMID=d.TLMID
-    WHERE p.LENGTH * 8 < (d.STARTBIT + d.LENGTH)
+    WHERE p.LENGTH * 8 < (d.STARTBIT + d.LENGTH) $sid_clause
     GROUP BY d.tlmid, d.${decom_id}, d.STARTBIT, d.LENGTH, t.DATATYPE
     ORDER BY d.tlmid, d.${decom_id};
 SQL
@@ -183,13 +175,13 @@ WARNING: This test requires a full scan of the L0_Packets table. This may take s
 
 # Check that every TSL row with isInL0=1 has a corresponding TMDecom row (tlmid + dmid foreign key)
 TEST_SQL[tsl_l0_tmdecom]=$(cat <<SQL
-    SELECT '        TLMID ' || TLMID || '($decom_id ' || $decom_id || '): TSL Entry (DefinitionStart=' || DEFINITIONSTART || 
-    ', SID=' || $sid_id || ', isInL0=1) No matching TMDecom entry found for L0 TSL Entry.'
+    SELECT '        TLMID ' || TLMID || '($decom_id ' || $decom_id || ', SID=$system_id): TSL Entry (DefinitionStart=' || DEFINITIONSTART || 
+    ', SID=$system_id' || ', isInL0=1) No matching TMDecom entry found for L0 TSL Entry.'
     FROM
     $tsl_name tsl
     WHERE isInL0=1 AND NOT EXISTS (
         SELECT 1 FROM $tmdecom_name tmd WHERE tmd.TLMID=tsl.TLMID AND tmd.$decom_id=tsl.$decom_id AND tmd.DEFINITIONSTART <= tsl.DEFINITIONSTART
-    );
+    ) $sid_clause;
 SQL
 )
 TEST_DESCRIPTION[tsl_l0_tmdecom]="Checks for TSL (TelemetryStorageLocation) entries with isInL0=1 without corresponding TMDecom rows (rows that
@@ -199,14 +191,14 @@ that TLMID."
 
 # Check that every TMDecom row has a corresponding TSL row with isInL0=1 (tlmid + dmid foreign key)
 TEST_SQL[tmdecom_l0_tsl]=$(cat <<SQL
-    SELECT '        TLMID ' || TLMID || '($decom_id ' || $decom_id || '): TMDecom Entry (DefinitionStart=' || DEFINITIONSTART || 
-    ', SID=' || $sid_id || ') No matching L0 TSL Entry found for TMDecom row.'
+    SELECT '        TLMID ' || TLMID || '($decom_id ' || $decom_id || ', SID=$system_id): TMDecom Entry (DefinitionStart=' || DEFINITIONSTART || 
+    ', SID=$system_id) No matching L0 TSL Entry found for TMDecom row.'
     FROM
     $tmdecom_name tmd
     WHERE NOT EXISTS (
         SELECT 1 FROM $tsl_name tsl WHERE 
         tsl.TLMID=tmd.TLMID AND tsl.$decom_id=tmd.$decom_id AND tsl.DEFINITIONSTART <= tmd.DEFINITIONSTART AND tsl.isInL0=1
-    );
+    ) $sid_clause;
 SQL
 )
 TEST_DESCRIPTION[tsl_l0_tmdecom]="Checks for TMDecom entries without corresponding TSL (TelemetryStorageLocation) rows (rows that
