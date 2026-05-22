@@ -1,25 +1,50 @@
 #!/bin/bash
 #
-# Purpose: Validates TMDecom entries against L0_Packets for OTFD compliance.
-#          Warns when startbit+length exceeds packet length and fails when
-#          TMDecom length exceeds 64 bits.
+# Purpose:  Validates OTFD Metadata tables for invalid data or inconsistencies
+#           between tables.
+# 
+# Checks:   
+#           - packet_size: Checks if any of the packets in L0_Packets will be too small
+#                          to be decommuted by their corresponding TMDecom map. 
+#                          WARNING: This test requires an almost full scan of the L0_Packets table
+#                          and may take a long time to complete.
+# 
+#                          TODO: This test does not currently take into account time-varying TSL rows.
+# 
+#           - length_gt_64: Checks that none of the individual telemetry items in TMDecom indicates
+#                           a length greater than 64 bits, as this will cause OTFD to fail.
+# 
+#           - tsl_l0_tmdecom: Checks that TSL entries pointing to L0 also have corresponding TMDecom 
+#                             rows.
+# 
+#           - tsl_inaccessible_packets: Checks if any packets exist that will not be accessible by OTFD due to 
+#                                       the value of DEFINITIONSTART.
+# 
+#           - tmdecom_l0_tsl: Checks that, for every TMDecom entry, there is a tsl entry with isInL0 set to 1.
+#                             If this is not the case, the TMDecom entry will be unused by OTFD.
 #
-# Author: Greyson Hall
+# Author: Robert Schmidt
 #
-# Created on: May 21, 2026
+# Created on: May 21st, 2026
+# Last Modified: May 22nd, 2026 - RS
 ##########################################################################
 
-usage="Usage: ./ValidateOTFDTables.sh <system_id> <ORACLE_SID>"
+usage="Usage: ./ValidateOTFDTables.sh [ -d (optional, dryrun tests) ] [ system_id ] [ ORACLE_SID ] [ tests_list (csv of tests to run, see header or check -d option) ]"
 example="Example: ./ValidateOTFDTables.sh 19 emadev"
 
 # Process input options
-while getopts ":h" option; do
+dryrun=0
+
+while getopts ":hd" option; do
 	case $option in
 	h)
 		echo "$usage"
 		echo "$example"
 		exit 0
 		;;
+    d)
+        dryrun=1
+        ;;
 	\?)
 		echo "Error: Invalid option"
 		exit 1
@@ -30,7 +55,7 @@ done
 shift $((OPTIND - 1))
 
 # Check arguments
-if [ $# -lt 2 ]; then
+if [ $# -ne 2 ] && [ $# -ne 3 ]; then
 	echo "$usage"
 	echo "$example"
 	exit 1
@@ -38,6 +63,7 @@ fi
 
 system_id="$1"
 export ORACLE_SID="${2,,}"
+tests_list="$3"
 
 if ! [[ "$system_id" =~ ^[0-9]+$ ]]; then
 	echo "Error: system_id must be a number. Exiting..."
@@ -80,96 +106,179 @@ if [ $? -ne 0 ] || [ -z "$ct_schema" ]; then
 	exit 1
 fi
 
-if [ "$ORACLE_SID" == "ixpeprod" ]; then
+# TODO: None of this will work for IXPE!
+
+if [[ "$ORACLE_SID" == "ixpe"* ]]; then
     tmdecom_name="$misc_schema.TMDecom"
+    tsl_name="$misc_schema.TelemetryStorageLocation"
     l0_packets_name="IXPE_L0.L0_Packets_SID$system_id"
-    decom_identifier="APID"
-elif [ "$ORACLE_SID" == "emadev" ]; then
+    decom_id="APID"
+    sid_id="SYSTEMID"
+    time_id="SCT_VTCW"
+elif [[ "$ORACLE_SID" == "ema"* ]]; then
     padded_sid=$(printf %02d "$system_id")
     tmdecom_name="EMA_SCHEMA$padded_sid.TMDecom"
+    tsl_name="EMA_SCHEMA$padded_sid.TelemetryStorageLocation"
     l0_packets_name="EMA_SCHEMA$padded_sid.L0_Packets"
-    decom_identifier="DMID"
-elif [ "$ORACLE_SID" == "neosd19" ]; then
+    decom_id="DMID"
+    sid_id="$system_id"
+    time_id="ASCT"
+elif [[ "$ORACLE_SID" == "neos"* ]]; then
     padded_sid=$(printf %02d "$system_id")
     tmdecom_name="NEOS_SCHEMA$padded_sid.TMDecom"
+    tsl_name="NEOS_SCHEMA$padded_sid.TelemetryStorageLocation"
     l0_packets_name="NEOS_SCHEMA$padded_sid.L0_Packets"
-    decom_identifier="DMID"
+    decom_id="DMID"
+    sid_id="$system_id"
+    time_id="ERT"
 else
-    echo "ERROR: Database $ORACLE_SID is not supported by OnTheFlyDecom (supported: ixpeprod,emadev,neosd19). Exiting..."
+    echo "ERROR: Database $ORACLE_SID is not supported by OnTheFlyDecom (supported: ixpe*,ema*,neos*). Exiting..."
     exit 1
 fi
 
-length_gt_64_check=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
-    whenever oserror exit 1
-    whenever sqlerror exit 1
-    set heading off
-    set feedback off
-    set pagesize 0
-    set linesize 200
+telemetry_item_definition_name="$ct_schema.TelemetryItemDefinition"
 
-    SELECT tlmid || '|' || $decom_identifier || '|' || length
-    FROM $tmdecom_name
+# The SQL in the tess defined below are all intended to be queries that return table anomalies. As such, if no rows are
+# returned, the test succeeds, if any data is returned, the test fails.
+
+exit_status=0
+
+declare -A TEST_SQL
+declare -A TEST_DESCRIPTION
+
+# Check for invalid TMDecom entries (LENGTH > 64)
+TEST_SQL[length_gt_64]=$(cat <<SQL
+    SELECT '    TLMID ' || tlmid || ' (' || '${decom_id}' || ' ' || ${decom_id} || '): Decom map length ' || length || ' exceeds 64 bits.'
+    FROM ${tmdecom_name}
     WHERE length > 64
-    GROUP BY tlmid, $decom_identifier, length
-    ORDER BY tlmid, $decom_identifier;
-EOD
+    GROUP BY tlmid, ${decom_id}, length
+    ORDER BY tlmid, ${decom_id};
+SQL
 )
-if [ $? -ne 0 ]; then
-    echo "$length_gt_64_check"
-    echo "An error occurred while checking if any decom maps contained LENGTH > 64. Exiting..."
-    exit 1
-fi
+TEST_DESCRIPTION[length_gt_64]="Checks if any entries in TMDecom have LENGTH values greater than 64 bits, as such decom maps will cause OTFD to fail."
 
-if [ -n "$length_gt_64_check" ]; then
-    echo "FAILURE:  TMDecom Length Validation Failed:"
-    echo "          TMDecom length values must be <= 64 bits. See below summary of affected TLMIDs:"
-				
-    while IFS= read -r line; do
-        IFS='|' read -r tlmid dmid length <<< "$line"
-        echo "    TLMID $tlmid ($decom_identifier $dmid): Decom map length $length exceeds 64 bits."
-    done <<< "$length_gt_64_check"
+# Scan L0_Packets for packets that are not long enough. 
+# TODO: Take into account time-variant TMDecom entries.
+TEST_SQL[packet_length]=$(cat <<SQL
+    SELECT '    TLMID ' || d.TLMID || ' (${decom_id} ' || d.${decom_id} || 
+    '): Datatype=' || t.DATATYPE || ', Startbit=' || d.STARTBIT || ', Length=' || d.LENGTH || 
+    ' out of range of min packet length ' || min(p.LENGTH * 8) || '. Max packet length is ' || max(p.LENGTH * 8)
+    FROM (
+        ${tmdecom_name} d
+        JOIN ${l0_packets_name} p ON p.${decom_id} = d.${decom_id}
+    ) 
+    LEFT JOIN ${telemetry_item_definition_name} t ON t.TLMID=d.TLMID
+    WHERE p.LENGTH * 8 < (d.STARTBIT + d.LENGTH)
+    GROUP BY d.tlmid, d.${decom_id}, d.STARTBIT, d.LENGTH, t.DATATYPE
+    ORDER BY d.tlmid, d.${decom_id};
+SQL
+)
+TEST_DESCRIPTION[packet_length]="Checks if any of the packets in L0_Packets will be too small to be decommuted by their corresponding TMDecom map. 
+Test failure indicates one of the following:
+    1. The STARTBIT column for the TMDecom entry is to large.
+    2. The LENGTH column for the TMDecom entry is too large.
+    3. One or more of the packets in L0_Packets for that DMID is too small.
+
+WARNING: This test requires a full scan of the L0_Packets table. This may take some time to complete"
+
+# Check that every TSL row with isInL0=1 has a corresponding TMDecom row (tlmid + dmid foreign key)
+TEST_SQL[tsl_l0_tmdecom]=$(cat <<SQL
+    SELECT '        TLMID ' || TLMID || '($decom_id ' || $decom_id || '): TSL Entry (DefinitionStart=' || DEFINITIONSTART || 
+    ', SID=' || $sid_id || ', isInL0=1) No matching TMDecom entry found for L0 TSL Entry.'
+    FROM
+    $tsl_name tsl
+    WHERE isInL0=1 AND NOT EXISTS (
+        SELECT 1 FROM $tmdecom_name tmd WHERE tmd.TLMID=tsl.TLMID AND tmd.$decom_id=tsl.$decom_id AND tmd.DEFINITIONSTART <= tsl.DEFINITIONSTART
+    );
+SQL
+)
+TEST_DESCRIPTION[tsl_l0_tmdecom]="Checks for TSL (TelemetryStorageLocation) entries with isInL0=1 without corresponding TMDecom rows (rows that
+come into effect at the same time or before the TSL entry). If such a row is not present, then OTFD will not return data for
+that TLMID."
+
+
+# Check that every TMDecom row has a corresponding TSL row with isInL0=1 (tlmid + dmid foreign key)
+TEST_SQL[tmdecom_l0_tsl]=$(cat <<SQL
+    SELECT '        TLMID ' || TLMID || '($decom_id ' || $decom_id || '): TMDecom Entry (DefinitionStart=' || DEFINITIONSTART || 
+    ', SID=' || $sid_id || ') No matching L0 TSL Entry found for TMDecom row.'
+    FROM
+    $tmdecom_name tmd
+    WHERE NOT EXISTS (
+        SELECT 1 FROM $tsl_name tsl WHERE 
+        tsl.TLMID=tmd.TLMID AND tsl.$decom_id=tmd.$decom_id AND tsl.DEFINITIONSTART <= tmd.DEFINITIONSTART AND tsl.isInL0=1
+    );
+SQL
+)
+TEST_DESCRIPTION[tsl_l0_tmdecom]="Checks for TMDecom entries without corresponding TSL (TelemetryStorageLocation) rows (rows that
+come into effect at the same time or before the TMDecom entry). If such a row is not present, then OTFD will never access the TMDecom
+entry and will never utilize that decom map."
+
+
+# Check that inputted tests actually correspond to known tests. If no input was given, run all tests.
+declare -a tests_to_run
+if [ -n "$tests_list" ]; then
+    IFS=',' read -r -a tests_to_run <<< "$tests_list"
+    for test_name in "${tests_to_run[@]}"; do
+        if [ -z "${TEST_SQL[$test_name]}" ]; then
+            echo "Test $test_name does not exist. Exiting..."
+            exit 1
+        fi
+    done
+    unset IFS
 else
-    echo "SUCCESS: No decom maps with length > 64 bits."
+    tests_to_run=("${!TEST_SQL[@]}")
 fi
 
-echo "Scanning all packets for packets that are too small for OTFD decom maps. This may take some time..."
 
-packet_length_check=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+for test_name in "${tests_to_run[@]}"; do
+    echo "Running test $test_name."
+    echo "${TEST_DESCRIPTION[$test_name]}"
+    echo
+
+    if [ "$dryrun" -eq 1 ]; then
+        echo "DRYRUN: Query for test $test_name:"
+        echo "${TEST_SQL[$test_name]}"
+        echo
+        continue
+    fi
+
+    test_output=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
     whenever oserror exit 1
     whenever sqlerror exit 1
     set heading off
     set feedback off
     set pagesize 0
-    set linesize 200
+    set linesize 2000
 
-    SELECT d.tlmid || '|' || d.$decom_identifier || '|' || d.startbit || '|' || d.length || '|' || min(p.length) || '|' || count(*)
-    FROM $tmdecom_name d
-    JOIN $l0_packets_name p
-    ON p.$decom_identifier = d.$decom_identifier
-    WHERE p.length < (d.startbit + d.length)
-    GROUP BY d.tlmid, d.$decom_identifier, d.startbit, d.length
-    ORDER BY d.tlmid, d.$decom_identifier;
+    ${TEST_SQL[$test_name]}
 EOD
-)
-if [ $? -ne 0 ]; then
-    echo "$packet_length_check"
-    echo "An error occurred while checking if any packets are too small for their respective decom maps. Exiting..."
+    )
+
+    if [ $? -ne 0 ]; then
+        exit_status=1
+        echo "$test_output"
+        echo "An error occurred while running test $test_name. See error output and test description above. Continuing to next test..."
+    fi
+
+    if [ -n "$test_output" ]; then
+        exit_status=1
+        echo "$test_output"
+        echo "FAILURE: Test $test_name returned one or more anomalies, see test output and description above. Continuing to next test..."
+    else
+        echo "SUCCESS: Test $test_name found no anomalies. Continuing to next test..."
+    fi
+    echo
+done
+
+if [ "$dryrun" -eq 1 ]; then
+    echo "Dryrun completed successfully, no queries executed. Exiting..."
+    exit 0
+fi
+
+if [ "$exit_status" -ne 0 ]; then
+    echo "One or more tests failed/errored, please see above output for more details. Exiting..."
     exit 1
-fi
-
-
-if [ -n "$packet_length_check" ]; then
-    echo "WARNING: Packet Length Validation Failed:"
-    echo "      This violation will not cause OTFD to fail outright, but OTFD will skip packets that do not comply. "
-    echo "      Please validate that no invalid TMDecom entries or corrupt packets are present."
-
-
-    while IFS= read -r line; do
-        IFS='|' read -r tlmid dmid startbit length min_packet_length packets_affected <<< "$line"
-        echo "    TLMID $tlmid ($decom_identifier $dmid): Startbit $startbit and length $length out of range of min packet length $min_packet_length. $packets_affected packets affected."
-    done <<< "$packet_length_check"
 else
-    echo "SUCCESS: No out-of-range decom maps found."
+    echo "Script completed successfully, no anomalies or errors encountered. Exiting..."
+    exit 0
 fi
-
-echo "Script completed!"
