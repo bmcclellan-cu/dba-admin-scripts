@@ -3,13 +3,16 @@
 # Purpose:  Validates OTFD Metadata tables for invalid data or inconsistencies
 #           between tables.
 # 
+# Notes:    This script does not validate system_id or OTFD version, as that would require repeatedly updating
+#           this script with a hardcoded set of values, as OTFD does not have an API to validate 
+#           SID alone. If the calls to getTableName or getDecomIdentifier fail, it is most likely due to 
+#           a mismatch in one of these values.
+# 
 # Checks:   
 #           - packet_length: Checks if any of the packets in L0_Packets will be too small
 #                          to be decommuted by their corresponding TMDecom map. 
 #                          WARNING: This test requires an almost full scan of the L0_Packets table
 #                          and may take a long time to complete.
-# 
-#                          TODO: This test does not currently take into account time-varying TSL rows.
 # 
 #           - length_gt_64: Checks that none of the individual telemetry items in TMDecom indicates
 #                           a length greater than 64 bits, as this will cause OTFD to fail.
@@ -19,6 +22,7 @@
 # 
 #           - tmdecom_l0_tsl: Checks that, for every TMDecom entry, there is a tsl entry with isInL0 set to 1.
 #                             If this is not the case, the TMDecom entry will be unused by OTFD.
+# 
 #
 # Author: Robert Schmidt
 #
@@ -103,26 +107,71 @@ if [ $? -ne 0 ] || [ -z "$ct_schema" ]; then
 	exit 1
 fi
 
-# TODO: None of this will work for IXPE!
+# Call getTableName to get the correct table names. Type_in maps to tables as follows:
+#  0 -> L0_Packets
+#  3 -> TelemetryStorageLocation
+#  4 -> TMDecom
+#  5 -> TelemetryItemDefinition
+tableNames=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+    whenever sqlerror exit 1
+    whenever oserror exit 1
+    set heading off feedback off
+    set serveroutput on
 
+    BEGIN
+        DBMS_OUTPUT.PUT_LINE($misc_schema.onTheFlyDecomMissionSpecific.getTableName(type_in => 0, systemId_in => $system_id));
+        DBMS_OUTPUT.PUT_LINE($misc_schema.onTheFlyDecomMissionSpecific.getTableName(type_in => 3, systemId_in => $system_id));
+        DBMS_OUTPUT.PUT_LINE($misc_schema.onTheFlyDecomMissionSpecific.getTableName(type_in => 4, systemId_in => $system_id));
+        DBMS_OUTPUT.PUT_LINE($misc_schema.onTheFlyDecomMissionSpecific.getTableName(type_in => 5, systemId_in => $system_id));
+    END;
+    /
+EOD
+)
+if [ $? -ne 0 ]; then
+    echo "$tableNames"
+    echo "An error occurred while querying OTFD for table names. Ensure that you are validating a system_id OTFD supports and that OTFD is updated to the latest version. Exiting..."
+    exit 1
+fi
+
+# Compact all whitespace so table names are space-delimited then split into variables
+tableNames=$(echo "$tableNames" | xargs)
+read -r l0_packets_name tsl_name tmdecom_name telemetry_item_definition_name <<< "$tableNames"
+
+# Call getDecomIdentifier to get the decom identifier for the database
+decom_id=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+    whenever sqlerror exit 1
+    whenever oserror exit 1
+    set heading off feedback off
+
+    set serveroutput on
+
+    BEGIN
+        DBMS_OUTPUT.PUT_LINE($misc_schema.onTheFlyDecomMissionSpecific.getDecomIdentifier());
+    END;
+    /
+EOD
+)
+if [ $? -ne 0 ]; then
+    echo "$decom_id"
+    echo "An error occurred while querying OTFD for the decom identifier. Ensure that you are validating a system_id OTFD supports and that OTFD is updated to the latest version. Exiting..."
+    exit 1
+fi
+
+# Trim whitespace
+decom_id=$(echo "$decom_id" | xargs)
+
+# Cannot call getDefinitionStartStopTimes due to requiring a timestamp input, which will vary between databases.
+# Hardcoding definition_time_column into if statement. Additionally, only specify SID for ixpe.
+sid_clause=""
+tmd_systemid_select_partition=""
 if [[ "$ORACLE_SID" == "ixpe"* ]]; then
-    tmdecom_name="$misc_schema.TMDecom"
-    tsl_name="$misc_schema.TelemetryStorageLocation"
-    l0_packets_name="IXPE_L0.L0_Packets_SID$system_id"
-    decom_id="APID"
+    definition_time_column="ERT"
     sid_clause=" AND SYSTEMID=$system_id"
+    tmd_systemid_select_partition=", SYSTEMID"
 elif [[ "$ORACLE_SID" == "ema"* ]]; then
-    padded_sid=$(printf %02d "$system_id")
-    tmdecom_name="EMA_SCHEMA$padded_sid.TMDecom"
-    tsl_name="EMA_SCHEMA$padded_sid.TelemetryStorageLocation"
-    l0_packets_name="EMA_SCHEMA$padded_sid.L0_Packets"
-    decom_id="DMID"
+    definition_time_column="ASCT"
 elif [[ "$ORACLE_SID" == "neos"* ]]; then
-    padded_sid=$(printf %02d "$system_id")
-    tmdecom_name="NEOS_SCHEMA$padded_sid.TMDecom"
-    tsl_name="NEOS_SCHEMA$padded_sid.TelemetryStorageLocation"
-    l0_packets_name="NEOS_SCHEMA$padded_sid.L0_Packets"
-    decom_id="DMID"
+    definition_time_column="ERT"
 else
     echo "ERROR: Database $ORACLE_SID is not supported by OnTheFlyDecom (supported: ixpe*,ema*,neos*). Exiting..."
     exit 1
@@ -149,17 +198,35 @@ SQL
 )
 TEST_DESCRIPTION[length_gt_64]="Checks if any entries in TMDecom have LENGTH values greater than 64 bits, as such decom maps will cause OTFD to fail."
 
-# Scan L0_Packets for packets that are not long enough. 
-# TODO: Take into account time-variant TMDecom entries.
+# Scan L0_Packets for packets that are not long enough, accounting for time-variant TMDecom entries.
 TEST_SQL[packet_length]=$(cat <<SQL
-    SELECT '    TLMID ' || d.TLMID || ' (${decom_id} ' || d.${decom_id} || ', SID=$system_id' ||
+    WITH tmdecom_with_ranges AS (
+        -- Compute validity windows for each decom map using the next DEFINITIONSTART.
+        SELECT
+            TLMID,
+            ${decom_id},
+            STARTBIT,
+            LENGTH,
+            DEFINITIONSTART${tmd_systemid_select_partition},
+            LEAD(DEFINITIONSTART) OVER (
+                PARTITION BY TLMID, ${decom_id} ${tmd_systemid_select_partition}
+                ORDER BY DEFINITIONSTART ASC
+            ) AS DEFINITIONSTOP
+        FROM ${tmdecom_name}
+        WHERE 1=1 $sid_clause
+    )
+    SELECT /*+ PARALLEL */ '    TLMID ' || d.TLMID || ' (${decom_id} ' || d.${decom_id} || ', SID=$system_id' ||
     '): Datatype=' || t.DATATYPE || ', Startbit=' || d.STARTBIT || ', Length=' || d.LENGTH || 
     ' out of range of min packet length ' || min(p.LENGTH * 8) || '. Max packet length is ' || max(p.LENGTH * 8)
     FROM (
-        ${tmdecom_name} d
+        tmdecom_with_ranges d
         JOIN ${l0_packets_name} p ON p.${decom_id} = d.${decom_id}
-    ) 
+            -- Join packets only to decom maps valid at the packet timestamp.
+            AND p.${definition_time_column} >= d.DEFINITIONSTART
+            AND (d.DEFINITIONSTOP IS NULL OR p.${definition_time_column} < d.DEFINITIONSTOP)
+    )
     LEFT JOIN ${telemetry_item_definition_name} t ON t.TLMID=d.TLMID
+    -- Flag packets too small to contain the decom map definition.
     WHERE p.LENGTH * 8 < (d.STARTBIT + d.LENGTH) $sid_clause
     GROUP BY d.tlmid, d.${decom_id}, d.STARTBIT, d.LENGTH, t.DATATYPE
     ORDER BY d.tlmid, d.${decom_id};
@@ -185,8 +252,8 @@ TEST_SQL[tsl_l0_tmdecom]=$(cat <<SQL
 SQL
 )
 TEST_DESCRIPTION[tsl_l0_tmdecom]="Checks for TSL (TelemetryStorageLocation) entries with isInL0=1 without corresponding TMDecom rows (rows that
-come into effect at the same time or before the TSL entry). If such a row is not present, then OTFD will not return data for
-that TLMID."
+come into effect at the same time or before the TSL entry). If such a row is not present, then OTFD will not return data for that TLMID until such
+a row comes into effect."
 
 
 # Check that every TMDecom row has a corresponding TSL row with isInL0=1 (tlmid + dmid foreign key)
@@ -195,15 +262,19 @@ TEST_SQL[tmdecom_l0_tsl]=$(cat <<SQL
     ', SID=$system_id) No matching L0 TSL Entry found for TMDecom row.'
     FROM
     $tmdecom_name tmd
-    WHERE NOT EXISTS (
-        SELECT 1 FROM $tsl_name tsl WHERE 
-        tsl.TLMID=tmd.TLMID AND tsl.$decom_id=tmd.$decom_id AND tsl.DEFINITIONSTART <= tmd.DEFINITIONSTART AND tsl.isInL0=1
-    ) $sid_clause;
+     -- Get the most recent TSL Entry applicable for this decom map and check if it is pointing to L0.
+    WHERE (
+        SELECT tsl.isInL0 FROM $tsl_name tsl WHERE 
+        tsl.TLMID=tmd.TLMID AND tsl.$decom_id=tmd.$decom_id AND tsl.DEFINITIONSTART <= tmd.DEFINITIONSTART
+        ORDER BY DEFINITIONSTART DESC
+        FETCH NEXT 1 ROW ONLY
+    ) != 1
+    $sid_clause;
 SQL
 )
 TEST_DESCRIPTION[tsl_l0_tmdecom]="Checks for TMDecom entries without corresponding TSL (TelemetryStorageLocation) rows (rows that
 come into effect at the same time or before the TMDecom entry). If such a row is not present, then OTFD will never access the TMDecom
-entry and will never utilize that decom map."
+entry and will never utilize that decom map until such a TSL row comes into effect."
 
 
 # Check that inputted tests actually correspond to known tests. If no input was given, run all tests.
