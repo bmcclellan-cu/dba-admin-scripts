@@ -8,7 +8,7 @@
 #           SID alone. If the calls to getTableName or getDecomIdentifier fail, it is most likely due to 
 #           a mismatch in one of these values.
 # 
-# Checks:   
+# Checks:
 #           - packet_length: Checks if any of the packets in L0_Packets will be too small
 #                          to be decommuted by their corresponding TMDecom map. 
 #                          WARNING: This test requires an almost full scan of the L0_Packets table
@@ -37,29 +37,29 @@ example="Example: ./ValidateOTFDTables.sh 19 emadev"
 dryrun=0
 
 while getopts ":hd" option; do
-	case $option in
-	h)
-		echo "$usage"
-		echo "$example"
-		exit 0
-		;;
+    case $option in
+    h)
+        echo "$usage"
+        echo "$example"
+        exit 0
+        ;;
     d)
         dryrun=1
         ;;
-	\?)
-		echo "Error: Invalid option"
-		exit 1
-		;;
-	esac
+    \?)
+        echo "Error: Invalid option"
+        exit 1
+        ;;
+    esac
 done
 
 shift $((OPTIND - 1))
 
 # Check arguments
 if [ $# -ne 2 ] && [ $# -ne 3 ]; then
-	echo "$usage"
-	echo "$example"
-	exit 1
+    echo "$usage"
+    echo "$example"
+    exit 1
 fi
 
 system_id="$1"
@@ -67,44 +67,44 @@ export ORACLE_SID="${2,,}"
 tests_list="$3"
 
 if ! [[ "$system_id" =~ ^[0-9]+$ ]]; then
-	echo "Error: system_id must be a number. Exiting..."
-	exit 1
+    echo "Error: system_id must be a number. Exiting..."
+    exit 1
 fi
 
 # Checking ORACLE_SID
 sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I)
 if [ $? -ne 0 ]; then
-	echo "Error occurred when checking ORACLE_SID. Exiting..."
-	exit 1
+    echo "Error occurred when checking ORACLE_SID. Exiting..."
+    exit 1
 elif [ -n "$sid_check" ]; then
-	if [ "$sid_check" == "-1" ]; then
-		echo "Error, \$ORACLE_SID not set..."
-		exit 1
-	fi
-	echo "Error, provided ORACLE_SID is not open. Exiting..."
-	exit 1
+    if [ "$sid_check" == "-1" ]; then
+        echo "Error, \$ORACLE_SID not set..."
+        exit 1
+    fi
+    echo "Error, provided ORACLE_SID is not open. Exiting..."
+    exit 1
 fi
 
 # Get mission prefix and schema names
 mission_prefix=$("$HOME/common/oracle/GetSchemaName.sh" -v)
 if [ $? -ne 0 ] || [ -z "$mission_prefix" ]; then
-	echo "$mission_prefix"
-	echo "Error occurred while getting mission prefix for $ORACLE_SID. Exiting..."
-	exit 1
+    echo "$mission_prefix"
+    echo "Error occurred while getting mission prefix for $ORACLE_SID. Exiting..."
+    exit 1
 fi
 
 misc_schema=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
 if [ $? -ne 0 ] || [ -z "$misc_schema" ]; then
-	echo "$misc_schema"
-	echo "Error occurred while getting MISC schema name for $ORACLE_SID. Exiting..."
-	exit 1
+    echo "$misc_schema"
+    echo "Error occurred while getting MISC schema name for $ORACLE_SID. Exiting..."
+    exit 1
 fi
 
 ct_schema=$("$HOME/common/oracle/GetSchemaName.sh" -c -v)
 if [ $? -ne 0 ] || [ -z "$ct_schema" ]; then
-	echo "$ct_schema"
-	echo "Error occurred while getting CT schema name for $ORACLE_SID. Exiting..."
-	exit 1
+    echo "$ct_schema"
+    echo "Error occurred while getting CT schema name for $ORACLE_SID. Exiting..."
+    exit 1
 fi
 
 # Call getTableName to get the correct table names. Type_in maps to tables as follows:
@@ -179,7 +179,7 @@ fi
 
 telemetry_item_definition_name="$ct_schema.TelemetryItemDefinition"
 
-# The SQL in the tess defined below are all intended to be queries that return table anomalies. As such, if no rows are
+# The SQL in the tests defined below are all intended to be queries that return table anomalies. As such, if no rows are
 # returned, the test succeeds, if any data is returned, the test fails.
 
 exit_status=0
@@ -234,7 +234,7 @@ SQL
 )
 TEST_DESCRIPTION[packet_length]="Checks if any of the packets in L0_Packets will be too small to be decommuted by their corresponding TMDecom map. 
 Test failure indicates one of the following:
-    1. The STARTBIT column for the TMDecom entry is to large.
+    1. The STARTBIT column for the TMDecom entry is too large.
     2. The LENGTH column for the TMDecom entry is too large.
     3. One or more of the packets in L0_Packets for that DMID is too small.
 
@@ -263,16 +263,17 @@ TEST_SQL[tmdecom_l0_tsl]=$(cat <<SQL
     FROM
     $tmdecom_name tmd
      -- Get the most recent TSL Entry applicable for this decom map and check if it is pointing to L0.
-    WHERE (
+     -- If query returns NULL, then flag TSL row.
+    WHERE NVL((
         SELECT tsl.isInL0 FROM $tsl_name tsl WHERE 
         tsl.TLMID=tmd.TLMID AND tsl.$decom_id=tmd.$decom_id AND tsl.DEFINITIONSTART <= tmd.DEFINITIONSTART
         ORDER BY DEFINITIONSTART DESC
         FETCH NEXT 1 ROW ONLY
-    ) != 1
+    ), 0) != 1
     $sid_clause;
 SQL
 )
-TEST_DESCRIPTION[tsl_l0_tmdecom]="Checks for TMDecom entries without corresponding TSL (TelemetryStorageLocation) rows (rows that
+TEST_DESCRIPTION[tmdecom_l0_tsl]="Checks for TMDecom entries without corresponding TSL (TelemetryStorageLocation) rows (rows that
 come into effect at the same time or before the TMDecom entry). If such a row is not present, then OTFD will never access the TMDecom
 entry and will never utilize that decom map until such a TSL row comes into effect."
 
