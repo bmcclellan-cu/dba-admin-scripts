@@ -27,7 +27,7 @@
 # Author: Robert Schmidt
 #
 # Created on: May 21st, 2026
-# Last Modified: May 22nd, 2026 - RS
+# Last Modified: May 28th, 2026 - RS
 ##########################################################################
 
 usage="Usage: ./ValidateOTFDTables.sh [ -d (optional, dryrun tests) ] [ system_id ] [ ORACLE_SID ] [ tests_list (csv of tests to run, see header or check -d option) ]"
