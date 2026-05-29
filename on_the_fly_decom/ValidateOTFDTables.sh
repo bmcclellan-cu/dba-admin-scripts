@@ -23,6 +23,9 @@
 #           - tmdecom_l0_tsl: Checks that, for every TMDecom entry, there is a tsl entry with isInL0 set to 1.
 #                             If this is not the case, the TMDecom entry will be unused by OTFD.
 # 
+#           - data_before_tsl: Checks if data exists before the first TSL entry which would be inaccessible
+#                              to OTFD.
+# 
 #
 # Author: Robert Schmidt
 #
@@ -109,6 +112,8 @@ fi
 
 # Call getTableName to get the correct table names. Type_in maps to tables as follows:
 #  0 -> L0_Packets
+#  1 -> TMAnalog
+#  2 -> TMDiscrete
 #  3 -> TelemetryStorageLocation
 #  4 -> TMDecom
 #  5 -> TelemetryItemDefinition
@@ -120,6 +125,8 @@ tableNames=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
 
     BEGIN
         DBMS_OUTPUT.PUT_LINE($misc_schema.onTheFlyDecomMissionSpecific.getTableName(type_in => 0, systemId_in => $system_id));
+        DBMS_OUTPUT.PUT_LINE($misc_schema.onTheFlyDecomMissionSpecific.getTableName(type_in => 1, systemId_in => $system_id));
+        DBMS_OUTPUT.PUT_LINE($misc_schema.onTheFlyDecomMissionSpecific.getTableName(type_in => 2, systemId_in => $system_id));
         DBMS_OUTPUT.PUT_LINE($misc_schema.onTheFlyDecomMissionSpecific.getTableName(type_in => 3, systemId_in => $system_id));
         DBMS_OUTPUT.PUT_LINE($misc_schema.onTheFlyDecomMissionSpecific.getTableName(type_in => 4, systemId_in => $system_id));
         DBMS_OUTPUT.PUT_LINE($misc_schema.onTheFlyDecomMissionSpecific.getTableName(type_in => 5, systemId_in => $system_id));
@@ -135,7 +142,7 @@ fi
 
 # Compact all whitespace so table names are space-delimited then split into variables
 tableNames=$(echo "$tableNames" | xargs)
-read -r l0_packets_name tsl_name tmdecom_name telemetry_item_definition_name <<< "$tableNames"
+read -r l0_packets_name tmanalog_name tmdiscrete_name tsl_name tmdecom_name telemetry_item_definition_name <<< "$tableNames"
 
 # Call getDecomIdentifier to get the decom identifier for the database
 decom_id=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
@@ -199,6 +206,7 @@ SQL
 TEST_DESCRIPTION[length_gt_64]="Checks if any entries in TMDecom have LENGTH values greater than 64 bits, as such decom maps will cause OTFD to fail."
 
 # Scan L0_Packets for packets that are not long enough, accounting for time-variant TMDecom entries.
+# Does not take into account whether the TMDecom entry is accessible through TSL or not.
 TEST_SQL[packet_length]=$(cat <<SQL
     WITH tmdecom_with_ranges AS (
         -- Compute validity windows for each decom map using the next DEFINITIONSTART.
@@ -207,9 +215,9 @@ TEST_SQL[packet_length]=$(cat <<SQL
             ${decom_id},
             STARTBIT,
             LENGTH,
-            DEFINITIONSTART${tmd_systemid_select_partition},
+            DEFINITIONSTART,
             LEAD(DEFINITIONSTART) OVER (
-                PARTITION BY TLMID, ${decom_id} ${tmd_systemid_select_partition}
+                PARTITION BY TLMID, ${decom_id}
                 ORDER BY DEFINITIONSTART ASC
             ) AS DEFINITIONSTOP
         FROM ${tmdecom_name}
@@ -278,6 +286,65 @@ come into effect at the same time or before the TMDecom entry). If such a row is
 entry and will never utilize that decom map until such a TSL row comes into effect."
 
 
+# Check that there isn't data in the relevant table before the first TSL row.
+TEST_SQL[data_before_tsl]=$(cat <<SQL
+    WITH earliest_tsl AS (
+            SELECT
+                    tsl.TLMID,
+                    tsl.${decom_id},
+                    tsl.DEFINITIONSTART,
+                    tsl.isInL1,
+                    tsl.isInL0,
+                    t.DATATYPE,
+                    ROW_NUMBER() OVER (
+                            PARTITION BY tsl.TLMID, tsl.${decom_id}
+                            ORDER BY tsl.DEFINITIONSTART ASC
+                    ) AS rn
+            FROM $tsl_name tsl
+            LEFT JOIN $telemetry_item_definition_name t ON t.TLMID = tsl.TLMID
+            WHERE 1=1 $sid_clause
+    ),
+    first_tsl AS (
+            SELECT * FROM earliest_tsl WHERE rn = 1
+    )
+    SELECT /*+ PARALLEL */ '        TLMID ' || f.TLMID || '(${decom_id} ' || f.${decom_id} || ', SID=$system_id): Data exists in ${tmdiscrete_name} before earliest TSL (DefinitionStart=' || f.DEFINITIONSTART || ').'
+    FROM first_tsl f
+    WHERE f.isInL1 = 1
+        AND f.DATATYPE = 'D'
+        AND EXISTS (
+                SELECT 1 FROM ${tmdiscrete_name} tmdiscrete
+                WHERE tmdiscrete.TMID = f.TLMID
+                    AND tmdiscrete.${definition_time_column} < f.DEFINITIONSTART
+        )
+    UNION ALL
+    SELECT /*+ PARALLEL */ '        TLMID ' || f.TLMID || '(${decom_id} ' || f.${decom_id} || ', SID=$system_id): Data exists in ${tmanalog_name} before earliest TSL (DefinitionStart=' || f.DEFINITIONSTART || ').'
+    FROM first_tsl f
+    WHERE f.isInL1 = 1
+        AND (f.DATATYPE != 'D')
+        AND EXISTS (
+                SELECT 1 FROM ${tmanalog_name} tmanalog
+                WHERE tmanalog.TMID = f.TLMID
+                    AND tmanalog.${definition_time_column} < f.DEFINITIONSTART
+        )
+    UNION ALL
+    SELECT /*+ PARALLEL */ '        TLMID ' || f.TLMID || '(${decom_id} ' || f.${decom_id} || ', SID=$system_id): Data exists in ${l0_packets_name} before earliest TSL (DefinitionStart=' || f.DEFINITIONSTART || ').'
+    FROM first_tsl f
+    WHERE f.isInL1 != 1
+        AND f.isInL0 = 1
+        AND EXISTS (
+                SELECT 1 FROM ${l0_packets_name} l0
+                WHERE l0.${decom_id} = f.${decom_id}
+                    AND l0.${definition_time_column} < f.DEFINITIONSTART
+        );
+SQL
+)
+TEST_DESCRIPTION[data_before_tsl]="Checks if data (L0_Packets, TMDiscrete, or TMAnalog rows) is present before the first 
+TSL (TelemetryStorageLocation) entry for a given TLMID+DMID combination. For example, if the first TSL entry points to 
+L0_Packets and has DEFINITIONSTART=01-JAN-25, then any data present in L0_Packets before that timestamp will be invisible
+to OTFD and queries to those times will return no rows."
+
+
+
 # Check that inputted tests actually correspond to known tests. If no input was given, run all tests.
 declare -a tests_to_run
 if [ -n "$tests_list" ]; then
@@ -322,6 +389,7 @@ EOD
         exit_status=1
         echo "$test_output"
         echo "An error occurred while running test $test_name. See error output and test description above. Continuing to next test..."
+        continue
     fi
 
     if [ -n "$test_output" ]; then
