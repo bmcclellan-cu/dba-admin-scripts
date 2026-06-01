@@ -30,7 +30,7 @@
 # Author: Robert Schmidt
 #
 # Created on: May 21st, 2026
-# Last Modified: May 28th, 2026 - RS
+# Last Modified: June 1st, 2026 - RS
 ##########################################################################
 
 usage="Usage: ./ValidateOTFDTables.sh [ -d (optional, dryrun tests) ] [ system_id ] [ ORACLE_SID ] [ tests_list (csv of tests to run, see header or check -d option) ]"
@@ -84,18 +84,13 @@ elif [ -n "$sid_check" ]; then
         echo "Error, \$ORACLE_SID not set..."
         exit 1
     fi
-    echo "Error, provided ORACLE_SID is not open. Exiting..."
+    echo "Error, provided ORACLE_SID $ORACLE_SID is not open. Exiting..."
     exit 1
 fi
 
-# Get mission prefix and schema names
-mission_prefix=$("$HOME/common/oracle/GetSchemaName.sh" -v)
-if [ $? -ne 0 ] || [ -z "$mission_prefix" ]; then
-    echo "$mission_prefix"
-    echo "Error occurred while getting mission prefix for $ORACLE_SID. Exiting..."
-    exit 1
-fi
+# Get mission-specific schema names
 
+# Gets name of MISC schema while skipping VerifyAllParam.sh input validation call
 misc_schema=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
 if [ $? -ne 0 ] || [ -z "$misc_schema" ]; then
     echo "$misc_schema"
@@ -103,6 +98,7 @@ if [ $? -ne 0 ] || [ -z "$misc_schema" ]; then
     exit 1
 fi
 
+# Gets name of CT schema while skipping VerifyAllParam.sh input validation call
 ct_schema=$("$HOME/common/oracle/GetSchemaName.sh" -c -v)
 if [ $? -ne 0 ] || [ -z "$ct_schema" ]; then
     echo "$ct_schema"
@@ -170,11 +166,10 @@ decom_id=$(echo "$decom_id" | xargs)
 # Cannot call getDefinitionStartStopTimes due to requiring a timestamp input, which will vary between databases.
 # Hardcoding definition_time_column into if statement. Additionally, only specify SID for ixpe.
 sid_clause=""
-tmd_systemid_select_partition=""
 if [[ "$ORACLE_SID" == "ixpe"* ]]; then
     definition_time_column="ERT"
     sid_clause=" AND SYSTEMID=$system_id"
-    tmd_systemid_select_partition=", SYSTEMID"
+    qualified_tsl_sid_clause=" AND tsl.SYSTEMID=$system_id"
 elif [[ "$ORACLE_SID" == "ema"* ]]; then
     definition_time_column="ASCT"
 elif [[ "$ORACLE_SID" == "neos"* ]]; then
@@ -221,6 +216,7 @@ TEST_SQL[packet_length]=$(cat <<SQL
                 ORDER BY DEFINITIONSTART ASC
             ) AS DEFINITIONSTOP
         FROM ${tmdecom_name}
+         -- 1=1 ensures that we don't have an extra leading AND in the query
         WHERE 1=1 $sid_clause
     )
     SELECT /*+ PARALLEL */ '    TLMID ' || d.TLMID || ' (${decom_id} ' || d.${decom_id} || ', SID=$system_id' ||
@@ -235,7 +231,7 @@ TEST_SQL[packet_length]=$(cat <<SQL
     )
     LEFT JOIN ${telemetry_item_definition_name} t ON t.TLMID=d.TLMID
     -- Flag packets too small to contain the decom map definition.
-    WHERE p.LENGTH * 8 < (d.STARTBIT + d.LENGTH) $sid_clause
+    WHERE p.LENGTH * 8 < (d.STARTBIT + d.LENGTH)
     GROUP BY d.tlmid, d.${decom_id}, d.STARTBIT, d.LENGTH, t.DATATYPE
     ORDER BY d.tlmid, d.${decom_id};
 SQL
@@ -286,27 +282,43 @@ come into effect at the same time or before the TMDecom entry). If such a row is
 entry and will never utilize that decom map until such a TSL row comes into effect."
 
 
-# Check that there isn't data in the relevant table before the first TSL row.
+# Get the earliest TSL rows for each TMID + DMID and check if data exists before that TSL row comes into effect. 
+# Only checks for data from where the TSL row already maps to:
+
+# TSL Rows are evaluated as follows:
+# isInL1:
+#   Datatype='D'                -> TMDiscrete
+#   Datatype in ('F', 'I', 'U') -> TMAnalog
+# isInL0:
+#   Always -> L0_Packets
 TEST_SQL[data_before_tsl]=$(cat <<SQL
+     -- CTE (Common Table Expression) which returns all TSL rows, as well as "indexing" them by order of earliest to latest
     WITH earliest_tsl AS (
             SELECT
-                    tsl.TLMID,
-                    tsl.${decom_id},
-                    tsl.DEFINITIONSTART,
-                    tsl.isInL1,
-                    tsl.isInL0,
-                    t.DATATYPE,
-                    ROW_NUMBER() OVER (
-                            PARTITION BY tsl.TLMID, tsl.${decom_id}
-                            ORDER BY tsl.DEFINITIONSTART ASC
-                    ) AS rn
+                tsl.TLMID,
+                tsl.${decom_id},
+                tsl.DEFINITIONSTART,
+                tsl.isInL1,
+                tsl.isInL0,
+                t.DATATYPE,
+                 -- Returns the index for each row when partitioned by TLMID and DMID and sorted by 
+                 -- DEFINITIONSTART, from earliest TSL entry to latest.
+                 -- Note: The WHERE clause is evaluated before this function gets computed, so filtering
+                 --       must be done in a separate CTE.
+                ROW_NUMBER() OVER (
+                        PARTITION BY tsl.TLMID, tsl.${decom_id}
+                        ORDER BY tsl.DEFINITIONSTART ASC
+                ) AS rn
             FROM $tsl_name tsl
             LEFT JOIN $telemetry_item_definition_name t ON t.TLMID = tsl.TLMID
-            WHERE 1=1 $sid_clause
+             -- 1=1 ensures we don't have a leading AND in the query.
+            WHERE 1=1 $qualified_tsl_sid_clause
     ),
+     -- Filter the TSL rows such that we are only left with the earliest, partitioned by DMID and DMID.
     first_tsl AS (
             SELECT * FROM earliest_tsl WHERE rn = 1
     )
+     -- Check TMDiscrete for any data before the earliest TSL rows that that map to TMDiscrete.
     SELECT /*+ PARALLEL */ '        TLMID ' || f.TLMID || '(${decom_id} ' || f.${decom_id} || ', SID=$system_id): Data exists in ${tmdiscrete_name} before earliest TSL (DefinitionStart=' || f.DEFINITIONSTART || ').'
     FROM first_tsl f
     WHERE f.isInL1 = 1
@@ -317,15 +329,17 @@ TEST_SQL[data_before_tsl]=$(cat <<SQL
                     AND tmdiscrete.${definition_time_column} < f.DEFINITIONSTART
         )
     UNION ALL
+    -- Check TMAnalog for any data before the earliest TSL rows that map to TMAnalog
     SELECT /*+ PARALLEL */ '        TLMID ' || f.TLMID || '(${decom_id} ' || f.${decom_id} || ', SID=$system_id): Data exists in ${tmanalog_name} before earliest TSL (DefinitionStart=' || f.DEFINITIONSTART || ').'
     FROM first_tsl f
     WHERE f.isInL1 = 1
-        AND (f.DATATYPE != 'D')
+        AND (f.DATATYPE in ('F', 'I', 'U'))
         AND EXISTS (
                 SELECT 1 FROM ${tmanalog_name} tmanalog
                 WHERE tmanalog.TMID = f.TLMID
                     AND tmanalog.${definition_time_column} < f.DEFINITIONSTART
         )
+     -- Check L0_Packets for any data before the earliest TSL rows that map to L0_Packets
     UNION ALL
     SELECT /*+ PARALLEL */ '        TLMID ' || f.TLMID || '(${decom_id} ' || f.${decom_id} || ', SID=$system_id): Data exists in ${l0_packets_name} before earliest TSL (DefinitionStart=' || f.DEFINITIONSTART || ').'
     FROM first_tsl f
