@@ -33,7 +33,7 @@
 # Last Modified: June 1st, 2026 - RS
 ##########################################################################
 
-usage="Usage: ./ValidateOTFDTables.sh [ -d (optional, dryrun tests) ] [ system_id ] [ ORACLE_SID ] [ tests_list (csv of tests to run, see header or check -d option) ]"
+usage="Usage: ./ValidateOTFDTables.sh [ -d (optional, dryrun tests) ] [ system_id ] [ ORACLE_SID ] [ tests_list (optional (default ALL), csv of tests to run, see header or check -d option) ]"
 example="Example: ./ValidateOTFDTables.sh 19 emadev"
 
 # Process input options
@@ -88,6 +88,16 @@ elif [ -n "$sid_check" ]; then
     exit 1
 fi
 
+# Input validation complete, log to log file
+timestamp="$(date +"%Y-%m-%d_%H_%M_%S")"
+log_file="/tmp/ValidateOTFDTables-$timestamp.log"
+
+# Redirect a copy of all of stdout and stderr into log file while still logging to console.
+exec > >(tee -a "$log_file")
+exec 2>&1
+
+echo "Logging to $log_file"
+
 # Get mission-specific schema names
 
 # Gets name of MISC schema while skipping VerifyAllParam.sh input validation call
@@ -134,10 +144,18 @@ if [ $? -ne 0 ]; then
     echo "$tableNames"
     echo "An error occurred while querying OTFD for table names. Ensure that you are validating a system_id OTFD supports and that OTFD is updated to the latest version. Exiting..."
     exit 1
+# Check that exactly 6 items are returned from the query
+elif [ "$(echo "$tableNames" | wc -w)" -ne 6 ]; then
+    echo "$tableNames"
+    echo "ERROR: Query for table names returned an incorrect number of results. Please check above output for more details. Exiting..."
+    exit 1
 fi
 
 # Compact all whitespace so table names are space-delimited then split into variables
 tableNames=$(echo "$tableNames" | xargs)
+
+# Pipe contents of tableNames into read, which splits the variable contents using IFS into the specified variable names. 
+# -r option will treat \ as literal, not escape characters.
 read -r l0_packets_name tmanalog_name tmdiscrete_name tsl_name tmdecom_name telemetry_item_definition_name <<< "$tableNames"
 
 # Call getDecomIdentifier to get the decom identifier for the database
@@ -179,15 +197,16 @@ else
     exit 1
 fi
 
-telemetry_item_definition_name="$ct_schema.TelemetryItemDefinition"
-
 # The SQL in the tests defined below are all intended to be queries that return table anomalies. As such, if no rows are
 # returned, the test succeeds, if any data is returned, the test fails.
 
 exit_status=0
 
+# Dictionaries that map test names to: The SQL being run, a description of the test, and a relative ranking of duration, 
+# with longer duration being a lower rank to ensure the quicker tests run first by default (duplicate ranks are acceptable).
 declare -A TEST_SQL
 declare -A TEST_DESCRIPTION
+declare -A TEST_WEIGHT
 
 # Check for invalid TMDecom entries (LENGTH > 64)
 TEST_SQL[length_gt_64]=$(cat <<SQL
@@ -199,18 +218,20 @@ TEST_SQL[length_gt_64]=$(cat <<SQL
 SQL
 )
 TEST_DESCRIPTION[length_gt_64]="Checks if any entries in TMDecom have LENGTH values greater than 64 bits, as such decom maps will cause OTFD to fail."
+TEST_WEIGHT[length_gt_64]=1
 
 # Scan L0_Packets for packets that are not long enough, accounting for time-variant TMDecom entries.
 # Does not take into account whether the TMDecom entry is accessible through TSL or not.
 TEST_SQL[packet_length]=$(cat <<SQL
+     -- CTE (Common Table Expression) returning each decom map, along with when it becomes superseded by the next map.
     WITH tmdecom_with_ranges AS (
-        -- Compute validity windows for each decom map using the next DEFINITIONSTART.
         SELECT
             TLMID,
             ${decom_id},
             STARTBIT,
             LENGTH,
             DEFINITIONSTART,
+             -- This gets the value of DEFINITIONSTART of the next decom map, identified by TLMID + DMID.
             LEAD(DEFINITIONSTART) OVER (
                 PARTITION BY TLMID, ${decom_id}
                 ORDER BY DEFINITIONSTART ASC
@@ -243,6 +264,7 @@ Test failure indicates one of the following:
     3. One or more of the packets in L0_Packets for that DMID is too small.
 
 WARNING: This test requires a full scan of the L0_Packets table. This may take some time to complete"
+TEST_WEIGHT[packet_length]=5
 
 # Check that every TSL row with isInL0=1 has a corresponding TMDecom row (tlmid + dmid foreign key)
 TEST_SQL[tsl_l0_tmdecom]=$(cat <<SQL
@@ -258,6 +280,7 @@ SQL
 TEST_DESCRIPTION[tsl_l0_tmdecom]="Checks for TSL (TelemetryStorageLocation) entries with isInL0=1 without corresponding TMDecom rows (rows that
 come into effect at the same time or before the TSL entry). If such a row is not present, then OTFD will not return data for that TLMID until such
 a row comes into effect."
+TEST_WEIGHT[tsl_l0_tmdecom]=2
 
 
 # Check that every TMDecom row has a corresponding TSL row with isInL0=1 (tlmid + dmid foreign key)
@@ -280,6 +303,7 @@ SQL
 TEST_DESCRIPTION[tmdecom_l0_tsl]="Checks for TMDecom entries without corresponding TSL (TelemetryStorageLocation) rows (rows that
 come into effect at the same time or before the TMDecom entry). If such a row is not present, then OTFD will never access the TMDecom
 entry and will never utilize that decom map until such a TSL row comes into effect."
+TEST_WEIGHT[tmdecom_l0_tsl]=2
 
 
 # Get the earliest TSL rows for each TMID + DMID and check if data exists before that TSL row comes into effect. 
@@ -356,12 +380,13 @@ TEST_DESCRIPTION[data_before_tsl]="Checks if data (L0_Packets, TMDiscrete, or TM
 TSL (TelemetryStorageLocation) entry for a given TLMID+DMID combination. For example, if the first TSL entry points to 
 L0_Packets and has DEFINITIONSTART=01-JAN-25, then any data present in L0_Packets before that timestamp will be invisible
 to OTFD and queries to those times will return no rows."
-
+TEST_WEIGHT[data_before_tsl]=4
 
 
 # Check that inputted tests actually correspond to known tests. If no input was given, run all tests.
 declare -a tests_to_run
 if [ -n "$tests_list" ]; then
+    # Read the contents of tests_list and comma-split into the array tests_to_run.
     IFS=',' read -r -a tests_to_run <<< "$tests_list"
     for test_name in "${tests_to_run[@]}"; do
         if [ -z "${TEST_SQL[$test_name]}" ]; then
@@ -371,9 +396,18 @@ if [ -n "$tests_list" ]; then
     done
     unset IFS
 else
-    tests_to_run=("${!TEST_SQL[@]}")
+    # Iterate through all tests and store a newline-separated string prefixing them with their weights.
+    temp_weights=""
+    for k in "${!TEST_WEIGHT[@]}"; do
+        temp_weights+="${TEST_WEIGHT[$k]} $k
+"
+    done
+    # Sort the results from smallest to largest numerically (-n option) and then remove the weights
+    # and compact to be space-separated.
+    tests_list_sorted=$(echo "$temp_weights" | sort -n | awk '{print $2}' | xargs)
+    # Read results into an array, using default bash IFS separation.
+    read -r -a tests_to_run <<< "$tests_list_sorted"
 fi
-
 
 for test_name in "${tests_to_run[@]}"; do
     echo "Running test $test_name."
