@@ -140,7 +140,15 @@ tableNames=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
     /
 EOD
 )
-if [ $? -ne 0 ]; then
+exit_code=$?
+# Check for user defined exception error that comes from getTableName
+# If more exceptions ever get added to getTableName besides invalidType
+# This condition will need to be updated. 
+if (echo "$tableNames" | grep -q "ORA-06510"); then
+    echo "On the fly decom appears to be out of date. onTheflyDecomMissionSpecific.getTableName for $ORACLE_SID does not have entries for all tables required by this script. Upgrade OTFD and run again."
+    echo "Exiting..."
+    exit 1
+elif [ "$exit_code" -ne 0 ]; then
     echo "$tableNames"
     echo "An error occurred while querying OTFD for table names. Ensure that you are validating a system_id OTFD supports and that OTFD is updated to the latest version. Exiting..."
     exit 1
