@@ -288,7 +288,7 @@ else
     echo "         does not exist or has no rows. Skipping database version validation."
 fi
 
-# This query checks the existence of $misc_schema.ONTHEFLYDECOM_RESULTS_IDX1 on ONTHEFLYDECOM_RESULTS (ERT, SCT)
+# This query checks the existence of $misc_schema.ONTHEFLYDECOM_RESULTS_IDX1 on ONTHEFLYDECOM_RESULTS (ERT, SCT) which is earth relative time and spacecraft time
 OTFD_RESULTS_IDX1=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
         whenever oserror exit 1
         whenever sqlerror exit 1
