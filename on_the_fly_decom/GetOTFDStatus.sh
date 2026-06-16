@@ -14,7 +14,7 @@
 # Author: Robert Schmidt
 #
 # Created on: September 11th, 2025
-# Last updated: May 13th, 2026 - RS
+# Last updated: June 16th, 2026 - RS
 ################################################################################
 
 
@@ -288,7 +288,7 @@ else
     echo "         does not exist or has no rows. Skipping database version validation."
 fi
 
-
+# This query checks the existence of $misc_schema.ONTHEFLYDECOM_RESULTS_IDX1 on ONTHEFLYDECOM_RESULTS (ERT, SCT)
 OTFD_RESULTS_IDX1=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
         whenever oserror exit 1
         whenever sqlerror exit 1
@@ -297,7 +297,7 @@ OTFD_RESULTS_IDX1=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
         set heading off
         set pagesize 0
 
-        SELECT 1 FROM all_indexes WHERE INDEX_NAME='ONTHEFLYDECOM_RESULTS_IDX1' AND TABLE_NAME='ONTHEFLYDECOM_RESULTS';
+        SELECT 1 FROM all_indexes WHERE INDEX_NAME='ONTHEFLYDECOM_RESULTS_IDX1' AND TABLE_NAME='ONTHEFLYDECOM_RESULTS' AND TABLE_OWNER='$misc_schema';
 
         exit;
 EOD
@@ -309,12 +309,11 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-parsed_result=$(echo "OTFD_RESULTS_IDX1" | xargs)
+parsed_result=$(echo "$OTFD_RESULTS_IDX1" | xargs)
 
 if [ "$parsed_result" != "1" ]; then
     database_status=1
-    echo "ONTHEFLYDECOM_RESULTS_IDX1 does not exist"
-    echo "Exiting..."
+    echo "ONTHEFLYDECOM_RESULTS_IDX1 does not exist. Please refer to OTFD documentation for creation steps."
 fi
 
 if [ "$database_status" -ne 0 ]; then
