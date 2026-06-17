@@ -313,8 +313,7 @@ parsed_result=$(echo "$OTFD_RESULTS_IDX1" | xargs)
 
 if [ "$parsed_result" != "1" ]; then
     database_status=1
-    echo "ONTHEFLYDECOM_RESULTS_IDX1 does not exist."
-    echo "Use the link below to ensure database has required upgrades and to create 'ONTHEFLYDECOM_RESULTS_IDX1' index"
+    echo "ONTHEFLYDECOM_RESULTS_IDX1 index missing. Apply the 0.1 -> 0.2 upgrade to create it:"
     echo "'https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/315831384/Database+Version+Upgrades'"
 fi
 
