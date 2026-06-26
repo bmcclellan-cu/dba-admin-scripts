@@ -12,7 +12,8 @@
 #           - packet_length: Checks if any of the packets in L0_Packets will be too small
 #                          to be decommuted by their corresponding TMDecom map. 
 #                          WARNING: This test requires an almost full scan of the L0_Packets table
-#                          and may take a long time to complete.
+#                          and may take a long time to complete if the -r flag is used. Otherwise, the 
+#                          test only looks at online partitions of the L0_Packets table.
 # 
 #           - length_gt_64: Checks that none of the individual telemetry items in TMDecom indicates
 #                           a length greater than 64 bits, as this will cause OTFD to fail.
@@ -30,7 +31,7 @@
 # Author: Robert Schmidt
 #
 # Created on: May 21st, 2026
-# Last Modified: June 22th, 2026 - CS
+# Last Modified: June 26th, 2026 - CS
 ##########################################################################
 
 usage="Usage: ./ValidateOTFDTables.sh [ -d (optional, dryrun tests) ] [ -r (optional, include read-only L0 partitions) ] [ system_id ] [ ORACLE_SID ] [ tests_list (optional (default ALL), csv of tests to run, see header or check -d option) ]"
@@ -233,7 +234,7 @@ declare -A TEST_SQL
 declare -A TEST_DESCRIPTION
 declare -A TEST_WEIGHT
 
-# Array that store partition specific queries for testing L0_packet length
+# Array that stores partition specific queries for testing L0_packet length
 declare -a LENGTH_Q
 
 # Check for invalid TMDecom entries (LENGTH > 64)
@@ -248,10 +249,10 @@ SQL
 TEST_DESCRIPTION[length_gt_64]="Checks if any entries in TMDecom have LENGTH values greater than 64 bits, as such decom maps will cause OTFD to fail."
 TEST_WEIGHT[length_gt_64]=1
 
-# This variable is a space-delimited array that tracks the online L0 partitions, defaults to NONE
+# This variable is a space-delimited string that tracks the online L0 partitions, defaults to NONE
 l0_partitions_and_tables="NONE"
 
-# The default behavior is to enter this conditional, we only skip this conditional when -r flag is set, which means we include read-only partitions in our packet length search
+# The default behavior is to enter this conditional. We only skip this conditional when -r flag is set, which means we include read-only partitions in our packet length search
 if [ "$allow_readonly" -eq 0 ]; then
     packet_count=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
         whenever oserror exit 1
@@ -475,11 +476,11 @@ TEST_SQL[data_before_tsl]=$(cat <<SQL
              -- 1=1 ensures we don't have a leading AND in the query.
             WHERE 1=1 $qualified_tsl_sid_clause
     ),
-     -- Filter the TSL rows such that we are only left with the earliest, partitioned by DMID and DMID.
+     -- Filter the TSL rows such that we are only left with the earliest, partitioned by TLMID and DMID.
     first_tsl AS (
             SELECT * FROM earliest_tsl WHERE rn = 1
     )
-     -- Check TMDiscrete for any data before the earliest TSL rows that that map to TMDiscrete.
+     -- Check TMDiscrete for any data before the earliest TSL rows that map to TMDiscrete.
     SELECT /*+ PARALLEL */ '        TLMID ' || f.TLMID || '(${decom_id} ' || f.${decom_id} || ', SID=$system_id): Data exists in ${tmdiscrete_name} before earliest TSL (DefinitionStart=' || f.DEFINITIONSTART || ').'
     FROM first_tsl f
     WHERE f.isInL1 = 1
