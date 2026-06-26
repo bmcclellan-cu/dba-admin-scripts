@@ -30,16 +30,17 @@
 # Author: Robert Schmidt
 #
 # Created on: May 21st, 2026
-# Last Modified: June 1st, 2026 - RS
+# Last Modified: June 22th, 2026 - CS
 ##########################################################################
 
-usage="Usage: ./ValidateOTFDTables.sh [ -d (optional, dryrun tests) ] [ system_id ] [ ORACLE_SID ] [ tests_list (optional (default ALL), csv of tests to run, see header or check -d option) ]"
+usage="Usage: ./ValidateOTFDTables.sh [ -d (optional, dryrun tests) ] [ -r (optional, include read-only L0 partitions) ] [ system_id ] [ ORACLE_SID ] [ tests_list (optional (default ALL), csv of tests to run, see header or check -d option) ]"
 example="Example: ./ValidateOTFDTables.sh 19 emadev"
 
 # Process input options
 dryrun=0
+allow_readonly=0
 
-while getopts ":hd" option; do
+while getopts ":hdr" option; do
     case $option in
     h)
         echo "$usage"
@@ -49,6 +50,9 @@ while getopts ":hd" option; do
     d)
         dryrun=1
         ;;
+    r)
+        allow_readonly=1
+        ;;
     \?)
         echo "Error: Invalid option"
         exit 1
@@ -56,7 +60,7 @@ while getopts ":hd" option; do
     esac
 done
 
-shift $((OPTIND - 1))
+shift "$((OPTIND - 1))"
 
 # Check arguments
 if [ $# -ne 2 ] && [ $# -ne 3 ]; then
@@ -165,6 +169,14 @@ tableNames=$(echo "$tableNames" | xargs)
 # Pipe contents of tableNames into read, which splits the variable contents using IFS into the specified variable names. 
 # -r option will treat \ as literal, not escape characters.
 read -r l0_packets_name tmanalog_name tmdiscrete_name tsl_name tmdecom_name telemetry_item_definition_name <<< "$tableNames"
+# Get the table owner before the '.'
+TABLE_OWNER_uncased="${l0_packets_name%%.*}"
+# Uppercase table owner
+TABLE_OWNER="${TABLE_OWNER_uncased^^}"
+# Get the table name after the '.'
+L0_TABLE_uncased="${l0_packets_name##*.}"
+# Uppercase table name
+L0_TABLE="${L0_TABLE_uncased^^}"
 
 # Call getDecomIdentifier to get the decom identifier for the database
 decom_id=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
@@ -188,6 +200,11 @@ fi
 
 # Trim whitespace
 decom_id=$(echo "$decom_id" | xargs)
+
+if [[ -z "$decom_id" ]]; then
+    echo "Failed to get decom identifier for the database. Exiting..."
+    exit 1
+fi
 
 # Cannot call getDefinitionStartStopTimes due to requiring a timestamp input, which will vary between databases.
 # Hardcoding definition_time_column into if statement. Additionally, only specify SID for ixpe.
@@ -216,6 +233,9 @@ declare -A TEST_SQL
 declare -A TEST_DESCRIPTION
 declare -A TEST_WEIGHT
 
+# Array that store partition specific queries for testing L0_packet length
+declare -a LENGTH_Q
+
 # Check for invalid TMDecom entries (LENGTH > 64)
 TEST_SQL[length_gt_64]=$(cat <<SQL
     SELECT '    TLMID ' || tlmid || ' (' || '${decom_id}' || ' ' || ${decom_id} || ', SID=$system_id): Decom map length ' || length || ' exceeds 64 bits.'
@@ -228,10 +248,97 @@ SQL
 TEST_DESCRIPTION[length_gt_64]="Checks if any entries in TMDecom have LENGTH values greater than 64 bits, as such decom maps will cause OTFD to fail."
 TEST_WEIGHT[length_gt_64]=1
 
-# Scan L0_Packets for packets that are not long enough, accounting for time-variant TMDecom entries.
-# Does not take into account whether the TMDecom entry is accessible through TSL or not.
-TEST_SQL[packet_length]=$(cat <<SQL
-     -- CTE (Common Table Expression) returning each decom map, along with when it becomes superseded by the next map.
+# This variable is a space-delimited array that tracks the online L0 partitions, defaults to NONE
+l0_partitions_and_tables="NONE"
+
+# The default behavior is to enter this conditional, we only skip this conditional when -r flag is set, which means we include read-only partitions in our packet length search
+if [ "$allow_readonly" -eq 0 ]; then
+    packet_count=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+        whenever oserror exit 1
+        whenever sqlerror exit 1
+
+        set feedback off
+        set heading off
+        set pagesize 0
+
+        SELECT COUNT(*) from ${l0_packets_name} where rownum < 5;
+
+        exit;
+EOD
+)
+    if [ $? -ne 0 ]; then
+        echo "$packet_count"
+        echo "An error occurred while counting L0 packets in ${l0_packets_name}"
+        exit 1
+    fi
+
+    L0_packet_count=$(echo "$packet_count" | xargs)
+    
+    # Only enter this conditional if there are l0 packets
+    if [ "$L0_packet_count" -ne 0 ]; then
+        # Get the L0_PACKET partition names that have owner as 'TABLE_OWNER' which comes from 'l0_packets_name' and are not read-only (i.e. they are online)
+        l0_partitions_and_tables_raw=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+            whenever oserror exit 1
+            whenever sqlerror exit 1
+
+            set feedback off
+            set heading off
+            set pagesize 0
+            set linesize 2000
+
+            SELECT tp.PARTITION_NAME,tp.TABLE_NAME FROM dba_lob_partitions tp JOIN DBA_TABLESPACES dba ON dba.TABLESPACE_NAME = tp.TABLESPACE_NAME WHERE dba.STATUS = 'ONLINE' 
+            AND tp.TABLE_OWNER='${TABLE_OWNER}' 
+            AND tp.PARTITION_NAME like '%L0_PACKETS%' AND tp.table_name NOT LIKE 'SYS_IOT_OVER%'
+            ORDER BY tp.partition_name;
+
+            exit;
+EOD
+)
+
+        if [ $? -ne 0 ]; then
+            echo "$l0_partitions_and_tables_raw"
+            echo "An error occurred while finding online L0 packet partitions and tables"
+            exit 1
+        fi
+
+        l0_partitions_and_tables=$(echo "$l0_partitions_and_tables_raw" | xargs)
+
+        if [ -z "$l0_partitions_and_tables" ]; then
+            l0_partitions_and_tables="NONE"
+        fi
+    else
+        echo "Error: There are no L0 Packets in ${l0_packets_name}"
+        exit 1
+    fi
+
+fi
+
+partition_template=""
+table_template="$L0_TABLE"
+
+# Indicates if the loop variable is a partition or a table
+# This is important because 'l0_partitions_and_tables' holds the names of the tables that are partitioned as well as the partitions
+# By specifying the table and the partition we avoid the possibility of using partition-extended name syntax with objects which are not tables (ORA-14109)
+partition_or_table=0
+
+for object in $l0_partitions_and_tables; do
+
+    if [[ "$object" != "NONE" ]]; then
+        if [ $partition_or_table -eq 0 ]; then
+            partition_template="PARTITION (${object})"
+            partition_or_table=1
+            continue
+        else
+            table_template="$object"
+            partition_or_table=0
+        fi
+    fi
+
+    # Scan L0_Packets for packets that are not long enough, accounting for time-variant TMDecom entries.
+    # Does not take into account whether the TMDecom entry is accessible through TSL or not.
+    # Appending this query to a list separated by '~' for later execution
+    LENGTH_Q+=( "$(cat <<SQL
+    -- CTE (Common Table Expression) returning each decom map, along with when it becomes superseded by the next map.
     WITH tmdecom_with_ranges AS (
         SELECT
             TLMID,
@@ -239,13 +346,13 @@ TEST_SQL[packet_length]=$(cat <<SQL
             STARTBIT,
             LENGTH,
             DEFINITIONSTART,
-             -- This gets the value of DEFINITIONSTART of the next decom map, identified by TLMID + DMID.
+            -- This gets the value of DEFINITIONSTART of the next decom map, identified by TLMID + DMID.
             LEAD(DEFINITIONSTART) OVER (
                 PARTITION BY TLMID, ${decom_id}
                 ORDER BY DEFINITIONSTART ASC
             ) AS DEFINITIONSTOP
         FROM ${tmdecom_name}
-         -- 1=1 ensures that we don't have an extra leading AND in the query
+        -- 1=1 ensures that we don't have an extra leading AND in the query
         WHERE 1=1 $sid_clause
     )
     SELECT /*+ PARALLEL */ '    TLMID ' || d.TLMID || ' (${decom_id} ' || d.${decom_id} || ', SID=$system_id' ||
@@ -253,7 +360,7 @@ TEST_SQL[packet_length]=$(cat <<SQL
     ' out of range of min packet length ' || min(p.LENGTH * 8) || '. Max packet length is ' || max(p.LENGTH * 8)
     FROM (
         tmdecom_with_ranges d
-        JOIN ${l0_packets_name} p ON p.${decom_id} = d.${decom_id}
+        JOIN ${TABLE_OWNER}.${table_template} ${partition_template} p ON p.${decom_id} = d.${decom_id}
             -- Join packets only to decom maps valid at the packet timestamp.
             AND p.${definition_time_column} >= d.DEFINITIONSTART
             AND (d.DEFINITIONSTOP IS NULL OR p.${definition_time_column} < d.DEFINITIONSTOP)
@@ -264,15 +371,37 @@ TEST_SQL[packet_length]=$(cat <<SQL
     GROUP BY d.tlmid, d.${decom_id}, d.STARTBIT, d.LENGTH, t.DATATYPE
     ORDER BY d.tlmid, d.${decom_id};
 SQL
-)
+)~" )
+
+done
+
+# Key-value pair, all the queries testing packet length are matched to the 'packet_length' key
+temp_length="${LENGTH_Q[*]}"
+# Remove the trailing '~'
+TEST_SQL[packet_length]="${temp_length::-1}"
+
 TEST_DESCRIPTION[packet_length]="Checks if any of the packets in L0_Packets will be too small to be decommuted by their corresponding TMDecom map. 
 Test failure indicates one of the following:
     1. The STARTBIT column for the TMDecom entry is too large.
     2. The LENGTH column for the TMDecom entry is too large.
     3. One or more of the packets in L0_Packets for that DMID is too small.
 
-WARNING: This test requires a full scan of the L0_Packets table. This may take some time to complete"
+WARNING: This test requires a full scan of the L0_Packets table if the -r flag is provided. This may take some time to complete"
+
+if [[ $l0_partitions_and_tables == "NONE" ]] && [ "$allow_readonly" -eq 0 ]; then
+    TEST_DESCRIPTION[packet_length]="Checks if any of the packets in L0_Packets will be too small to be decommuted by their corresponding TMDecom map. 
+Test failure indicates one of the following:
+    1. The STARTBIT column for the TMDecom entry is too large.
+    2. The LENGTH column for the TMDecom entry is too large.
+    3. One or more of the packets in L0_Packets for that DMID is too small.
+
+WARNING: ${l0_packets_name} does not have online partitions. Continuing...
+Defaulting to searching all of ${l0_packets_name}"
+
+fi
+
 TEST_WEIGHT[packet_length]=5
+
 
 # Check that every TSL row with isInL0=1 has a corresponding TMDecom row (tlmid + dmid foreign key)
 TEST_SQL[tsl_l0_tmdecom]=$(cat <<SQL
@@ -308,13 +437,13 @@ TEST_SQL[tmdecom_l0_tsl]=$(cat <<SQL
     $sid_clause;
 SQL
 )
+
 TEST_DESCRIPTION[tmdecom_l0_tsl]="Checks for TMDecom entries without corresponding TSL (TelemetryStorageLocation) rows (rows that
 come into effect at the same time or before the TMDecom entry). If such a row is not present, then OTFD will never access the TMDecom
 entry and will never utilize that decom map until such a TSL row comes into effect."
 TEST_WEIGHT[tmdecom_l0_tsl]=2
 
-
-# Get the earliest TSL rows for each TMID + DMID and check if data exists before that TSL row comes into effect. 
+# Get the earliest TSL (TelemetryStorageLocation) rows for each TMID + DMID and check if data exists before that TSL row comes into effect. 
 # Only checks for data from where the TSL row already maps to:
 
 # TSL Rows are evaluated as follows:
@@ -378,21 +507,22 @@ TEST_SQL[data_before_tsl]=$(cat <<SQL
     WHERE f.isInL1 != 1
         AND f.isInL0 = 1
         AND EXISTS (
-                SELECT 1 FROM ${l0_packets_name} l0
+                SELECT 1 FROM ${TABLE_OWNER}.${L0_TABLE} l0
                 WHERE l0.${decom_id} = f.${decom_id}
                     AND l0.${definition_time_column} < f.DEFINITIONSTART
         );
 SQL
 )
+
 TEST_DESCRIPTION[data_before_tsl]="Checks if data (L0_Packets, TMDiscrete, or TMAnalog rows) is present before the first 
 TSL (TelemetryStorageLocation) entry for a given TLMID+DMID combination. For example, if the first TSL entry points to 
 L0_Packets and has DEFINITIONSTART=01-JAN-25, then any data present in L0_Packets before that timestamp will be invisible
 to OTFD and queries to those times will return no rows."
 TEST_WEIGHT[data_before_tsl]=4
 
+declare -a tests_to_run
 
 # Check that inputted tests actually correspond to known tests. If no input was given, run all tests.
-declare -a tests_to_run
 if [ -n "$tests_list" ]; then
     # Read the contents of tests_list and comma-split into the array tests_to_run.
     IFS=',' read -r -a tests_to_run <<< "$tests_list"
@@ -402,7 +532,6 @@ if [ -n "$tests_list" ]; then
             exit 1
         fi
     done
-    unset IFS
 else
     # Iterate through all tests and store a newline-separated string prefixing them with their weights.
     temp_weights=""
@@ -418,6 +547,8 @@ else
 fi
 
 for test_name in "${tests_to_run[@]}"; do
+    
+    loop_error=0
     echo "Running test $test_name."
     echo "${TEST_DESCRIPTION[$test_name]}"
     echo
@@ -429,33 +560,79 @@ for test_name in "${tests_to_run[@]}"; do
         continue
     fi
 
-    test_output=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
-    whenever oserror exit 1
-    whenever sqlerror exit 1
-    set heading off
-    set feedback off
-    set pagesize 0
-    set linesize 2000
+    save_test_output=""
 
-    ${TEST_SQL[$test_name]}
+    if [ "$test_name" == "packet_length" ]; then
+        # Restoring indexed array from '~' separated string (-d '' reads until the null byte)
+        IFS="~" read -r -d '' -a RESTORED <<< "${TEST_SQL[$test_name]}"
+        for query in "${RESTORED[@]}"; do
+            test_output=""
+            # get the partition name from the PARTITION (....) by matching on 'PARTITION ( ' and then 
+            # reset the match and get the partition name which is one or more characters that are not space
+            get_partition=$(echo "$query" | grep -oP 'PARTITION \(\s*\K[^)\s]+')
+            echo "Running $test_name for partition $get_partition"
+            test_output=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+            whenever oserror exit 1
+            whenever sqlerror exit 1
+            set heading off
+            set feedback off
+            set pagesize 0
+            set linesize 2000
+
+            ${query}
 EOD
     )
+            if [ $? -ne 0 ]; then
+                exit_status=1
+                loop_error=1
+                echo "$test_output"
+                echo "An error occurred while running test $test_name on partition $get_partition. See error output and test description above. Continuing to next partition..."
+                continue
+            fi
 
-    if [ $? -ne 0 ]; then
-        exit_status=1
-        echo "$test_output"
-        echo "An error occurred while running test $test_name. See error output and test description above. Continuing to next test..."
-        continue
+            if [[ -n "$test_output" ]]; then
+                exit_status=1
+                loop_error=1
+                echo "FAILURE: $test_name failed for partition $get_partition see below for details"
+                echo "$test_output"
+                echo
+            fi
+
+        done
+    else 
+        save_test_output=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+        whenever oserror exit 1
+        whenever sqlerror exit 1
+        set heading off
+        set feedback off
+        set pagesize 0
+        set linesize 2000
+
+        ${TEST_SQL[$test_name]}
+EOD
+)
+        if [ $? -ne 0 ]; then
+            exit_status=1
+            loop_error=1
+            echo "$save_test_output"
+            echo "An error occurred while running test $test_name. See error output and test description above."
+            continue
+        fi
+
+        if [[ -n "$save_test_output" ]]; then
+            exit_status=1
+            loop_error=1
+            echo "$save_test_output"
+        fi
     fi
 
-    if [ -n "$test_output" ]; then
-        exit_status=1
-        echo "$test_output"
+    if [ "$loop_error" -ne 0 ]; then
+        echo
         echo "FAILURE: Test $test_name returned one or more anomalies, see test output and description above. Continuing to next test..."
     else
+        echo
         echo "SUCCESS: Test $test_name found no anomalies. Continuing to next test..."
     fi
-    echo
 done
 
 if [ "$dryrun" -eq 1 ]; then
