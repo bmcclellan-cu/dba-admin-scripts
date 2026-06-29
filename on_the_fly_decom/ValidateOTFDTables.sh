@@ -251,45 +251,50 @@ TEST_WEIGHT[length_gt_64]=1
 # This variable is a space-delimited string that tracks the online L0 partitions, defaults to NONE
 online_L0_partitions_and_tables="NONE"
 
-# The default behavior is to enter this conditional
-# We only skip this conditional when -r flag is set, which means we include read-only partitions in our packet length search
-if [ "$allow_readonly" -eq 0 ]; then
-    
-    # Get the L0_PACKET partition names that have owner (schema) as 'TABLE_OWNER' which comes from 'L0_packets_name'
-    # The L0_PACKET partitions must be online (not read-only).
-    # Querying for partitions with 'L0_PACKETS' in their name and are owned by the schema 'TABLE_OWNER'. We are doing this because 'L0_TABLE' name does not always match with
-    # 'TABLE_NAME' from dba_lob_partitions when 'L0_TABLE' is a view.
-    online_L0_partitions_and_tables_raw=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
-        whenever oserror exit 1
-        whenever sqlerror exit 1
+# We will only find online partitions if the packet_length test is specified to run, either because 'tests_list' is empty 
+# implying that ALL tests will run or 'packet_length' is specified in 'tests_list'
+if [ -z "$tests_list" ] || [[ "$tests_list" = "*packet_length*" ]]; then
 
-        set feedback off
-        set heading off
-        set pagesize 0
-        set linesize 2000
+    # The default behavior is to enter this conditional
+    # We only skip this conditional when -r flag is set, which means we include read-only partitions in our packet length search
+    if [ "$allow_readonly" -eq 0 ]; then
+        
+        # Get the L0_PACKET partition names that have owner (schema) as 'TABLE_OWNER' which comes from 'L0_packets_name'
+        # The L0_PACKET partitions must be online (not read-only).
+        # Querying for partitions with 'L0_PACKETS' in their name and are owned by the schema 'TABLE_OWNER'. We are doing this because 'L0_TABLE' name does not always match with
+        # 'TABLE_NAME' from dba_lob_partitions when 'L0_TABLE' is a view.
+        online_L0_partitions_and_tables_raw=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+            whenever oserror exit 1
+            whenever sqlerror exit 1
 
-        SELECT tp.PARTITION_NAME,tp.TABLE_NAME FROM dba_lob_partitions tp JOIN DBA_TABLESPACES dba ON dba.TABLESPACE_NAME = tp.TABLESPACE_NAME WHERE dba.STATUS = 'ONLINE' 
-        AND tp.TABLE_OWNER='${TABLE_OWNER}' 
-        AND tp.PARTITION_NAME like '%L0_PACKETS%' AND tp.table_name NOT LIKE 'SYS_IOT_OVER%'
-        ORDER BY tp.partition_name;
+            set feedback off
+            set heading off
+            set pagesize 0
+            set linesize 2000
 
-        exit;
+            SELECT tp.PARTITION_NAME,tp.TABLE_NAME FROM dba_lob_partitions tp JOIN DBA_TABLESPACES dba ON dba.TABLESPACE_NAME = tp.TABLESPACE_NAME WHERE dba.STATUS = 'ONLINE' 
+            AND tp.TABLE_OWNER='${TABLE_OWNER}' 
+            AND tp.PARTITION_NAME like '%L0_PACKETS%' AND tp.table_name NOT LIKE 'SYS_IOT_OVER%'
+            ORDER BY tp.partition_name;
+
+            exit;
 EOD
 )
 
-    if [ $? -ne 0 ]; then
-        echo "$online_L0_partitions_and_tables_raw"
-        echo "An error occurred while finding online L0 packet partitions and tables"
-        exit 1
+        if [ $? -ne 0 ]; then
+            echo "$online_L0_partitions_and_tables_raw"
+            echo "An error occurred while finding online L0 packet partitions and tables"
+            exit 1
+        fi
+
+        online_L0_partitions_and_tables=$(echo "$online_L0_partitions_and_tables_raw" | xargs)
+
+        # If there are no online partitions, then default to a full L0_Packet search
+        if [ -z "$online_L0_partitions_and_tables" ]; then
+            online_L0_partitions_and_tables="NONE"
+        fi
+
     fi
-
-    online_L0_partitions_and_tables=$(echo "$online_L0_partitions_and_tables_raw" | xargs)
-
-    # If there are no online partitions, then default to a full L0_Packet search
-    if [ -z "$online_L0_partitions_and_tables" ]; then
-        online_L0_partitions_and_tables="NONE"
-    fi
-
 fi
 
 partition_template=""
