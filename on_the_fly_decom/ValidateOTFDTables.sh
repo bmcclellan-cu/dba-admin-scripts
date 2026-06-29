@@ -253,10 +253,10 @@ online_L0_partitions_and_tables="NONE"
 
 # We will only find online partitions if the packet_length test is specified to run, either because 'tests_list' is empty 
 # implying that ALL tests will run or 'packet_length' is specified in 'tests_list'
-if [ -z "$tests_list" ] || [[ "$tests_list" = "*packet_length*" ]]; then
+if [ -z "$tests_list" ] || [[ "$tests_list" == *packet_length* ]]; then
 
-    # The default behavior is to enter this conditional
-    # We only skip this conditional when -r flag is set, which means we include read-only partitions in our packet length search
+    # The default behavior is to enter this conditional when the packet_length test is specified to run
+    # We only skip this conditional when -r flag is set, which means we include read-only partitions in our packet_length search
     if [ "$allow_readonly" -eq 0 ]; then
         
         # Get the L0_PACKET partition names that have owner (schema) as 'TABLE_OWNER' which comes from 'L0_packets_name'
@@ -363,7 +363,7 @@ SQL
 
 done
 
-# Key-value pair, all the queries testing packet length are matched to the 'packet_length' key
+# Key-value pair, all the queries testing packet_length are matched to the 'packet_length' key
 temp_length="${LENGTH_Q[*]}"
 # Remove the trailing '~'
 TEST_SQL[packet_length]="${temp_length::-1}"
@@ -549,7 +549,7 @@ for test_name in "${tests_to_run[@]}"; do
     fi
 
     save_test_output=""
-    # When the packet length test is testing by partition, enter this conditional
+    # When the packet_length test is testing by partition, enter this conditional
     if [ "$test_name" == "packet_length" ] && [[ "$online_L0_partitions_and_tables" != "NONE" ]]; then
         # Restoring indexed array from '~' separated string (-d '' reads until the null byte)
         IFS="~" read -r -d '' -a RESTORED <<< "${TEST_SQL[$test_name]}"
