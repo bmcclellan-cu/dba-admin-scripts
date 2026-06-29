@@ -31,7 +31,7 @@
 # Author: Robert Schmidt
 #
 # Created on: May 21st, 2026
-# Last Modified: June 26th, 2026 - CS
+# Last Modified: June 29th, 2026 - CS
 ##########################################################################
 
 usage="Usage: ./ValidateOTFDTables.sh [ -d (optional, dryrun tests) ] [ -r (optional, include read-only L0 partitions) ] [ system_id ] [ ORACLE_SID ] [ tests_list (optional (default ALL), csv of tests to run, see header or check -d option) ]"
@@ -98,8 +98,7 @@ timestamp="$(date +"%Y-%m-%d_%H_%M_%S")"
 log_file="/tmp/ValidateOTFDTables-$timestamp.log"
 
 # Redirect a copy of all of stdout and stderr into log file while still logging to console.
-exec > >(tee -a "$log_file")
-exec 2>&1
+exec > >(tee -a "$log_file") 2>&1
 
 echo "Logging to $log_file"
 
@@ -172,7 +171,7 @@ tableNames=$(echo "$tableNames" | xargs)
 read -r L0_packets_name tmanalog_name tmdiscrete_name tsl_name tmdecom_name telemetry_item_definition_name <<< "$tableNames"
 # Get the table owner before the '.'
 TABLE_OWNER_uncased="${L0_packets_name%%.*}"
-# Uppercase table owner
+# Uppercase table owner (schema)
 TABLE_OWNER="${TABLE_OWNER_uncased^^}"
 # Get the table name after the '.'
 L0_TABLE_uncased="${L0_packets_name##*.}"
@@ -252,11 +251,12 @@ TEST_WEIGHT[length_gt_64]=1
 # This variable is a space-delimited string that tracks the online L0 partitions, defaults to NONE
 online_L0_partitions_and_tables="NONE"
 
-# The default behavior is to enter this conditional. 
+# The default behavior is to enter this conditional
 # We only skip this conditional when -r flag is set, which means we include read-only partitions in our packet length search
 if [ "$allow_readonly" -eq 0 ]; then
     
-    # Get the L0_PACKET partition names that have owner (schema) as 'TABLE_OWNER' which comes from 'L0_packets_name' and are not read-only (i.e. they are online)
+    # Get the L0_PACKET partition names that have owner (schema) as 'TABLE_OWNER' which comes from 'L0_packets_name'
+    # The L0_PACKET partitions must be online (not read-only).
     # Querying for partitions with 'L0_PACKETS' in their name and are owned by the schema 'TABLE_OWNER'. We are doing this because 'L0_TABLE' name does not always match with
     # 'TABLE_NAME' from dba_lob_partitions when 'L0_TABLE' is a view.
     online_L0_partitions_and_tables_raw=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
@@ -285,6 +285,7 @@ EOD
 
     online_L0_partitions_and_tables=$(echo "$online_L0_partitions_and_tables_raw" | xargs)
 
+    # If there are no online partitions, then default to a full L0_Packet search
     if [ -z "$online_L0_partitions_and_tables" ]; then
         online_L0_partitions_and_tables="NONE"
     fi
@@ -543,8 +544,8 @@ for test_name in "${tests_to_run[@]}"; do
     fi
 
     save_test_output=""
-
-    if [ "$test_name" == "packet_length" ]; then
+    # When the packet length test is testing by partition, enter this conditional
+    if [ "$test_name" == "packet_length" ] && [[ "$online_L0_partitions_and_tables" != "NONE" ]]; then
         # Restoring indexed array from '~' separated string (-d '' reads until the null byte)
         IFS="~" read -r -d '' -a RESTORED <<< "${TEST_SQL[$test_name]}"
         for query in "${RESTORED[@]}"; do
