@@ -18,10 +18,10 @@
 #           - length_gt_64: Checks that none of the individual telemetry items in TMDecom indicates
 #                           a length greater than 64 bits, as this will cause OTFD to fail.
 # 
-#           - tsl_l0_tmdecom: Checks that TSL entries pointing to L0 also have corresponding TMDecom 
+#           - tsl_L0_tmdecom: Checks that TSL entries pointing to L0 also have corresponding TMDecom 
 #                             rows.
 # 
-#           - tmdecom_l0_tsl: Checks that, for every TMDecom entry, there is a tsl entry with isInL0 set to 1.
+#           - tmdecom_L0_tsl: Checks that, for every TMDecom entry, there is a tsl entry with isInL0 set to 1.
 #                             If this is not the case, the TMDecom entry will be unused by OTFD.
 # 
 #           - data_before_tsl: Checks if data exists before the first TSL entry which would be inaccessible
@@ -169,13 +169,13 @@ tableNames=$(echo "$tableNames" | xargs)
 
 # Pipe contents of tableNames into read, which splits the variable contents using IFS into the specified variable names. 
 # -r option will treat \ as literal, not escape characters.
-read -r l0_packets_name tmanalog_name tmdiscrete_name tsl_name tmdecom_name telemetry_item_definition_name <<< "$tableNames"
+read -r L0_packets_name tmanalog_name tmdiscrete_name tsl_name tmdecom_name telemetry_item_definition_name <<< "$tableNames"
 # Get the table owner before the '.'
-TABLE_OWNER_uncased="${l0_packets_name%%.*}"
+TABLE_OWNER_uncased="${L0_packets_name%%.*}"
 # Uppercase table owner
 TABLE_OWNER="${TABLE_OWNER_uncased^^}"
 # Get the table name after the '.'
-L0_TABLE_uncased="${l0_packets_name##*.}"
+L0_TABLE_uncased="${L0_packets_name##*.}"
 # Uppercase table name
 L0_TABLE="${L0_TABLE_uncased^^}"
 
@@ -250,66 +250,43 @@ TEST_DESCRIPTION[length_gt_64]="Checks if any entries in TMDecom have LENGTH val
 TEST_WEIGHT[length_gt_64]=1
 
 # This variable is a space-delimited string that tracks the online L0 partitions, defaults to NONE
-l0_partitions_and_tables="NONE"
+online_L0_partitions_and_tables="NONE"
 
-# The default behavior is to enter this conditional. We only skip this conditional when -r flag is set, which means we include read-only partitions in our packet length search
+# The default behavior is to enter this conditional. 
+# We only skip this conditional when -r flag is set, which means we include read-only partitions in our packet length search
 if [ "$allow_readonly" -eq 0 ]; then
-    packet_count=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
+    
+    # Get the L0_PACKET partition names that have owner (schema) as 'TABLE_OWNER' which comes from 'L0_packets_name' and are not read-only (i.e. they are online)
+    # Querying for partitions with 'L0_PACKETS' in their name and are owned by the schema 'TABLE_OWNER'. We are doing this because 'L0_TABLE' name does not always match with
+    # 'TABLE_NAME' from dba_lob_partitions when 'L0_TABLE' is a view.
+    online_L0_partitions_and_tables_raw=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
         whenever oserror exit 1
         whenever sqlerror exit 1
 
         set feedback off
         set heading off
         set pagesize 0
+        set linesize 2000
 
-        SELECT COUNT(*) from ${l0_packets_name} where rownum < 5;
+        SELECT tp.PARTITION_NAME,tp.TABLE_NAME FROM dba_lob_partitions tp JOIN DBA_TABLESPACES dba ON dba.TABLESPACE_NAME = tp.TABLESPACE_NAME WHERE dba.STATUS = 'ONLINE' 
+        AND tp.TABLE_OWNER='${TABLE_OWNER}' 
+        AND tp.PARTITION_NAME like '%L0_PACKETS%' AND tp.table_name NOT LIKE 'SYS_IOT_OVER%'
+        ORDER BY tp.partition_name;
 
         exit;
 EOD
 )
+
     if [ $? -ne 0 ]; then
-        echo "$packet_count"
-        echo "An error occurred while counting L0 packets in ${l0_packets_name}"
+        echo "$online_L0_partitions_and_tables_raw"
+        echo "An error occurred while finding online L0 packet partitions and tables"
         exit 1
     fi
 
-    L0_packet_count=$(echo "$packet_count" | xargs)
-    
-    # Only enter this conditional if there are l0 packets
-    if [ "$L0_packet_count" -ne 0 ]; then
-        # Get the L0_PACKET partition names that have owner as 'TABLE_OWNER' which comes from 'l0_packets_name' and are not read-only (i.e. they are online)
-        l0_partitions_and_tables_raw=$("$ORACLE_HOME"/bin/sqlplus -s / as sysdba <<EOD
-            whenever oserror exit 1
-            whenever sqlerror exit 1
+    online_L0_partitions_and_tables=$(echo "$online_L0_partitions_and_tables_raw" | xargs)
 
-            set feedback off
-            set heading off
-            set pagesize 0
-            set linesize 2000
-
-            SELECT tp.PARTITION_NAME,tp.TABLE_NAME FROM dba_lob_partitions tp JOIN DBA_TABLESPACES dba ON dba.TABLESPACE_NAME = tp.TABLESPACE_NAME WHERE dba.STATUS = 'ONLINE' 
-            AND tp.TABLE_OWNER='${TABLE_OWNER}' 
-            AND tp.PARTITION_NAME like '%L0_PACKETS%' AND tp.table_name NOT LIKE 'SYS_IOT_OVER%'
-            ORDER BY tp.partition_name;
-
-            exit;
-EOD
-)
-
-        if [ $? -ne 0 ]; then
-            echo "$l0_partitions_and_tables_raw"
-            echo "An error occurred while finding online L0 packet partitions and tables"
-            exit 1
-        fi
-
-        l0_partitions_and_tables=$(echo "$l0_partitions_and_tables_raw" | xargs)
-
-        if [ -z "$l0_partitions_and_tables" ]; then
-            l0_partitions_and_tables="NONE"
-        fi
-    else
-        echo "Error: There are no L0 Packets in ${l0_packets_name}"
-        exit 1
+    if [ -z "$online_L0_partitions_and_tables" ]; then
+        online_L0_partitions_and_tables="NONE"
     fi
 
 fi
@@ -318,11 +295,15 @@ partition_template=""
 table_template="$L0_TABLE"
 
 # Indicates if the loop variable is a partition or a table
-# This is important because 'l0_partitions_and_tables' holds the names of the tables that are partitioned as well as the partitions
+# partition_or_table=0 -> Loop variable is partition
+# partition_or_table=1 -> Loop variable is table
+# This is important because 'online_L0_partitions_and_tables' holds the names of the tables that are partitioned as well as the partitions
 # By specifying the table and the partition we avoid the possibility of using partition-extended name syntax with objects which are not tables (ORA-14109)
 partition_or_table=0
 
-for object in $l0_partitions_and_tables; do
+# If there are no online partitions, or a full scan of L0 packets was requested, then online_L0_partitions_and_tables=NONE
+# In that case where online_L0_partitions_and_tables=NONE, we create one query in the loop for the whole L0 packets table
+for object in $online_L0_partitions_and_tables; do
 
     if [[ "$object" != "NONE" ]]; then
         if [ $partition_or_table -eq 0 ]; then
@@ -389,15 +370,15 @@ Test failure indicates one of the following:
 
 WARNING: This test requires a full scan of the L0_Packets table if the -r flag is provided. This may take some time to complete"
 
-if [[ $l0_partitions_and_tables == "NONE" ]] && [ "$allow_readonly" -eq 0 ]; then
+if [[ $online_L0_partitions_and_tables == "NONE" ]] && [ "$allow_readonly" -eq 0 ]; then
     TEST_DESCRIPTION[packet_length]="Checks if any of the packets in L0_Packets will be too small to be decommuted by their corresponding TMDecom map. 
 Test failure indicates one of the following:
     1. The STARTBIT column for the TMDecom entry is too large.
     2. The LENGTH column for the TMDecom entry is too large.
     3. One or more of the packets in L0_Packets for that DMID is too small.
 
-WARNING: ${l0_packets_name} does not have online partitions. Continuing...
-Defaulting to searching all of ${l0_packets_name}"
+WARNING: ${L0_packets_name} does not have online partitions. Continuing...
+Defaulting to searching all of ${L0_packets_name}"
 
 fi
 
@@ -405,7 +386,7 @@ TEST_WEIGHT[packet_length]=5
 
 
 # Check that every TSL row with isInL0=1 has a corresponding TMDecom row (tlmid + dmid foreign key)
-TEST_SQL[tsl_l0_tmdecom]=$(cat <<SQL
+TEST_SQL[tsl_L0_tmdecom]=$(cat <<SQL
     SELECT '        TLMID ' || TLMID || '($decom_id ' || $decom_id || ', SID=$system_id): TSL Entry (DefinitionStart=' || DEFINITIONSTART || 
     ', SID=$system_id' || ', isInL0=1) No matching TMDecom entry found for L0 TSL Entry.'
     FROM
@@ -415,14 +396,14 @@ TEST_SQL[tsl_l0_tmdecom]=$(cat <<SQL
     ) $sid_clause;
 SQL
 )
-TEST_DESCRIPTION[tsl_l0_tmdecom]="Checks for TSL (TelemetryStorageLocation) entries with isInL0=1 without corresponding TMDecom rows (rows that
+TEST_DESCRIPTION[tsl_L0_tmdecom]="Checks for TSL (TelemetryStorageLocation) entries with isInL0=1 without corresponding TMDecom rows (rows that
 come into effect at the same time or before the TSL entry). If such a row is not present, then OTFD will not return data for that TLMID until such
 a row comes into effect."
-TEST_WEIGHT[tsl_l0_tmdecom]=2
+TEST_WEIGHT[tsl_L0_tmdecom]=2
 
 
 # Check that every TMDecom row has a corresponding TSL row with isInL0=1 (tlmid + dmid foreign key)
-TEST_SQL[tmdecom_l0_tsl]=$(cat <<SQL
+TEST_SQL[tmdecom_L0_tsl]=$(cat <<SQL
     SELECT '        TLMID ' || TLMID || '($decom_id ' || $decom_id || ', SID=$system_id): TMDecom Entry (DefinitionStart=' || DEFINITIONSTART || 
     ', SID=$system_id) No matching L0 TSL Entry found for TMDecom row.'
     FROM
@@ -439,10 +420,10 @@ TEST_SQL[tmdecom_l0_tsl]=$(cat <<SQL
 SQL
 )
 
-TEST_DESCRIPTION[tmdecom_l0_tsl]="Checks for TMDecom entries without corresponding TSL (TelemetryStorageLocation) rows (rows that
+TEST_DESCRIPTION[tmdecom_L0_tsl]="Checks for TMDecom entries without corresponding TSL (TelemetryStorageLocation) rows (rows that
 come into effect at the same time or before the TMDecom entry). If such a row is not present, then OTFD will never access the TMDecom
 entry and will never utilize that decom map until such a TSL row comes into effect."
-TEST_WEIGHT[tmdecom_l0_tsl]=2
+TEST_WEIGHT[tmdecom_L0_tsl]=2
 
 # Get the earliest TSL (TelemetryStorageLocation) rows for each TMID + DMID and check if data exists before that TSL row comes into effect. 
 # Only checks for data from where the TSL row already maps to:
@@ -503,14 +484,14 @@ TEST_SQL[data_before_tsl]=$(cat <<SQL
         )
      -- Check L0_Packets for any data before the earliest TSL rows that map to L0_Packets
     UNION ALL
-    SELECT /*+ PARALLEL */ '        TLMID ' || f.TLMID || '(${decom_id} ' || f.${decom_id} || ', SID=$system_id): Data exists in ${l0_packets_name} before earliest TSL (DefinitionStart=' || f.DEFINITIONSTART || ').'
+    SELECT /*+ PARALLEL */ '        TLMID ' || f.TLMID || '(${decom_id} ' || f.${decom_id} || ', SID=$system_id): Data exists in ${L0_packets_name} before earliest TSL (DefinitionStart=' || f.DEFINITIONSTART || ').'
     FROM first_tsl f
     WHERE f.isInL1 != 1
         AND f.isInL0 = 1
         AND EXISTS (
-                SELECT 1 FROM ${TABLE_OWNER}.${L0_TABLE} l0
-                WHERE l0.${decom_id} = f.${decom_id}
-                    AND l0.${definition_time_column} < f.DEFINITIONSTART
+                SELECT 1 FROM ${TABLE_OWNER}.${L0_TABLE} L0
+                WHERE L0.${decom_id} = f.${decom_id}
+                    AND L0.${definition_time_column} < f.DEFINITIONSTART
         );
 SQL
 )
