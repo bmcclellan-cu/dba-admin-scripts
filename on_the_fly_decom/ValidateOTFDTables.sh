@@ -95,9 +95,10 @@ fi
 
 # Input validation complete, logging time
 timestamp="$(date +"%Y-%m-%d_%H_%M_%S")"
-
-echo " Input validation completed for ValidateOTFDTables at ${timestamp}"
-
+echo
+echo "Input validation completed for ValidateOTFDTables at ${timestamp}"
+echo "Starting testing:"
+echo
 # Get mission-specific schema names
 
 # Gets name of MISC schema while skipping VerifyAllParam.sh input validation call
@@ -622,14 +623,18 @@ done
 timestamp="$(date +"%Y-%m-%d_%H_%M_%S")"
 
 if [ "$dryrun" -eq 1 ]; then
+    echo
     echo "Dryrun completed successfully at ${timestamp}, no queries executed. Exiting..."
     exit 0
 fi
 
 if [ "$exit_status" -ne 0 ]; then
+    echo
+    echo "Script completed with errors at ${timestamp}"
     echo "One or more tests failed/errored, please see above output for more details. Exiting..."
     exit 1
 else
+    echo
     echo "Script completed successfully at ${timestamp}, no anomalies or errors encountered. Exiting..."
     exit 0
 fi
