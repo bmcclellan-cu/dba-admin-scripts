@@ -35,7 +35,7 @@
 ##########################################################################
 
 usage="Usage: ./ValidateOTFDTables.sh [ -d (optional, dryrun tests) ] [ -r (optional, include read-only L0 partitions) ] [ system_id ] [ ORACLE_SID ] [ tests_list (optional (default ALL), csv of tests to run, see header or check -d option) ]"
-example="Example: ./ValidateOTFDTables.sh 19 emadev"
+example="Example: nohup ./ValidateOTFDTables.sh 19 emadev"
 
 # Process input options
 dryrun=0
@@ -93,14 +93,10 @@ elif [ -n "$sid_check" ]; then
     exit 1
 fi
 
-# Input validation complete, log to log file
+# Input validation complete, logging time
 timestamp="$(date +"%Y-%m-%d_%H_%M_%S")"
-log_file="/tmp/ValidateOTFDTables-$timestamp.log"
 
-# Redirect a copy of all of stdout and stderr into log file while still logging to console.
-exec > >(tee -a "$log_file") 2>&1
-
-echo "Logging to $log_file"
+echo " Input validation completed for ValidateOTFDTables at ${timestamp}"
 
 # Get mission-specific schema names
 
@@ -623,8 +619,10 @@ EOD
     fi
 done
 
+timestamp="$(date +"%Y-%m-%d_%H_%M_%S")"
+
 if [ "$dryrun" -eq 1 ]; then
-    echo "Dryrun completed successfully, no queries executed. Exiting..."
+    echo "Dryrun completed successfully at ${timestamp}, no queries executed. Exiting..."
     exit 0
 fi
 
@@ -632,6 +630,6 @@ if [ "$exit_status" -ne 0 ]; then
     echo "One or more tests failed/errored, please see above output for more details. Exiting..."
     exit 1
 else
-    echo "Script completed successfully, no anomalies or errors encountered. Exiting..."
+    echo "Script completed successfully at ${timestamp}, no anomalies or errors encountered. Exiting..."
     exit 0
 fi
