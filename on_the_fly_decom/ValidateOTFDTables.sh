@@ -28,10 +28,7 @@
 #                              to OTFD.
 # 
 #
-# Author: Robert Schmidt
 #
-# Created on: May 21st, 2026
-# Last Modified: June 29th, 2026 - CS
 ##########################################################################
 
 usage="Usage: nohup ./ValidateOTFDTables.sh [ -d (optional, dryrun tests) ] [ -r (optional, include read-only L0 partitions) ] [ system_id ] [ ORACLE_SID ] [ tests_list (optional (default ALL), csv of tests to run, see header or check -d option) ]"
