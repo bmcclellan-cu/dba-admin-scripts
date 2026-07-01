@@ -233,9 +233,6 @@ declare -A TEST_SQL
 declare -A TEST_DESCRIPTION
 declare -A TEST_WEIGHT
 
-# Array that stores partition specific queries for testing L0_packet length
-declare -a LENGTH_Q
-
 # Check for invalid TMDecom entries (LENGTH > 64)
 TEST_SQL[length_gt_64]=$(cat <<SQL
     SELECT '    TLMID ' || tlmid || ' (' || '${decom_id}' || ' ' || ${decom_id} || ', SID=$system_id): Decom map length ' || length || ' exceeds 64 bits.'
@@ -297,6 +294,9 @@ EOD
     fi
 fi
 
+# Array that stores partition specific queries for testing L0_packet length
+declare -a LENGTH_TEST_QUERY
+
 partition_template=""
 table_template="$L0_TABLE"
 
@@ -325,7 +325,7 @@ for object in $online_L0_partitions_and_tables; do
     # Scan L0_Packets for packets that are not long enough, accounting for time-variant TMDecom entries.
     # Does not take into account whether the TMDecom entry is accessible through TSL or not.
     # Appending this query to a list separated by '~' for later execution
-    LENGTH_Q+=( "$(cat <<SQL
+    LENGTH_TEST_QUERY+=( "$(cat <<SQL
     -- CTE (Common Table Expression) returning each decom map, along with when it becomes superseded by the next map.
     WITH tmdecom_with_ranges AS (
         SELECT
@@ -364,7 +364,7 @@ SQL
 done
 
 # Key-value pair, all the queries testing packet_length are matched to the 'packet_length' key
-temp_length="${LENGTH_Q[*]}"
+temp_length="${LENGTH_TEST_QUERY[*]}"
 # Remove the trailing '~'
 TEST_SQL[packet_length]="${temp_length::-1}"
 
