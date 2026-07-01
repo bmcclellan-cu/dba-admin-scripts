@@ -544,7 +544,7 @@ for test_name in "${tests_to_run[@]}"; do
             IFS="~" read -r -d '' -a RESTORED <<< "${TEST_SQL[$test_name]}"
             for query in "${RESTORED[@]}"; do
                 get_partition=$(echo "$query" | grep -oP 'PARTITION \(\s*\K[^)\s]+')
-                echo "Packet Length Query for parition ${get_partition}:"
+                echo "Packet Length Query for partition ${get_partition}:"
                 echo "${query}"
                 echo
             done
