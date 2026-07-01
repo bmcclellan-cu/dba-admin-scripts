@@ -94,7 +94,7 @@ elif [ -n "$sid_check" ]; then
 fi
 
 # Input validation complete, logging time
-pre_validation_timestamp="$(date +"%Y-%m-%d_%H_%M_%S")"
+pre_validation_timestamp="$(date "+%Y-%m-%d %H:%M:%S")"
 echo
 echo "Input validation completed for ValidateOTFDTables at ${pre_validation_timestamp}"
 echo "Starting testing:"
@@ -387,7 +387,6 @@ fi
 
 TEST_WEIGHT[packet_length]=5
 
-
 # Check that every TSL row with isInL0=1 has a corresponding TMDecom row (tlmid + dmid foreign key)
 TEST_SQL[tsl_L0_tmdecom]=$(cat <<SQL
     SELECT '        TLMID ' || TLMID || '($decom_id ' || $decom_id || ', SID=$system_id): TSL Entry (DefinitionStart=' || DEFINITIONSTART || 
@@ -540,8 +539,17 @@ for test_name in "${tests_to_run[@]}"; do
 
     if [ "$dryrun" -eq 1 ]; then
         echo "DRYRUN: Query for test $test_name:"
-        echo "${TEST_SQL[$test_name]}"
-        echo
+        if [ "$test_name" == "packet_length" ] && [[ "$online_L0_partitions_and_tables" != "NONE" ]]; then
+            # Restoring indexed array from '~' separated string (-d '' reads until the null byte)
+            IFS="~" read -r -d '' -a RESTORED <<< "${TEST_SQL[$test_name]}"
+            for query in "${RESTORED[@]}"; do
+                echo "${query}"
+            done
+        else
+            echo "${TEST_SQL[$test_name]}"
+            echo
+        fi
+
         continue
     fi
 
@@ -621,7 +629,7 @@ EOD
 done
 
 # Record timestamp to be used to calculate time elapsed during validation
-post_validation_timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+post_validation_timestamp="$(date "+%Y-%m-%d %H:%M:%S")"
 
 # Calculate elapsed time
 time_elapsed=$("$HOME/common/general/ComputeTimeGap.sh" "$pre_validation_timestamp" "$post_validation_timestamp")
