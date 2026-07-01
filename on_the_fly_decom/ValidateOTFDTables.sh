@@ -94,9 +94,9 @@ elif [ -n "$sid_check" ]; then
 fi
 
 # Input validation complete, logging time
-timestamp="$(date +"%Y-%m-%d_%H_%M_%S")"
+pre_validation_timestamp="$(date +"%Y-%m-%d_%H_%M_%S")"
 echo
-echo "Input validation completed for ValidateOTFDTables at ${timestamp}"
+echo "Input validation completed for ValidateOTFDTables at ${pre_validation_timestamp}"
 echo "Starting testing:"
 echo
 # Get mission-specific schema names
@@ -620,21 +620,36 @@ EOD
     fi
 done
 
-timestamp="$(date +"%Y-%m-%d_%H_%M_%S")"
+# Record timestamp to be used to calculate time elapsed during validation
+post_validation_timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+
+# Calculate elapsed time
+time_elapsed=$("$HOME/common/general/ComputeTimeGap.sh" "$pre_validation_timestamp" "$post_validation_timestamp")
+if [ $? -ne 0 ]; then
+    echo
+    echo "Error occurred while computing time gap between $pre_validation_timestamp and $post_validation_timestamp:" 
+    echo "$time_elapsed" 
+    exit 1
+fi
 
 if [ "$dryrun" -eq 1 ]; then
     echo
-    echo "Dryrun completed successfully at ${timestamp}, no queries executed. Exiting..."
+    echo "Dryrun completed successfully at ${post_validation_timestamp}"
+    echo "Time taken for dryrun:${time_elapsed}"
+    echo "No queries executed. Exiting..."
     exit 0
 fi
 
 if [ "$exit_status" -ne 0 ]; then
     echo
-    echo "Script completed with errors at ${timestamp}"
+    echo "Script completed with errors at ${post_validation_timestamp}"
+    echo "Time taken for validation:${time_elapsed}"
     echo "One or more tests failed/errored, please see above output for more details. Exiting..."
     exit 1
 else
     echo
-    echo "Script completed successfully at ${timestamp}, no anomalies or errors encountered. Exiting..."
+    echo "Script completed successfully at ${post_validation_timestamp}"
+    echo "Time taken for validation:${time_elapsed}"
+    echo "No anomalies or errors encountered. Exiting..."
     exit 0
 fi
