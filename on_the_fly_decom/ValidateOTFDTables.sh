@@ -32,7 +32,7 @@
 ##########################################################################
 
 usage="Usage: nohup ValidateOTFDTables.sh [ -d (optional, dryrun tests) ] [ -r (optional, include read-only L0 partitions) ] [ system_id ] [ ORACLE_SID ] [ tests_list (optional (default ALL), csv of tests to run, see header or check -d option) ]"
-example="Example: nohup ValidateOTFDTables.sh 19 emadev"
+example="Example: nohup ValidateOTFDTables.sh <system_id> <ORACLE_SID>"
 
 # Process input options
 dryrun=0
@@ -635,14 +635,14 @@ time_elapsed=$("$HOME/common/general/ComputeTimeGap.sh" "$pre_validation_timesta
 if [ $? -ne 0 ]; then
     echo
     echo "Error occurred while computing time gap between $pre_validation_timestamp and $post_validation_timestamp:" 
-    echo "$time_elapsed" 
-    exit 1
+    echo "$time_elapsed"
+    time_elapsed="Failed to Calculate"
 fi
 
 if [ "$dryrun" -eq 1 ]; then
     echo
     echo "Dryrun completed successfully at ${post_validation_timestamp}"
-    echo "Time taken for dryrun:${time_elapsed}"
+    echo "Time taken for dryrun: ${time_elapsed}"
     echo "No queries executed. Exiting..."
     exit 0
 fi
@@ -650,13 +650,13 @@ fi
 if [ "$exit_status" -ne 0 ]; then
     echo
     echo "Script completed with errors at ${post_validation_timestamp}"
-    echo "Time taken for validation:${time_elapsed}"
+    echo "Time taken for validation: ${time_elapsed}"
     echo "One or more tests failed/errored, please see above output for more details. Exiting..."
     exit 1
 else
     echo
     echo "Script completed successfully at ${post_validation_timestamp}"
-    echo "Time taken for validation:${time_elapsed}"
+    echo "Time taken for validation: ${time_elapsed}"
     echo "No anomalies or errors encountered. Exiting..."
     exit 0
 fi
