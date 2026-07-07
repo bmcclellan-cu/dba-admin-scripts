@@ -227,6 +227,55 @@ declare -A TEST_SQL
 declare -A TEST_DESCRIPTION
 declare -A TEST_WEIGHT
 
+
+TEST_SQL[L0_row_existence]=$(cat <<SQL
+    SELECT COUNT(*) from ${L0_packets_name} where rownum < 5;
+SQL
+)
+TEST_DESCRIPTION[L0_row_existence]="Checks if L0_Packets table is non-empty."
+TEST_WEIGHT[L0_row_existence]=0
+
+
+TEST_SQL[tmanalog_row_existence]=$(cat <<SQL
+    SELECT COUNT(*) from ${tmanalog_name} where rownum < 5;
+SQL
+)
+TEST_DESCRIPTION[tmanalog_row_existence]="Checks if TManalog table is non-empty."
+TEST_WEIGHT[tmanalog_row_existence]=0
+
+
+TEST_SQL[tmdiscrete_row_existence]=$(cat <<SQL
+    SELECT COUNT(*) from ${tmdiscrete_name} where rownum < 5;
+SQL
+)
+TEST_DESCRIPTION[tmdiscrete_row_existence]="Checks if TMdiscrete table is non-empty."
+TEST_WEIGHT[tmdiscrete_row_existence]=0
+
+
+TEST_SQL[tsl_row_existence]=$(cat <<SQL
+    SELECT COUNT(*) from ${tsl_name} where rownum < 5;
+SQL
+)
+TEST_DESCRIPTION[tsl_row_existence]="Checks if TelemetryStorageLocation table is non-empty."
+TEST_WEIGHT[tsl_row_existence]=0
+
+
+TEST_SQL[tmdecom_row_existence]=$(cat <<SQL
+   SELECT COUNT(*) from ${tmdecom_name} where rownum < 5;
+SQL
+)
+TEST_DESCRIPTION[tmdecom_row_existence]="Checks if TMDecom table is non-empty."
+TEST_WEIGHT[tmdecom_row_existence]=0
+
+
+TEST_SQL[tid_row_existence]=$(cat <<SQL
+   SELECT COUNT(*) from ${telemetry_item_definition_name} where rownum < 5;
+SQL
+)
+TEST_DESCRIPTION[tid_row_existence]="Checks if TelemetryItemDefinition table is non-empty."
+TEST_WEIGHT[tid_row_existence]=0
+
+
 # Check for invalid TMDecom entries (LENGTH > 64)
 TEST_SQL[length_gt_64]=$(cat <<SQL
     SELECT '    TLMID ' || tlmid || ' (' || '${decom_id}' || ' ' || ${decom_id} || ', SID=$system_id): Decom map length ' || length || ' exceeds 64 bits.'
@@ -611,6 +660,19 @@ EOD
             continue
         fi
 
+        if echo "$test_name" | grep -i "existence" > /dev/null 2>&1 ; then
+            row_count=$(echo "$save_test_output" | xargs)
+            if [ "$row_count" -eq 0 ]; then
+                echo
+                echo "FAILURE: Test $test_name indicated empty table, see test output and description above. Continuing to next test..."
+            else
+                echo
+                echo "SUCCESS: Test $test_name indicated non-empty table. Continuing to next test..."
+            fi
+
+            continue
+        fi
+        
         if [[ -n "$save_test_output" ]]; then
             exit_status=1
             loop_error=1
