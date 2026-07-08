@@ -9,6 +9,14 @@
 #           a mismatch in one of these values.
 # 
 # Checks:
+#           - Row existence checks:
+#               - L0 row existence: Checks if there are rows in L0 Packets table.
+#               - TMAnalog row existence: Checks if there are rows in TMAnalog table.
+#               - TMDiscrete row existence: Checks if there are rows in TMDiscrete table.
+#               - Telemetry Storage Location row existence: Checks if there are rows in Telemetry Storage Location table.
+#               - TMDecom row existence: Checks if there are rows in the TMDecom table.
+#               - TelemetryItemDefinition row existence: Checks if there are rows in the TelemetryItemDefinition table.
+#
 #           - packet_length: Checks if any of the packets in L0_Packets will be too small
 #                          to be decommuted by their corresponding TMDecom map. 
 #                          WARNING: This test requires an almost full scan of the L0_Packets table
@@ -226,7 +234,6 @@ exit_status=0
 declare -A TEST_SQL
 declare -A TEST_DESCRIPTION
 declare -A TEST_WEIGHT
-
 
 TEST_SQL[L0_row_existence]=$(cat <<SQL
     SELECT COUNT(*) from ${L0_packets_name} where rownum < 5;
