@@ -671,10 +671,12 @@ EOD
             row_count=$(echo "$save_test_output" | xargs)
             if [ "$row_count" -eq 0 ]; then
                 echo
-                echo "FAILURE: Test $test_name indicated empty table, see test output and description above. Continuing to next test..."
+                echo "FAILURE: Test $test_name indicates empty table, see test output and description above. Continuing to next test..."
+                echo
             else
                 echo
-                echo "SUCCESS: Test $test_name indicated non-empty table. Continuing to next test..."
+                echo "SUCCESS: Test $test_name indicates non-empty table. Continuing to next test..."
+                echo
             fi
 
             continue
@@ -690,9 +692,11 @@ EOD
     if [ "$loop_error" -ne 0 ]; then
         echo
         echo "FAILURE: Test $test_name returned one or more anomalies, see test output and description above. Continuing to next test..."
+        echo
     else
         echo
         echo "SUCCESS: Test $test_name found no anomalies. Continuing to next test..."
+        echo
     fi
 done
 
