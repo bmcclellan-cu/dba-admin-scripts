@@ -178,7 +178,8 @@ echo
 # Extract database version from GetOTFDStatus.sh output.
 # -o only prints the matching string instead of the whole line
 # -E enables extended regex syntax.
-pre_update_db_version=$(echo "$pre_update_status" | grep "DB Version: " | grep -oE '[0-9]+(\.[0-9]+){2}' | head -n 1)
+# -m 1 returns only the first line matched
+pre_update_db_version=$(echo "$pre_update_status" | grep "DB Version: " | grep -oE -m 1 '[0-9]+(\.[0-9]+){2}')
 if [ -z "$pre_update_db_version" ]; then
     echo "$pre_update_status"
     echo "ERROR: Unable to extract the database version from GetOTFDStatus.sh output. Exiting..."
