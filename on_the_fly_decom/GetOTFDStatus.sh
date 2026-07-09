@@ -10,6 +10,7 @@
 # Notes:    If either one of the packages has a compilation error, this script will
 #           report that BOTH have failed because the getVersion function for the base
 #           package will fail if the mission-specific package has a compilation error.
+# 
 ################################################################################
 
 
