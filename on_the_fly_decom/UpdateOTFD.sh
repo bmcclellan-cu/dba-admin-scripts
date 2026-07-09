@@ -224,7 +224,7 @@ load_output=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
     exit;
 EOD
 )
-if [ $? -ne 0 ] || echo "$load_output" | grep -E "ORA-|SP2-"; then
+if [ $? -ne 0 ] || echo "$load_output" | grep -E "ORA-|SP2-|PLS-"; then
     echo "$load_output"
     echo "ERROR: An error occurred while loading OTFD packages. Exiting..."
     exit 1
