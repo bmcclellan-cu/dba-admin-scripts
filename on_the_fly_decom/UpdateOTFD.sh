@@ -9,6 +9,10 @@
 #           
 #           This script does not currently account for mission-specific database upgrades.
 #           As of now, no such upgrades have been necessary, but this may change in the future.
+# 
+#           Database version corresponds to the state of the tables OTFD relies on to operate. As of now, each database 
+#           update has directly corresponded to a generic package update and is identified by the version the package was
+#           as of the update.
 #
 #####################################################################################
 
@@ -16,6 +20,8 @@ usage="Usage: ./UpdateOTFD.sh [ ORACLE_SID ] [ update_type (Can be Generic, IXPE
 example="Example: ./UpdateOTFD.sh sid1prod Generic 0.2.5 /home/oracle/db_tools/"
 
 # Static Associative Array (dictionary) mapping generic package versions to required database version.
+# Database version corresponds with an update to the OTFD tables, as opposed to the package. As of now
+# each database update corresponds with a specific generic package update, and is numbered as such.
 # This will be replaced with querying the OTFD package in the future.
 declare -A required_db_versions=(
     ["0.2.4"]="0.2.4"
@@ -49,6 +55,9 @@ update_type="${2^^}"
 target_version="$3"
 repo_root="${4:-$HOME/db_tools}"
 
+repo_package_dir="$repo_root/src/on_the_fly_decom"
+
+
 if ! [[ "$target_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "ERROR: Version must be formatted X.X.X. Exiting..."
     exit 1
@@ -56,6 +65,12 @@ fi
 
 if ! [[ "$update_type" =~ GENERIC|IXPE|EMA|NEOS ]]; then
     echo "ERROR: Supplied update_type $update_type not valid (valid options: GENERIC,IXPE,EMA,NEOS). Exiting..."
+    exit 1
+fi
+
+# Check that package directory exists.
+if [ ! -d "$repo_package_dir" ]; then
+    echo "ERROR: OTFD subdirectory $repo_package_dir not found in $repo_root. Exiting..."
     exit 1
 fi
 
@@ -77,6 +92,7 @@ fi
 # -m flag returns the misc schema, -v disables input validation for speed
 misc_schema=$("$HOME/common/oracle/GetSchemaName.sh" -m -v)
 if [ $? -ne 0 ] || [ -z "$misc_schema" ]; then
+    echo "$misc_schema"
     echo "ERROR: An error occurred while finding MISC schema for database $ORACLE_SID. Exiting..."
     exit 1
 fi
@@ -95,27 +111,24 @@ if [ "$update_type" != "GENERIC" ] && [ "$update_type" != "$project" ]; then
     exit 1
 fi
 
-repo_package_dir="$repo_root/src/on_the_fly_decom"
-if [ ! -d "$repo_package_dir" ]; then
-    echo "ERROR: Expected OTFD package directory not found at $repo_package_dir. Exiting..."
-    exit 1
-fi
-
 # Grep for the multimission version in the procedure code
 generic_version_line=$(grep "multimission" "$repo_package_dir/onTheFlyDecom.pkb")
 # -o only prints the matching string instead of the whole line
 # -E enables extended regex syntax.
-generic_version=$(echo "$generic_version_line" | grep -oE '[0-9]+(\.[0-9]+){2}' | head -n 1)
+# -m 1 returns only the first line matched
+generic_version=$(echo "$generic_version_line" | grep -oE -m 1 '[0-9]+(\.[0-9]+){2}')
 if [ -z "$generic_version" ]; then
     echo "ERROR: Unable to determine the generic OTFD version from onTheFlyDecom.pkb. Exiting..."
     exit 1
 fi
-# -A 10 includes the 10 lines after grep finds a match, returning the getVersion procedure code, 
-# and the second grep narrows the search to the mission-specific project line.
+# The first grep extracts the getVersion procedure code, and the second grep narrows the search to the mission-specific project line
+# -A 10 includes the 10 lines after grep finds a match,
+# -m 1 returns only the first line matched
 mission_version_line=$(grep -A 10 "getVersion" "$repo_package_dir/onTheFlyDecomMissionSpecific$project.pkb" | grep -m 1 "$project")
 # -o only prints the matching string instead of the whole line
 # -E enables extended regex syntax.
-mission_version=$(echo "$mission_version_line" | grep -oE '[0-9]+(\.[0-9]+){2}' | head -n 1)
+# -m 1 returns only the first line matched
+mission_version=$(echo "$mission_version_line" | grep -oE -m 1 '[0-9]+(\.[0-9]+){2}')
 if [ -z "$mission_version" ]; then
     echo "ERROR: Unable to determine the mission-specific OTFD version from onTheFlyDecomMissionSpecific$project.pkb. Exiting..."
     exit 1
@@ -134,11 +147,6 @@ echo "Required database version: $required_db_version"
 echo "Repository path: $repo_root"
 echo
 
-if [ ! -d "$repo_root" ]; then
-    echo "ERROR: db_tools repository path $repo_root does not exist. Exiting..."
-    exit 1
-fi
-
 # Validate the version string in the package against the requested version before proceeding with the installation.
 if [ "$update_type" = "GENERIC" ] && [ "$generic_version" != "$target_version" ]; then
     echo "ERROR: Generic version of code in $repo_package_dir ($generic_version) does not match requested version $target_version. Exiting..."
@@ -152,7 +160,9 @@ fi
 echo "Confirmed code version in repository matches target_version."
 echo "Checking OTFD Status before updating package..."
 echo
-# Validate that there are no OTFD anomalies before upgrading
+# Validate that there are no OTFD anomalies before upgrading. We do not check for exit status here due to how GetOTFDStatus.sh reports
+# errors; if any database anomalies are found (including ones that don't flag an ERROR or WARNING), the exit code is set to 1.
+# As such, we manually scan for errors or anomalies instead of relying on the exit code.
 pre_update_status=$("$HOME/common/oracle/GetOTFDStatus.sh" "$ORACLE_SID")
 # Ignore version-mismatch errors and filter for any errors or warnings.
 # The -E flag enables extended regex.
