@@ -79,7 +79,7 @@ if [ $? -ne 0 ] || [ -z "$misc_schema" ]; then
     exit 1
 fi
 
-# Derive project prefix from the mission schema so later package loading and permission checks stay aligned with the database naming convention.
+# Derive project prefix from the mission schema to select the correct mission-specific package file.
 # Parameter expansion removes the trailing _MISC suffix from the schema name.
 project="${misc_schema%_MISC}"
 if [ -z "$project" ] || [ "$project" = "$misc_schema" ]; then
@@ -103,7 +103,8 @@ if [ -z "$generic_version" ]; then
     echo "ERROR: Unable to determine the generic OTFD version from onTheFlyDecom.pkb. Exiting..."
     exit 1
 fi
-# -A 10 includes the 10 lines after getVersion where the version text is expected, and the second grep narrows the search to the mission-specific project line.
+# -A 10 includes the 10 lines after grep finds a match, returning the getVersion procedure code, 
+# and the second grep narrows the search to the mission-specific project line.
 mission_version_line=$(grep -A 10 "getVersion" "$repo_package_dir/onTheFlyDecomMissionSpecific$project.pkb" | grep -m 1 "$project")
 # -o only prints the matching string instead of the whole line
 # -E enables extended regex syntax.
@@ -124,7 +125,7 @@ echo "Update type: $update_type"
 echo "Target version: $target_version"
 echo "Required database version: $required_db_version"
 echo "Repository path: $repo_root"
-echo ""
+echo
 
 if [ ! -d "$repo_root" ]; then
     echo "ERROR: db_tools repository path $repo_root does not exist. Exiting..."
@@ -142,17 +143,18 @@ if [ "$update_type" != "GENERIC" ] && [ "$mission_version" != "$target_version" 
 fi
 
 echo "Confirmed code version in repository matches target_version."
-echo ""
+echo
 
 echo "Checking OTFD Status before updating package..."
 
 # Validate that there are no OTFD anomalies before upgrading
 pre_update_status=$("$HOME/common/oracle/GetOTFDStatus.sh" "$ORACLE_SID")
-# Ignore version-mismatch errors and filter for any errors or warnings. The -E flag enables extended regex.
+# Ignore version-mismatch errors and filter for any errors or warnings.
+# The -E flag enables extended regex.
 pre_update_status_errors=$(echo "$pre_update_status" | grep -v "mismatched major versions" | grep -E "ERROR:|WARNING:|An error occurred")
 if [ -n "$pre_update_status_errors" ]; then
     echo "$pre_update_status"
-    echo "ERROR: GetOTFDStatus.sh reported non-version-mismatch database/package anomalies. See above output for more details. Exiting..."
+    echo "ERROR: GetOTFDStatus.sh reported non-version-mismatch database/package anomalies/encountered an error. See above output for more details. Exiting..."
     exit 1
 fi
 echo "$pre_update_status"
@@ -177,16 +179,17 @@ echo "Verifying objects compile before update."
 pre_recompile_output=$("$HOME/common/oracle/RecompileAllObjects.sh" "$ORACLE_SID")
 if [ $? -ne 0 ]; then
     echo "$pre_recompile_output"
-    echo "ERROR: RecompileAllObjects.sh failed before the update. Exiting..."
+    echo "ERROR: An error occurred while running RecompileAllObjects.sh. Exiting..."
     exit 1
 fi
+# Ensure that script doesn't return invalid objects. -i is a case-insensitive check.
 if ! echo "$pre_recompile_output" | grep -qi "no rows selected"; then
     echo "$pre_recompile_output"
-    echo "ERROR: Invalid objects remain after the pre-update recompile. Exiting..."
+    echo "ERROR: Invalid objects present in database, see above output for more details. Exiting..."
     exit 1
 fi
 
-echo ""
+echo
 echo "Installing OTFD packages for version $update_type $target_version."
 # Note: The package specs (.pks files) should be loaded before the package bodies (.pkb files)
 #       in order to prevent a mismatch in the expected function definitions during compilation.
@@ -221,7 +224,7 @@ if [ $? -ne 0 ] || echo "$load_output" | grep -E "ORA-|SP2-"; then
     exit 1
 fi
 
-echo ""
+echo
 echo "Recompiling objects after package load"
 post_recompile_output=$("$HOME/common/oracle/RecompileAllObjects.sh" "$ORACLE_SID")
 if [ $? -ne 0 ]; then
@@ -229,13 +232,14 @@ if [ $? -ne 0 ]; then
     echo "ERROR: An error occurred while running RecompileAllObjects.sh. Exiting..."
     exit 1
 fi
+# Ensure that script doesn't return invalid objects. -i is a case-insensitive check.
 if ! echo "$post_recompile_output" | grep -qi "no rows selected"; then
     echo "$post_recompile_output"
-    echo "ERROR: Invalid objects remain after the post-update recompile. Exiting..."
+    echo "ERROR: Invalid objects present in database after OTFD packages were installed. See above output for more details. Exiting..."
     exit 1
 fi
 
-echo ""
+echo
 echo "Running final OTFD status check"
 final_status_output=$("$HOME/common/oracle/GetOTFDStatus.sh" "$ORACLE_SID")
 if [ $? -ne 0 ]; then
@@ -245,6 +249,6 @@ if [ $? -ne 0 ]; then
 fi
 echo "$final_status_output"
 
-echo ""
+echo
 echo "UpdateOTFD.sh completed successfully for $ORACLE_SID"
 
