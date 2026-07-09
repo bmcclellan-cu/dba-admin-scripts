@@ -1,17 +1,19 @@
 #!/bin/bash
 #
-# Purpose:  Update the OTFD packages for a database and validate that the
-#           requested OTFD version is compatible with the database version.
+# Purpose:  This script updates the OTFD packages for a database and validate that the
+#           requested OTFD version is compatible with the database version. This script is 
+#           intended for use both for initial OTFD package installations and package updates.
 # 
-# Notes:    This script does not currently account for mission-specific database upgrades.
+# Notes:    This script DOES NOT handle database updates themselves, documentation for database migrations
+#           can be found here: https://confluence.lasp.colorado.edu/spaces/MODSDB/pages/315831384/Database+Version+Upgrades
+#           
+#           This script does not currently account for mission-specific database upgrades.
 #           As of now, no such upgrades have been necessary, but this may change in the future.
 #
 #####################################################################################
 
-usage="Usage: ./UpdateOTFD.sh [ ORACLE_SID ] [ update_type (Can be Generic, IXPE, EMA, or NEOS) ] [ target_version (Must be formatted X.X.X) ] [ db_tools repo path ]"
-example="Example: ./UpdateOTFD.sh sid1prod IXPE 0.1.2 /tmp/db_tools"
-
-repo_package_dir=""
+usage="Usage: ./UpdateOTFD.sh [ ORACLE_SID ] [ update_type (Can be Generic, IXPE, EMA, or NEOS) ] [ target_version (Must be formatted X.X.X) ] [ repo_path (optional, path to db_tools. Defaults to \$HOME/db_tools/) ]"
+example="Example: ./UpdateOTFD.sh sid1prod Generic 0.2.5 /home/oracle/db_tools/"
 
 # Static Associative Array (dictionary) mapping generic package versions to required database version.
 # This will be replaced with querying the OTFD package in the future.
@@ -36,7 +38,7 @@ while getopts ":h" option; do
 done
 
 # Check arguments
-if [ $# -ne 4 ]; then
+if [ $# -ne 4 ] && [ $# -ne 3 ]; then
     echo "$usage"
     echo "$example"
     exit 1
@@ -45,7 +47,7 @@ fi
 export ORACLE_SID="${1,,}"
 update_type="${2^^}"
 target_version="$3"
-repo_root="$4"
+repo_root="${4:-$HOME/db_tools}"
 
 if ! [[ "$target_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "ERROR: Version must be formatted X.X.X. Exiting..."
@@ -87,6 +89,11 @@ if [ -z "$project" ] || [ "$project" = "$misc_schema" ]; then
     exit 1
 fi
 project="${project^^}"
+
+if [ "$update_type" != "GENERIC" ] && [ "$update_type" != "$project" ]; then
+    echo "ERROR: Mission-specific update_type $update_type does not match database prefix $project. Exiting..."
+    exit 1
+fi
 
 repo_package_dir="$repo_root/src/on_the_fly_decom"
 if [ ! -d "$repo_package_dir" ]; then
@@ -143,10 +150,8 @@ if [ "$update_type" != "GENERIC" ] && [ "$mission_version" != "$target_version" 
 fi
 
 echo "Confirmed code version in repository matches target_version."
-echo
-
 echo "Checking OTFD Status before updating package..."
-
+echo
 # Validate that there are no OTFD anomalies before upgrading
 pre_update_status=$("$HOME/common/oracle/GetOTFDStatus.sh" "$ORACLE_SID")
 # Ignore version-mismatch errors and filter for any errors or warnings.
@@ -158,11 +163,12 @@ if [ -n "$pre_update_status_errors" ]; then
     exit 1
 fi
 echo "$pre_update_status"
+echo
 
 # Extract database version from GetOTFDStatus.sh output.
 # -o only prints the matching string instead of the whole line
 # -E enables extended regex syntax.
-pre_update_db_version=$(echo "$pre_update_status" | grep -oE '[0-9]+(\.[0-9]+){2}' | head -n 1)
+pre_update_db_version=$(echo "$pre_update_status" | grep "DB Version: " | grep -oE '[0-9]+(\.[0-9]+){2}' | head -n 1)
 if [ -z "$pre_update_db_version" ]; then
     echo "$pre_update_status"
     echo "ERROR: Unable to extract the database version from GetOTFDStatus.sh output. Exiting..."
@@ -239,7 +245,6 @@ if ! echo "$post_recompile_output" | grep -qi "no rows selected"; then
     exit 1
 fi
 
-echo
 echo "Running final OTFD status check"
 final_status_output=$("$HOME/common/oracle/GetOTFDStatus.sh" "$ORACLE_SID")
 if [ $? -ne 0 ]; then
