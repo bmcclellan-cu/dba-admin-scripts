@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Purpose:  This script updates the OTFD packages for a database and validate that the
+# Purpose:  This script updates the OTFD packages for a database and validates that the
 #           requested OTFD version is compatible with the database version. This script is 
 #           intended for use both for initial OTFD package installations and package updates.
 # 
@@ -16,8 +16,8 @@
 #
 #####################################################################################
 
-usage="Usage: ./UpdateOTFD.sh [ ORACLE_SID ] [ update_type (Can be Generic, IXPE, EMA, or NEOS) ] [ target_version (Must be formatted X.X.X) ] [ repo_path (optional, path to db_tools. Defaults to \$HOME/db_tools/) ]"
-example="Example: ./UpdateOTFD.sh sid1prod Generic 0.2.5 /home/oracle/db_tools/"
+usage="Usage: UpdateOTFD.sh [ ORACLE_SID ] [ update_type (Can be Generic, IXPE, EMA, or NEOS) ] [ target_version (Must be formatted X.X.X) ] [ repo_path (optional, path to db_tools. Defaults to \$HOME/db_tools/) ]"
+example="Example: UpdateOTFD.sh ixpeprod Generic 0.2.5 /home/oracle/db_tools/"
 
 # Static Associative Array (dictionary) mapping generic package versions to required database version.
 # Database version corresponds with an update to the OTFD tables, as opposed to the package. As of now
@@ -63,7 +63,7 @@ if ! [[ "$target_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     exit 1
 fi
 
-if ! [[ "$update_type" =~ GENERIC|IXPE|EMA|NEOS ]]; then
+if ! [[ "$update_type" =~ ^(GENERIC|IXPE|EMA|NEOS)$ ]]; then
     echo "ERROR: Supplied update_type $update_type not valid (valid options: GENERIC,IXPE,EMA,NEOS). Exiting..."
     exit 1
 fi
@@ -134,7 +134,7 @@ if [ -z "$mission_version" ]; then
     exit 1
 fi
 
-required_db_version="${required_db_versions[$generic_version]:-}"
+required_db_version="${required_db_versions[$generic_version]}"
 if [ -z "$required_db_version" ]; then
     echo "ERROR: Unable to determine required database version for target_version $target_version. Please populate required_db_versions. Exiting..."
     exit 1
@@ -161,7 +161,7 @@ echo "Confirmed code version in repository matches target_version."
 echo "Checking OTFD Status before updating package..."
 echo
 # Validate that there are no OTFD anomalies before upgrading. We do not check for exit status here due to how GetOTFDStatus.sh reports
-# errors; if any database anomalies are found (including ones that don't flag an ERROR or WARNING), the exit code is set to 1.
+# errors. GetOTFDStatus.sh reports all errors or anomalies with one of the these prefixes: 'ERROR:', 'WARNING:', or 'An error occurred'. This script will exit with status 1 in these cases.
 # As such, we manually scan for errors or anomalies instead of relying on the exit code.
 pre_update_status=$("$HOME/common/oracle/GetOTFDStatus.sh" "$ORACLE_SID")
 # Ignore version-mismatch errors and filter for any errors or warnings.

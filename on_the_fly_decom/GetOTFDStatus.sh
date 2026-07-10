@@ -14,8 +14,8 @@
 ################################################################################
 
 
-usage="Usage: ./GetOTFDStatus.sh [ (optional) ORACLE_SID ]"
-example="Example: ./GetOTFDStatus.sh ixpeprod"
+usage="Usage: GetOTFDStatus.sh [ (optional) ORACLE_SID ]"
+example="Example: GetOTFDStatus.sh ixpeprod"
 
 # Process input options
 while getopts ":h" option; do
