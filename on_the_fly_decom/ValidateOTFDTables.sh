@@ -9,13 +9,9 @@
 #           a mismatch in one of these values.
 # 
 # Checks:
-#           - Row existence checks:
-#               - L0 row existence: Checks if there are rows in L0 Packets table.
-#               - TMAnalog row existence: Checks if there are rows in TMAnalog table.
-#               - TMDiscrete row existence: Checks if there are rows in TMDiscrete table.
-#               - Telemetry Storage Location row existence: Checks if there are rows in Telemetry Storage Location table.
-#               - TMDecom row existence: Checks if there are rows in the TMDecom table.
-#               - TelemetryItemDefinition row existence: Checks if there are rows in the TelemetryItemDefinition table.
+#           - row_existence: Checks if there are rows in L0 Packets table, TMAnalog table, 
+#                            TMDiscrete table, Telemetry Storage Location table, TMDecom table, 
+#                            and TelemetryItemDefinition table.
 #
 #           - packet_length: Checks if any of the packets in L0_Packets will be too small
 #                          to be decommuted by their corresponding TMDecom map. 
@@ -39,11 +35,11 @@
 #
 ##########################################################################
 
-usage="Usage: nohup ValidateOTFDTables.sh [ -d (optional, dryrun tests) ] [ -r (optional, include read-only L0 partitions) ] [ system_id ] [ ORACLE_SID ] [ tests_list (optional (default ALL), csv of tests to run, see header or check -d option) ]"
+usage="Usage: nohup ValidateOTFDTables.sh [ -d (optional, dry_run tests) ] [ -r (optional, include read-only L0 partitions) ] [ system_id ] [ ORACLE_SID ] [ tests_list (optional (default ALL), csv of tests to run, see header or check -d option) ]"
 example="Example: nohup ValidateOTFDTables.sh <system_id> <ORACLE_SID>"
 
 # Process input options
-dryrun=0
+dry_run=0
 allow_readonly=0
 
 while getopts ":hdr" option; do
@@ -54,7 +50,7 @@ while getopts ":hdr" option; do
         exit 0
         ;;
     d)
-        dryrun=1
+        dry_run=1
         ;;
     r)
         allow_readonly=1
@@ -98,12 +94,11 @@ elif [ -n "$sid_check" ]; then
     exit 1
 fi
 
-# Input validation complete, logging time
+# Logging time before tests are created and run
 pre_validation_timestamp="$(date "+%Y-%m-%d %H:%M:%S")"
-echo
-echo "Input validation completed for ValidateOTFDTables at ${pre_validation_timestamp}"
-echo "Starting testing:"
-echo
+
+echo "Starting test creation at ${pre_validation_timestamp}:"
+
 # Get mission-specific schema names
 
 # Gets name of MISC schema while skipping VerifyAllParam.sh input validation call
@@ -235,52 +230,24 @@ declare -A TEST_SQL
 declare -A TEST_DESCRIPTION
 declare -A TEST_WEIGHT
 
-TEST_SQL[L0_row_existence]=$(cat <<SQL
-    SELECT COUNT(*) from ${L0_packets_name} where rownum < 5;
+TEST_WEIGHT[row_existence]=0
+TEST_DESCRIPTION[row_existence]="Checks if there are rows in ${L0_packets_name},${tmanalog_name},${tmdiscrete_name},${tsl_name},${tmdecom_name}, and ${telemetry_item_definition_name}"
+
+declare -a ROW_EXISTANCE_QUERIES
+
+# For each qualified table name, create a query testing for existence of rows in table
+for qualified_table in ${L0_packets_name} ${tmanalog_name} ${tmdiscrete_name} ${tsl_name} ${tmdecom_name} ${telemetry_item_definition_name}; 
+do
+ROW_EXISTANCE_QUERIES+=( "$(cat <<SQL
+    SELECT COUNT(*) from ${qualified_table} where rownum < 5;
 SQL
-)
-TEST_DESCRIPTION[L0_row_existence]="Checks if L0_Packets table is non-empty."
-TEST_WEIGHT[L0_row_existence]=0
+)~" )
+done
 
-
-TEST_SQL[tmanalog_row_existence]=$(cat <<SQL
-    SELECT COUNT(*) from ${tmanalog_name} where rownum < 5;
-SQL
-)
-TEST_DESCRIPTION[tmanalog_row_existence]="Checks if TManalog table is non-empty."
-TEST_WEIGHT[tmanalog_row_existence]=0
-
-
-TEST_SQL[tmdiscrete_row_existence]=$(cat <<SQL
-    SELECT COUNT(*) from ${tmdiscrete_name} where rownum < 5;
-SQL
-)
-TEST_DESCRIPTION[tmdiscrete_row_existence]="Checks if TMdiscrete table is non-empty."
-TEST_WEIGHT[tmdiscrete_row_existence]=0
-
-
-TEST_SQL[tsl_row_existence]=$(cat <<SQL
-    SELECT COUNT(*) from ${tsl_name} where rownum < 5;
-SQL
-)
-TEST_DESCRIPTION[tsl_row_existence]="Checks if TelemetryStorageLocation table is non-empty."
-TEST_WEIGHT[tsl_row_existence]=0
-
-
-TEST_SQL[tmdecom_row_existence]=$(cat <<SQL
-   SELECT COUNT(*) from ${tmdecom_name} where rownum < 5;
-SQL
-)
-TEST_DESCRIPTION[tmdecom_row_existence]="Checks if TMDecom table is non-empty."
-TEST_WEIGHT[tmdecom_row_existence]=0
-
-
-TEST_SQL[tid_row_existence]=$(cat <<SQL
-   SELECT COUNT(*) from ${telemetry_item_definition_name} where rownum < 5;
-SQL
-)
-TEST_DESCRIPTION[tid_row_existence]="Checks if TelemetryItemDefinition table is non-empty."
-TEST_WEIGHT[tid_row_existence]=0
+# Key-value pair, all the queries testing row_existence are matched to the 'row_existence' key
+temp_ROW_EXISTANCE_QUERIES="${ROW_EXISTANCE_QUERIES[*]}"
+# Remove the trailing '~'
+TEST_SQL[row_existence]="${temp_ROW_EXISTANCE_QUERIES::-1}"
 
 
 # Check for invalid TMDecom entries (LENGTH > 64)
@@ -390,7 +357,7 @@ for object in $online_L0_partitions_and_tables; do
                 ORDER BY DEFINITIONSTART ASC
             ) AS DEFINITIONSTOP
         FROM ${tmdecom_name}
-        -- 1=1 ensures that we don't have an extra leading AND in the query
+        -- 1=1 ensures that we don't have an extra leading 'AND' in the query
         WHERE 1=1 $sid_clause
     )
     SELECT /*+ PARALLEL */ '    TLMID ' || d.TLMID || ' (${decom_id} ' || d.${decom_id} || ', SID=$system_id' ||
@@ -583,42 +550,67 @@ else
     read -r -a tests_to_run <<< "$tests_list_sorted"
 fi
 
+echo
+echo "Starting testing:"
+echo
+
+# Go through each test and if the test is testing by partition enter the neted for loop and run all by partition tests
 for test_name in "${tests_to_run[@]}"; do
     
     loop_error=0
-    echo "Running test $test_name."
+    echo "Running test $test_name:"
     echo "${TEST_DESCRIPTION[$test_name]}"
     echo
 
-    if [ "$dryrun" -eq 1 ]; then
-        echo "DRYRUN: Query for test $test_name:"
-        if [ "$test_name" == "packet_length" ] && [[ "$online_L0_partitions_and_tables" != "NONE" ]]; then
-            # Restoring indexed array from '~' separated string (-d '' reads until the null byte)
-            IFS="~" read -r -d '' -a RESTORED <<< "${TEST_SQL[$test_name]}"
-            for query in "${RESTORED[@]}"; do
-                get_partition=$(echo "$query" | grep -oP 'PARTITION \(\s*\K[^)\s]+')
-                echo "Packet Length Query for partition ${get_partition}:"
-                echo "${query}"
-                echo
-            done
-        else
-            echo "${TEST_SQL[$test_name]}"
-        fi
-
-        continue
+    if [ "$dry_run" -eq 1 ]; then
+        echo "DRY_RUN: Query for test $test_name:"
     fi
 
-    save_test_output=""
-    # When the packet_length test is testing by partition, enter this conditional
-    if [ "$test_name" == "packet_length" ] && [[ "$online_L0_partitions_and_tables" != "NONE" ]]; then
+    # When the packet_length test is testing by partition or for the row_existence test, enter this conditional
+    if [[ "$test_name" == "row_existence" || ( "$test_name" == "packet_length" && "$online_L0_partitions_and_tables" != "NONE") ]]; then
+        
+        if [ "$test_name" == "packet_length" ]; then
+
+            error_descriptor="partition"
+        else
+            
+            error_descriptor="table"
+        fi
+
         # Restoring indexed array from '~' separated string (-d '' reads until the null byte)
         IFS="~" read -r -d '' -a RESTORED <<< "${TEST_SQL[$test_name]}"
+        
+
         for query in "${RESTORED[@]}"; do
-            test_output=""
-            # get the partition name from the PARTITION (....) by matching on 'PARTITION ( ' and then 
-            # reset the match and get the partition name which is one or more characters that are not space
-            get_partition=$(echo "$query" | grep -oP 'PARTITION \(\s*\K[^)\s]+')
-            echo "Running $test_name for partition $get_partition"
+
+            if [ "$test_name" == "packet_length" ]; then
+                # Get the partition name from the PARTITION (....) by matching on 'PARTITION ( ' 
+                # -o only prints the matching string instead of the whole line
+                # -P pearl complete which is important for the \K which tells grep to restart search from that spot
+                get_partition_or_table=$(echo "$query" | grep -oP 'PARTITION \(\s*\K[^)\s]+')
+                echo "Running $test_name for partition $get_partition_or_table"
+                # Run the test query
+                if [ "$dry_run" -eq 1 ]; then
+                    echo "Packet Length Query for partition ${get_partition_or_table}:"
+                    echo "${query}"
+                    echo
+                    continue
+                fi
+            else
+                # Get the table name by looking for string between 'from ' and ' '
+                # -o only prints the matching string instead of the whole line
+                # -P pearl complete which is important for the \K which tells grep to restart search from that spot
+                get_partition_or_table=$(echo "$query" | grep -oP 'from \K[^\s]+')
+                
+                if [ "$dry_run" -eq 1 ]; then
+                    echo "Row Existance Query for table ${get_partition_or_table}:"
+                    echo "${query}"
+                    echo
+                    continue
+                fi
+            fi
+
+
             test_output=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
             whenever oserror exit 1
             whenever sqlerror exit 1
@@ -629,26 +621,40 @@ for test_name in "${tests_to_run[@]}"; do
 
             ${query}
 EOD
-    )
+)
             if [ $? -ne 0 ]; then
                 exit_status=1
                 loop_error=1
                 echo "$test_output"
-                echo "An error occurred while running test $test_name on partition $get_partition. See error output and test description above. Continuing to next partition..."
+                echo "An error occurred while running test $test_name on $error_descriptor $get_partition_or_table. See error output and test description above. Continuing to next ${error_descriptor}..."
                 continue
             fi
 
             if [[ -n "$test_output" ]]; then
                 exit_status=1
                 loop_error=1
-                echo "FAILURE: $test_name failed for partition $get_partition see below for details"
-                echo "$test_output"
-                echo
+                if [ "$test_name" == "row_existence" ]; then
+                    row_count=$(echo "$test_output" | xargs)
+                    if [ "$row_count" -eq 0 ]; then
+                        exit_status=1
+                        loop_error=1
+                        echo "FAILURE: $test_name failed for $error_descriptor $get_partition_or_table indicating empty table"
+                    fi
+                else
+                    echo "FAILURE: $test_name failed for $error_descriptor $get_partition_or_table see below for details"
+                    echo "$test_output"
+                    echo
+                fi
             fi
-
         done
     else 
-        save_test_output=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+        if [ "$dry_run" -eq 1 ]; then
+            echo "${TEST_SQL[$test_name]}"
+            echo
+            continue
+        fi
+        # Run the test query
+        test_output=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
         whenever oserror exit 1
         whenever sqlerror exit 1
         set heading off
@@ -662,30 +668,34 @@ EOD
         if [ $? -ne 0 ]; then
             exit_status=1
             loop_error=1
-            echo "$save_test_output"
+            echo "$test_output"
             echo "An error occurred while running test $test_name. See error output and test description above."
             continue
         fi
 
-        if echo "$test_name" | grep -i "existence" > /dev/null 2>&1 ; then
-            row_count=$(echo "$save_test_output" | xargs)
-            if [ "$row_count" -eq 0 ]; then
-                echo
-                echo "FAILURE: Test $test_name indicates empty table, see test output and description above. Continuing to next test..."
-                echo
+        if [[ -n "$test_output" ]]; then
+            # Look for 'existence' in the test name while ignoring letter casing
+            # If 'existence' is in name, then the test is one of these:
+            # L0_row_existence, tmanalog_row_existence, tmdiscrete_row_existence, tsl_row_existence,
+            # tmdecom_row_existence, or tid_row_existence
+            if [ "$test_name" == "row_existence" ]; then
+                row_count=$(echo "$test_output" | xargs)
+                if [ "$row_count" -eq 0 ]; then
+                    exit_status=1
+                    loop_error=1
+                    echo
+                    echo "FAILURE: Test $test_name indicates empty table, see test output and description above. Continuing to next test..."
+                    echo
+                else
+                    echo
+                    echo "SUCCESS: Test $test_name indicates non-empty table. Continuing to next test..."
+                    echo
+                fi  
             else
-                echo
-                echo "SUCCESS: Test $test_name indicates non-empty table. Continuing to next test..."
-                echo
+                exit_status=1
+                loop_error=1
+                echo "$test_output"
             fi
-
-            continue
-        fi
-        
-        if [[ -n "$save_test_output" ]]; then
-            exit_status=1
-            loop_error=1
-            echo "$save_test_output"
         fi
     fi
 
@@ -712,10 +722,10 @@ if [ $? -ne 0 ]; then
     time_elapsed="Failed to Calculate"
 fi
 
-if [ "$dryrun" -eq 1 ]; then
+if [ "$dry_run" -eq 1 ]; then
     echo
-    echo "Dryrun completed successfully at ${post_validation_timestamp}"
-    echo "Time taken for dryrun: ${time_elapsed}"
+    echo "Dry_run completed successfully at ${post_validation_timestamp}"
+    echo "Time taken for dry_run: ${time_elapsed}"
     echo "No queries executed. Exiting..."
     exit 0
 fi
