@@ -570,7 +570,6 @@ for test_name in "${tests_to_run[@]}"; do
     if [[ "$test_name" == "row_existence" || ( "$test_name" == "packet_length" && "$online_L0_partitions_and_tables" != "NONE") ]]; then
         
         if [ "$test_name" == "packet_length" ]; then
-
             error_descriptor="partition"
         else
             
@@ -631,8 +630,6 @@ EOD
             fi
 
             if [[ -n "$test_output" ]]; then
-                exit_status=1
-                loop_error=1
                 if [ "$test_name" == "row_existence" ]; then
                     row_count=$(echo "$test_output" | xargs)
                     if [ "$row_count" -eq 0 ]; then
@@ -641,6 +638,8 @@ EOD
                         echo "FAILURE: $test_name failed for $error_descriptor $get_partition_or_table indicating empty table"
                     fi
                 else
+                    exit_status=1
+                    loop_error=1
                     echo "FAILURE: $test_name failed for $error_descriptor $get_partition_or_table see below for details"
                     echo "$test_output"
                     echo
@@ -674,10 +673,6 @@ EOD
         fi
 
         if [[ -n "$test_output" ]]; then
-            # Look for 'existence' in the test name while ignoring letter casing
-            # If 'existence' is in name, then the test is one of these:
-            # L0_row_existence, tmanalog_row_existence, tmdiscrete_row_existence, tsl_row_existence,
-            # tmdecom_row_existence, or tid_row_existence
             if [ "$test_name" == "row_existence" ]; then
                 row_count=$(echo "$test_output" | xargs)
                 if [ "$row_count" -eq 0 ]; then
@@ -697,6 +692,10 @@ EOD
                 echo "$test_output"
             fi
         fi
+    fi
+
+    if [ "$dry_run" -eq 1 ]; then
+        continue
     fi
 
     if [ "$loop_error" -ne 0 ]; then
