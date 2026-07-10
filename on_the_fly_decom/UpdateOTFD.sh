@@ -136,7 +136,7 @@ fi
 
 required_db_version="${required_db_versions[$generic_version]}"
 if [ -z "$required_db_version" ]; then
-    echo "ERROR: Unable to determine required database version for target_version $target_version. Please populate required_db_versions. Exiting..."
+    echo "ERROR: Unable to determine required database version for generic_version $generic_version. Please populate required_db_versions. Exiting..."
     exit 1
 fi
 
