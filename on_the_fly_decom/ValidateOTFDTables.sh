@@ -673,24 +673,9 @@ EOD
         fi
 
         if [[ -n "$test_output" ]]; then
-            if [ "$test_name" == "row_existence" ]; then
-                row_count=$(echo "$test_output" | xargs)
-                if [ "$row_count" -eq 0 ]; then
-                    exit_status=1
-                    loop_error=1
-                    echo
-                    echo "FAILURE: Test $test_name indicates empty table, see test output and description above. Continuing to next test..."
-                    echo
-                else
-                    echo
-                    echo "SUCCESS: Test $test_name indicates non-empty table. Continuing to next test..."
-                    echo
-                fi  
-            else
-                exit_status=1
-                loop_error=1
-                echo "$test_output"
-            fi
+            exit_status=1
+            loop_error=1
+            echo "$test_output"
         fi
     fi
 
