@@ -231,26 +231,29 @@ declare -A TEST_DESCRIPTION
 declare -A TEST_WEIGHT
 
 TEST_WEIGHT[row_existence]=0
-TEST_DESCRIPTION[row_existence]="Checks if there are rows in ${L0_packets_name},${tmanalog_name},${tmdiscrete_name},${tsl_name},
-${tmdecom_name}, and ${telemetry_item_definition_name}"
 
-declare -a ROW_EXISTENCE_QUERIES
+# Hardcoding case for IXPEPROD SID 1 because the original value of $tmdiscrete_name will be IXPE_L1.TMdiscrete_SID1, which is a view that takes a long time to return results.
+# The IXPE_L1.TMdiscrete_SID1 view is a union all of IXPE_L1.TMDISCRETE_THIN_SID1 and IXPE_L1.TMDISCRETE_UNTHINNED_SID1
+# This is a simpler solution than changing the Views construction
+if [[ "$ORACLE_SID" == "ixpe"* ]] && [ "$system_id" -eq 1 ];then
+    tmdiscrete_existence_query="SELECT 'No rows exist in ${tmdiscrete_name}' FROM dual WHERE NOT EXISTS (SELECT 1 FROM IXPE_L1.TMDISCRETE_THIN_SID1 WHERE ROWNUM < 2 UNION SELECT 1 FROM IXPE_L1.TMDISCRETE_UNTHINNED_SID1 WHERE ROWNUM < 2);"
+else
+    tmdiscrete_existence_query="SELECT 'No rows exist in ${tmdiscrete_name}' FROM dual WHERE NOT EXISTS (SELECT 1 FROM ${tmdiscrete_name} WHERE ROWNUM < 2);"
+fi
 
-# For each qualified table name, create a query testing for existence of rows in that table
-# Add the query with a '~' at the end to a string that will store the queries until execution
-for qualified_table in ${L0_packets_name} ${tmanalog_name} ${tmdiscrete_name} ${tsl_name} ${tmdecom_name} ${telemetry_item_definition_name}; 
-do
-ROW_EXISTENCE_QUERIES+=( "$(cat <<SQL
-    SELECT COUNT(*) from ${qualified_table} where rownum < 5;
+TEST_DESCRIPTION[row_existence]="Checks if there are rows in ${L0_packets_name}, ${tmanalog_name}, ${tmdiscrete_name}, ${tsl_name}, ${tmdecom_name}, and ${telemetry_item_definition_name}"
+
+# Each query returns a row (the anomaly message) only when its table is empty
+# NOT EXISTS stops at the first row.
+TEST_SQL[row_existence]=$(cat <<SQL
+    SELECT 'No rows exist in ${L0_packets_name}' FROM dual WHERE NOT EXISTS (SELECT 1 FROM ${L0_packets_name} WHERE ROWNUM < 2);
+    SELECT 'No rows exist in ${tmanalog_name}' FROM dual WHERE NOT EXISTS (SELECT 1 FROM ${tmanalog_name} WHERE ROWNUM < 2);
+    ${tmdiscrete_existence_query}
+    SELECT 'No rows exist in ${tsl_name}' FROM dual WHERE NOT EXISTS (SELECT 1 FROM ${tsl_name} WHERE ROWNUM < 2);
+    SELECT 'No rows exist in ${tmdecom_name}' FROM dual WHERE NOT EXISTS (SELECT 1 FROM ${tmdecom_name} WHERE ROWNUM < 2);
+    SELECT 'No rows exist in ${telemetry_item_definition_name}' FROM dual WHERE NOT EXISTS (SELECT 1 FROM ${telemetry_item_definition_name} WHERE ROWNUM < 2);
 SQL
-)~" )
-done
-
-# Key-value pair, all the queries testing row_existence are matched to the 'row_existence' key
-temp_ROW_EXISTENCE_QUERIES="${ROW_EXISTENCE_QUERIES[*]}"
-# Remove the trailing '~'
-TEST_SQL[row_existence]="${temp_ROW_EXISTENCE_QUERIES::-1}"
-
+)
 
 # Check for invalid TMDecom entries (LENGTH > 64)
 TEST_SQL[length_gt_64]=$(cat <<SQL
@@ -425,7 +428,6 @@ come into effect at the same time or before the TSL entry). If such a row is not
 a row comes into effect."
 TEST_WEIGHT[tsl_L0_tmdecom]=2
 
-
 # Check that every TMDecom row has a corresponding TSL row with isInL0=1 (tlmid + dmid foreign key)
 TEST_SQL[tmdecom_L0_tsl]=$(cat <<SQL
     SELECT '        TLMID ' || TLMID || '($decom_id ' || $decom_id || ', SID=$system_id): TMDecom Entry (DefinitionStart=' || DEFINITIONSTART || 
@@ -557,8 +559,7 @@ echo "Starting testing:"
 echo
 
 # Go through each test
-# There are multiple queries for the 'row_existence' test
-# There are also multiple queries for the 'packet_length' test if the -r flag is not used
+# There are multiple queries for the 'packet_length' test if the -r flag is not used
 # The inner loop handles tests that have multiple queries by extracting each query from a '~' separated string of queries
 for test_name in "${tests_to_run[@]}"; do
     
@@ -574,16 +575,7 @@ for test_name in "${tests_to_run[@]}"; do
     fi
 
     # When the packet_length test is testing by partition, enter this conditional
-    # Also enter this conditional for the row_existence test
-    if [[ "$test_name" == "row_existence" || ( "$test_name" == "packet_length" && "$online_L0_partitions_and_tables" != "NONE") ]]; then
-        
-        # Change the output descriptor depending on the test
-        if [ "$test_name" == "packet_length" ]; then
-            error_descriptor="partition"
-        else
-            
-            error_descriptor="table"
-        fi
+    if [[ "$test_name" == "packet_length" && "$online_L0_partitions_and_tables" != "NONE" ]]; then
 
         # Restoring indexed array from '~' separated string (-d '' reads until the null byte)
         IFS="~" read -r -d '' -a RESTORED <<< "${TEST_SQL[$test_name]}"
@@ -591,35 +583,21 @@ for test_name in "${tests_to_run[@]}"; do
 
         for query in "${RESTORED[@]}"; do
 
-            if [ "$test_name" == "packet_length" ]; then
-                # Get the partition name from the PARTITION (....) by matching on 'PARTITION ( ' 
-                # -o only prints the matching string instead of the whole line
-                # [^)\s]+ -> match all characters except ')' and whitespace
-                # -P enables Perl-compatible regex, needed for \K, which resets the start of the reported match
-                # from that spot, which removes the 'PARTITION ( ' and only gets the partition name
+            # Get the partition name from the PARTITION (....) by matching on 'PARTITION ( ' 
+            # -o only prints the matching string instead of the whole line
+            # [^)\s]+ -> match all characters except ')' and whitespace
+            # -P enables Perl-compatible regex, needed for \K, which resets the start of the reported match
+            # from that spot, which removes the 'PARTITION ( ' and only gets the partition name
 
-                get_partition_or_table=$(echo "$query" | grep -oP 'PARTITION \(\s*\K[^)\s]+')
-                echo "Running $test_name for partition $get_partition_or_table"
-                # Run the test query
-                if [ "$dry_run" -eq 1 ]; then
-                    echo "packet_length query for partition ${get_partition_or_table}:"
-                    echo "${query}"
-                    echo
-                    continue
-                fi
-            else
-                # Get the table name by looking for string between 'from ' and ' '
-                # -o only prints the matching string instead of the whole line
-                # [^)\s]+ -> match all characters except ')' and whitespace
-                # -P enables Perl-compatible regex, needed for \K, which resets the start of the reported match
-                get_partition_or_table=$(echo "$query" | grep -oP 'from \K[^\s]+')
-                
-                if [ "$dry_run" -eq 1 ]; then
-                    echo "row_existence query for table ${get_partition_or_table}:"
-                    echo "${query}"
-                    echo
-                    continue
-                fi
+            get_partition=$(echo "$query" | grep -oP 'PARTITION \(\s*\K[^)\s]+')
+            echo "Running $test_name for partition $get_partition"
+            
+            # Do not run the query if this is a dry_run, simply print it out
+            if [ "$dry_run" -eq 1 ]; then
+                echo "packet_length query for partition ${get_partition}:"
+                echo "${query}"
+                echo
+                continue
             fi
             # Run the test query
             test_output=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
@@ -637,31 +615,25 @@ EOD
                 exit_status=1
                 loop_error=1
                 echo "$test_output"
-                echo "An error occurred while running test $test_name on $error_descriptor $get_partition_or_table. See error output and test description above. Continuing to next ${error_descriptor}..."
+                echo "An error occurred while running test $test_name on partition $get_partition. See error output and test description above. Continuing to next partition..."
                 continue
             fi
 
             if [[ -n "$test_output" ]]; then
-
-                # The row_existence test outputs a number
-                # If this number is non-zero, then there is data and the test passed for that table
-                if [ "$test_name" == "row_existence" ]; then
-                    row_count=$(echo "$test_output" | xargs)
-                    if [ "$row_count" -eq 0 ]; then
-                        exit_status=1
-                        loop_error=1
-                        echo "FAILURE: $test_name returned 0 rows for $error_descriptor $get_partition_or_table indicating empty table"
-                    fi
-                else
-                    exit_status=1
-                    loop_error=1
-                    echo "FAILURE: $test_name failed for $error_descriptor $get_partition_or_table see below for details"
-                    echo "$test_output"
-                    echo
-                fi
+                exit_status=1
+                loop_error=1
+                echo "FAILURE: $test_name failed for partition $get_partition see below for details"
+                echo "$test_output"
+                echo
             fi
         done
+
+        # Do not want to output SUCCESS:... if script is run in dry_run mode
+        if [ "$dry_run" -eq 1 ]; then
+            continue
+        fi
     else 
+        # Do not run the query if this is a dry_run, simply print it out
         if [ "$dry_run" -eq 1 ]; then
             echo "${TEST_SQL[$test_name]}"
             echo
@@ -692,11 +664,6 @@ EOD
             loop_error=1
             echo "$test_output"
         fi
-    fi
-
-    # Do not want to output SUCCESS:... if script is run in dry_run mode
-    if [ "$dry_run" -eq 1 ]; then
-        continue
     fi
 
     if [ "$loop_error" -ne 0 ]; then
