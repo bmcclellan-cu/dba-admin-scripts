@@ -16,7 +16,7 @@
 #
 #####################################################################################
 
-usage="Usage: UpdateOTFD.sh [ ORACLE_SID ] [ update_type (Can be Generic, IXPE, EMA, or NEOS) ] [ target_version (Must be formatted X.X.X) ] [ repo_path (optional, path to db_tools. Defaults to \$HOME/db_tools/) ]"
+usage="Usage: UpdateOTFD.sh [ ORACLE_SID ] [ update_type (Can be Generic, IXPE, EMA, or NEOS) ] [ target_version (Must be formatted X.X.X) ] [ repo_path (optional, path to OTFD. Defaults to \$HOME/OTFD/) ]"
 example="Example: UpdateOTFD.sh ixpeprod Generic 0.2.5 /home/oracle/db_tools/"
 
 # Static Associative Array (dictionary) mapping generic package versions to required database version.
@@ -53,9 +53,9 @@ fi
 export ORACLE_SID="${1,,}"
 update_type="${2^^}"
 target_version="$3"
-repo_root="${4:-$HOME/db_tools}"
+repo_root="${4:-$HOME/OTFD}"
 
-repo_package_dir="$repo_root/src/on_the_fly_decom"
+repo_package_dir="$repo_root/on_the_fly_decom"
 
 
 if ! [[ "$target_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
