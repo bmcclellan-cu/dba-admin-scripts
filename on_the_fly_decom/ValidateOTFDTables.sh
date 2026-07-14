@@ -244,7 +244,9 @@ fi
 TEST_DESCRIPTION[row_existence]="Checks if there are rows in ${L0_packets_name}, ${tmanalog_name}, ${tmdiscrete_name}, ${tsl_name}, ${tmdecom_name}, and ${telemetry_item_definition_name}"
 
 # Each query returns a row (the anomaly message) only when its table is empty
-# NOT EXISTS stops at the first row.
+# ROWNUM sequentially counts the number of rows returned from the query starting at 1
+# Therefore using WHERE ROWNUM < 2 will only give the first row of actual data
+# NOT EXISTS stops at the first row
 TEST_SQL[row_existence]=$(cat <<SQL
     SELECT 'No rows exist in ${L0_packets_name}' FROM dual WHERE NOT EXISTS (SELECT 1 FROM ${L0_packets_name} WHERE ROWNUM < 2);
     SELECT 'No rows exist in ${tmanalog_name}' FROM dual WHERE NOT EXISTS (SELECT 1 FROM ${tmanalog_name} WHERE ROWNUM < 2);
