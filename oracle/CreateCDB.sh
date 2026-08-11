@@ -24,8 +24,8 @@
 #
 ######################################################
 usage="Usage: CreateCDB.sh [ -d <dryrun_dest_path> (optional, dryrun database creation, see header)] [ new_db_name (not including the _cdb suffix) ] [ restore_base_directory ]"
-example1="Example: DB_SYS_PASSWORD=pwd123# DB_SYSTEM_PASSWORD=pwd123# CreateCDB.sh sid1prod /ssd_internal/restore_cdb/"
-example2="         DB_SYS_PASSWORD=pwd123# DB_SYSTEM_PASSWORD=pwd123# CreateCDB.sh -d /home/oracle/testdb_create_scripts testdb /path/to/restore/dir/"
+example1="Example: DB_SYS_PASSWORD='<sys_password>' DB_SYSTEM_PASSWORD='<system_password>' CreateCDB.sh sid1prod /ssd_internal/restore_cdb/"
+example2="         DB_SYS_PASSWORD='<sys_password>' DB_SYSTEM_PASSWORD='<system_password>' CreateCDB.sh -d /home/oracle/testdb_create_scripts testdb /path/to/restore/dir/"
 
 # Process input options
 dryrun_opt=0
