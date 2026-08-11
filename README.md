@@ -1,5 +1,8 @@
 # dba-admin-scripts
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21881333.svg)](https://doi.org/10.5281/zenodo.21881333)
+[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
+
 Generic database and AWS command-line scripts, published by the Database
 Administration team at the Laboratory for Atmospheric and Space Physics (LASP),
 University of Colorado Boulder.
@@ -38,6 +41,19 @@ This repository is published automatically from an internal repository, so
 edits made here are overwritten on the next publish and pull requests against
 these files cannot be merged directly. Bug reports and suggestions are welcome
 as issues — please open one rather than a PR.
+
+## Citing
+
+Archived on Zenodo. The DOI above is the *concept* DOI — it always resolves to
+the most recent release, so it is the one to cite:
+
+> McClellan, B., Turns, B., Schmidt, R., & Sadler, C. dba-admin-scripts:
+> generic database and AWS command-line scripts. Zenodo.
+> https://doi.org/10.5281/zenodo.21881333
+
+To cite the exact version you used instead, take the version-specific DOI from
+that release's Zenodo page. Machine-readable metadata is in
+[CITATION.cff](CITATION.cff); GitHub's "Cite this repository" button reads it.
 
 ## License
 
