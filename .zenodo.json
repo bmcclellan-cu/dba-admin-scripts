@@ -1,0 +1,32 @@
+{
+  "title": "dba-admin-scripts: generic database and AWS command-line scripts",
+  "description": "General-purpose command-line scripts for database and cloud administration, covering routine administration, reporting, backup and restore, and setup tasks. Written to be readable and adaptable rather than tied to a particular deployment. Published by the Database Administration team at the Laboratory for Atmospheric and Space Physics (LASP), University of Colorado Boulder.",
+  "upload_type": "software",
+  "access_right": "open",
+  "license": "BSD-3-Clause",
+  "creators": [
+    {
+      "name": "McClellan, Brian",
+      "affiliation": "Laboratory for Atmospheric and Space Physics, University of Colorado Boulder"
+    },
+    {
+      "name": "Turns, Bryan",
+      "affiliation": "Laboratory for Atmospheric and Space Physics, University of Colorado Boulder"
+    },
+    {
+      "name": "Schmidt, Robert",
+      "affiliation": "Laboratory for Atmospheric and Space Physics, University of Colorado Boulder"
+    },
+    {
+      "name": "Sadler, Conrad",
+      "affiliation": "Laboratory for Atmospheric and Space Physics, University of Colorado Boulder"
+    }
+  ],
+  "keywords": [
+    "database administration",
+    "oracle",
+    "postgresql",
+    "aws",
+    "shell scripts"
+  ]
+}

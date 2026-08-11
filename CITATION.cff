@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using these metadata."
+title: "dba-admin-scripts: generic database and AWS command-line scripts"
+abstract: >-
+  General-purpose command-line scripts for database and cloud administration,
+  covering routine administration, reporting, backup and restore, and setup
+  tasks. Written to be readable and adaptable rather than tied to a particular
+  deployment.
+type: software
+license: BSD-3-Clause
+repository-code: "https://github.com/bmcclellan-cu/dba-admin-scripts"
+version: 0.1.0
+date-released: "2026-08-11"
+keywords:
+  - database administration
+  - oracle
+  - postgresql
+  - aws
+  - shell scripts
+authors:
+  - family-names: McClellan
+    given-names: Brian
+    affiliation: "Laboratory for Atmospheric and Space Physics, University of Colorado Boulder"
+  - family-names: Turns
+    given-names: Bryan
+    affiliation: "Laboratory for Atmospheric and Space Physics, University of Colorado Boulder"
+  - family-names: Schmidt
+    given-names: Robert
+    affiliation: "Laboratory for Atmospheric and Space Physics, University of Colorado Boulder"
+  - family-names: Sadler
+    given-names: Conrad
+    affiliation: "Laboratory for Atmospheric and Space Physics, University of Colorado Boulder"
