@@ -1,0 +1,170 @@
+<?xml version = '1.0'?>
+<!--
+AvailabilityFlag: Public
+-->
+<DatabaseTemplate name="26AI DBCA Base Template" description=" " version="23.0.0.0.0">
+    <!--
+        All default features are enabled so that the CDB is able to host our DBs during the
+        migration.
+    -->
+    <CommonAttributes>
+        <option name="OMS" value="true" includeInPDBs="true"/>
+        <option name="JSERVER" value="true" includeInPDBs="true"/>
+        <option name="SPATIAL" value="true" includeInPDBs="true"/>
+        <option name="IMEDIA" value="false" includeInPDBs="false"/>
+        <option name="ORACLE_TEXT" value="true" includeInPDBs="true">
+            <tablespace id="SYSAUX"/>
+        </option>
+        <option name="SAMPLE_SCHEMA" value="false" includeInPDBs="false"/>
+        <option name="CWMLITE" value="true" includeInPDBs="true">
+            <tablespace id="SYSAUX"/>
+        </option>
+        <option name="DV" value="true" includeInPDBs="true"/>
+    </CommonAttributes>
+    <Variables/>
+    <CustomScripts Execute="false"/>
+    <!-- This defines that the CDB will be created with a default PDB$SEED with DBID 1754118941 -->
+    <PluggableDatabases>
+        <PluggableDatabase pdb_name="PDB$SEED" con_id="2" pdb_dbid="1754118941"/>
+    </PluggableDatabases>
+    <!--
+        The init params have been matched as closely as possible to our init template file, but DBCA
+        is over-restrictive with input validation and some parameters cause DB creation to fail, so
+        we update the pfile post-create and bounce the DB to bring everything up-to-date.
+    -->
+    <InitParamAttributes>
+        <InitParams>
+            <!-- Note: These two values are entirely ignored by DBCA and need to be set via command flags -->
+            <initParam name="db_name" value=""/>
+            <initParam name="db_unique_name" value=""/>
+
+            <!-- We specify a custom db_recovery_file_dest when calling DBCA -->
+            <initParam name="db_recovery_file_dest" value=""/>
+
+            <!--
+                db_recovery_file_dest_size is validated against the available free storage space by DBCA,
+                which causes DB creation to fail, so we exclude it until the bounce-refresh
+            -->
+            <!-- <initParam name="db_recovery_file_dest_size" value="107374182400000" unit="BYTES"/> -->
+            <initParam name="db_writer_processes" value="4"/>
+            <initParam name="compatible" value="23.6.0"/>
+            <initParam name="dispatchers" value="(PROTOCOL=TCP) (SERVICE=XDB)"/>
+            <initParam name="enable_pluggable_database" value="TRUE"/>
+            <initParam name="undo_retention" value="43200"/>
+            <initParam name="session_cached_cursors" value="300"/>
+            <initParam name="recyclebin" value="OFF"/>
+            <initParam name="sga_target" value="2" unit="GB"/>
+            <initParam name="diagnostic_dest" value="{ORACLE_BASE}"/>
+            <initParam name="cpu_count" value="10"/>
+            <initParam name="parallel_servers_target" value="5"/>
+            <initParam name="parallel_min_servers" value="2"/>
+            <initParam name="open_cursors" value="500"/>
+            <initParam name="processes" value="200"/>
+            <initParam name="job_queue_processes" value="16"/>
+            <initParam name="nls_language" value="AMERICAN"/>
+            <initParam name="pga_aggregate_target" value="1" unit="GB"/>
+            <initParam name="parallel_max_servers" value="5"/>
+            <initParam name="db_block_size" value="8192" unit="BYTES"/>
+            <initParam name="nls_territory" value="AMERICA"/>
+            <initParam name="control_files" value="(&quot;{RESTORE_DIR}/ctl_01.ctl&quot;, &quot;{RESTORE_DIR}/ctl_02.ctl&quot;)"/>
+            <initParam name="db_files" value="5000"/>
+            <initParam name="db_domain" value=""/>
+            <initParam name="remote_login_passwordfile" value="EXCLUSIVE"/>
+        </InitParams>
+
+        <!-- This parameter must match our current databases, as it cannot be easily changed once the database has been created. -->
+        <MiscParams>
+            <characterSet>AL32UTF8</characterSet>
+        </MiscParams>
+        <!--
+            Note: DBCA requires that the SPfile tag is present in the template, but completely ignores the contents
+            of the tag and simply places the spfile at $ORACLE_HOME/dbs/spfile{ORACLE_SID}.ora.
+        -->
+        <SPfile useSPFile="true">{ORACLE_HOME}/dbs/spfile{DB_NAME}.ora</SPfile>
+    </InitParamAttributes>
+    <StorageAttributes>
+        <!--
+            The DataFiles element tells DBCA to restore from an RMAN backup bundled with the Oracle binaries.
+            The id attribute for each of the individual datafiles indicates what datafile number from the backup to
+            utilize, and CANNOT be altered without severely breaking the database that gets created.
+
+            DBCA silently ignores the blocksize attribute for the Name tag.
+        -->
+        <DataFiles>
+            <!-- Base datafile location. Filenames increment as Seed_Database.dfb1, Seed_Database.dbf2, etc. -->
+            <Location>{ORACLE_HOME}/assistants/dbca/templates/Seed_Database.dfb</Location>
+            <DatafilesEncrypted>false</DatafilesEncrypted>
+
+            <!--
+                The database contained in the RMAN backup.
+                db_id does not determine the DBID of the database this template creates.
+            -->
+            <SourceDBName cdb="true" db_id="256454618">seeddata</SourceDBName>
+
+            <!-- Units: Size is in MB, BlockSize is in Bytes -->
+            <!-- Datafile entries for the CDB$ROOT (con_id=1) -->
+            <!-- Specifies datafile name for the SYSAUX tablespace. -->
+            <Name id="3" Tablespace="SYSAUX" Contents="PERMANENT" Size="500" autoextend="true" blocksize="8192" con_id="1" datafileEncrypted="false">{RESTORE_DIR}/data/sysaux_01.dbf</Name>
+            <!-- Specifies datafile name for the SYSTEM tablespace. -->
+            <Name id="1" Tablespace="SYSTEM" Contents="PERMANENT" Size="500" autoextend="true" blocksize="8192" con_id="1" datafileEncrypted="false">{RESTORE_DIR}/data/system_01.dbf</Name>
+            <!-- Specifies the name and datafile path for the UNDO tablespace. -->
+            <Name id="11" Tablespace="UNDOTBS1" Contents="UNDO" Size="200" autoextend="true" blocksize="8192" con_id="1" datafileEncrypted="false">{RESTORE_DIR}/data/undotbs_01.dbf</Name>
+            <!-- Specifies the datafile name for the USERS tablespace -->
+            <Name id="7" Tablespace="USERS" Contents="PERMANENT" Size="20" autoextend="true" blocksize="8192" con_id="1" datafileEncrypted="false">{RESTORE_DIR}/data/users_01.dbf</Name>
+
+            <!-- Datafile entries for PDB$SEED (con_id=2) -->
+            <!-- Specifies datafile name for the SYSAUX tablespace. -->
+            <Name id="4" Tablespace="SYSAUX" Contents="PERMANENT" Size="500" autoextend="true" blocksize="8192" con_id="2" datafileEncrypted="false">{RESTORE_DIR}/pdbseed/data/sysaux01.dbf</Name>
+            <!-- Specifies datafile name for the SYSTEM tablespace. -->
+            <Name id="2" Tablespace="SYSTEM" Contents="PERMANENT" Size="500" autoextend="true" blocksize="8192" con_id="2" datafileEncrypted="false">{RESTORE_DIR}/pdbseed/data/system01.dbf</Name>
+            <!-- Specifies the name and datafile path for the UNDO tablespace. -->
+            <Name id="9" Tablespace="UNDOTBS1" Contents="UNDO" Size="200" autoextend="true" blocksize="8192" con_id="2" datafileEncrypted="false">{RESTORE_DIR}/pdbseed/data/undotbs01.dbf</Name>
+        </DataFiles>
+        <TempFiles>
+            <!-- Temp tablespace for CDB$ROOT -->
+            <Name id="1" Tablespace="TEMP" Contents="TEMPORARY" Size="20" con_id="1" datafileEncrypted="false">{RESTORE_DIR}/temp_01.dbf</Name>
+            <!-- Temp tablespace for PDB$SEED -->
+            <Name id="2" Tablespace="TEMP" Contents="TEMPORARY" Size="20" con_id="2" datafileEncrypted="false">{RESTORE_DIR}/{PDB_NAME}/temp01.dbf</Name>
+        </TempFiles>
+        <ControlfileAttributes id="Controlfile">
+            <!--
+                These are the only 2 Controlfile parameters that matter for us, the rest are either for RAC deployments
+                or automatically adjust as needed.
+                MAXLOGFILES: Maximum # of log files the database can have, determines how much space the Controlfile allocates for filenames
+                MAXLOGMEMBERS: Maximum # of log file members (copies) the database can have, determines how much space the Controlfile allocates for filenames.
+            -->
+            <maxLogfiles>16</maxLogfiles>
+            <maxLogMembers>3</maxLogMembers>
+
+            <!-- Specify path for controlfiles to live -->
+            <image name="ctl_01.ctl" filepath="{RESTORE_DIR}/"/>
+            <image name="ctl_02.ctl" filepath="{RESTORE_DIR}/"/>
+        </ControlfileAttributes>
+
+        <!--
+            Determines the filename structure for redo logs and default starting size.
+            Each filename per log group is a redundant copy of the redo log.
+        -->
+        <RedoLogGroupAttributes id="1">
+            <reuse>false</reuse>
+            <fileSize unit="KB">5120000</fileSize>
+            <Thread>1</Thread>
+            <member ordinal="0" memberName="redo1a.log" filepath="{RESTORE_DIR}/"/>
+            <member ordinal="1" memberName="redo1b.log" filepath="{RESTORE_DIR}/"/>
+        </RedoLogGroupAttributes>
+        <RedoLogGroupAttributes id="2">
+            <reuse>false</reuse>
+            <fileSize unit="KB">5120000</fileSize>
+            <Thread>1</Thread>
+            <member ordinal="0" memberName="redo2a.log" filepath="{RESTORE_DIR}/"/>
+            <member ordinal="1" memberName="redo2b.log" filepath="{RESTORE_DIR}/"/>
+        </RedoLogGroupAttributes>
+        <RedoLogGroupAttributes id="3">
+            <reuse>false</reuse>
+            <fileSize unit="KB">5120000</fileSize>
+            <Thread>1</Thread>
+            <member ordinal="0" memberName="redo3a.log" filepath="{RESTORE_DIR}/"/>
+            <member ordinal="1" memberName="redo3b.log" filepath="{RESTORE_DIR}/"/>
+        </RedoLogGroupAttributes>
+    </StorageAttributes>
+</DatabaseTemplate>

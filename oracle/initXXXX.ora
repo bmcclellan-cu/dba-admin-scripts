@@ -1,0 +1,31 @@
+# AvailabilityFlag: Public
+#control_files needs to be updated with path provided as input from end user
+control_files='/XXXX/ctl_01.ctl','/XXXX/ctl_02.ctl'
+#db_name should be set to ORACLE_SID, max first 8 characters
+db_name='XXXX'
+#db_unique name should be set to ORACLE_SID, no limit on characters
+db_unique_name='XXXX'
+#dispatchers service should be $ORACLE_SID + XDB
+dispatchers='(PROTOCOL=TCP) (SERVICE=XXXXXDB)'
+#Set db_recovery_file_dest to the input param where current RMAN backup resides
+db_recovery_file_dest='/XXXX'
+*.compatible='19.0.0'
+*.db_block_size=8192
+*.db_domain=''
+*.db_files=5000
+*.db_recovery_file_dest_size=100000G
+*.diagnostic_dest='/dba/oracle/installs/orabase'
+*.log_buffer=89997312
+*.memory_target=3G
+*.open_cursors=500
+*.processes=2000
+*.remote_login_passwordfile='EXCLUSIVE'
+recyclebin='OFF'
+db_writer_processes=4
+undo_retention=43200
+session_cached_cursors=300
+parallel_servers_target=5
+parallel_max_servers=5
+parallel_min_servers=2
+shared_pool_size=1G
+job_queue_processes=16

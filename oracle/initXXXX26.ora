@@ -1,0 +1,40 @@
+# AvailabilityFlag: Public
+# Control_files needs to be updated with path provided as input from end user
+control_files='/XXXX/ctl_01.ctl','/XXXX/ctl_02.ctl'
+# db_name should be set to ORACLE_SID, max first 8 characters
+*.db_name='XXXX'
+# db_unique name should be set to ORACLE_SID, no limit on characters
+*.db_unique_name='XXXX'
+dispatchers='(PROTOCOL=TCP) (SERVICE=XXXXXDB)'
+db_recovery_file_dest='/XXXX'
+*.compatible='23.6.0'
+*.db_block_size=8192
+*.db_domain=''
+*.db_files=5000
+*.db_recovery_file_dest_size=100000G
+*.diagnostic_dest='/dba/oracle/installs/orabase'
+*.sga_target=2G
+*.pga_aggregate_target=1G
+*.open_cursors=500
+*.processes=200
+*.remote_login_passwordfile='EXCLUSIVE'
+recyclebin='OFF'
+db_writer_processes=4
+undo_retention=43200
+session_cached_cursors=300
+parallel_servers_target=5
+parallel_max_servers=5
+parallel_min_servers=2
+job_queue_processes=16
+# Clamp down the total number of threads available to oracle
+# to prevent excessive SGA Memory requirements.
+*.cpu_count=10
+
+# Added for 26ai
+
+# Required, creates database as CDB.
+*.enable_pluggable_database=true
+
+# Unsure if necessary, not sure when I added this
+*.nls_language='AMERICAN'
+*.nls_territory='AMERICA'
