@@ -25,6 +25,31 @@ deployment, so they can serve as a starting point for your own environment.
 Every script carries a comment header describing its purpose, usage, and
 arguments. Read that header before running anything.
 
+## Setup: the `common` symlink
+
+Scripts that call other scripts do so by absolute path, in the form:
+
+```bash
+$HOME/common/oracle/VerifyAllParam.sh
+$HOME/common/general/ConvertBytes.sh
+```
+
+So `$HOME/common` has to point at your clone of this repository, or those
+calls will fail with "No such file or directory":
+
+```bash
+git clone https://github.com/bmcclellan-cu/dba-admin-scripts.git
+ln -s "$(pwd)/dba-admin-scripts" "$HOME/common"
+```
+
+The name is `common` rather than the repository name because that is the path
+the scripts are written against internally, where the directory this
+repository is published from is named differently. Rather than rewrite every
+call site, the convention is a fixed symlink.
+
+Standalone scripts that call no helpers work without this. Anything that
+invokes another script does not.
+
 ## Before you run these
 
 They are provided as-is under the BSD 3-Clause License, with no warranty. Some
