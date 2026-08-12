@@ -1,5 +1,6 @@
 #!/bin/bash
 # AvailabilityFlag: Public
+# CrontabFlag: True
 #
 # Purpose: The purpose of this script is to shutdown the Oracle listener and either
 #	   one or all databases by ORACLE_SID. If no parameter is provided, the
@@ -46,6 +47,25 @@ input_sid=$1
 # Process SID, display error if it is abort or immediate
 if [[ ${input_sid^^} =~ ABORT|IMMEDIATE ]]; then
     echo "Input SID cannot be immediate or abort, exiting..."
+    exit 1
+fi
+
+# Source .bashrc so $ORACLE_HOME, $PATH, and $SIDSLIST are set when this script
+# runs under crontab or systemd, neither of which loads the oracle user's profile
+if [ -f "$HOME/.bashrc" ]; then
+    source "$HOME/.bashrc"
+    if [ $? -ne 0 ]; then
+        echo "An error occurred while sourcing $HOME/.bashrc. Exiting..."
+        exit 1
+    fi
+else
+    echo "Error: $HOME/.bashrc does not exist. Exiting..."
+    exit 1
+fi
+
+# Fail closed on a bad $ORACLE_HOME rather than on the sqlplus call below
+if [ ! -x "$ORACLE_HOME/bin/sqlplus" ]; then
+    echo "Error: \$ORACLE_HOME is not set to an Oracle home containing bin/sqlplus. Exiting..."
     exit 1
 fi
 
@@ -101,6 +121,14 @@ EOF
 }
 
 if [ "${input_sid^^}" == "ALL" ]; then
+    # $SIDSLIST is derived from $ORACLE_SID in .bashrc, which is unset under
+    # crontab and systemd. Without this guard the loop below iterates zero times
+    # and the script reports success without having shut anything down.
+    if [ -z "$SIDSLIST" ]; then
+        echo "Error: \$SIDSLIST is empty, so there are no databases to shut down. Set \$SIDSLIST in $HOME/.bashrc or pass a single SID instead of ALL. Exiting..."
+        exit 1
+    fi
+
     for sid in $SIDSLIST; do
         # Run shutdown function
         shutdown_sid "$sid" "$shutdown_mode"

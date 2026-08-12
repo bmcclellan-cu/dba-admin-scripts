@@ -1,5 +1,6 @@
 #!/bin/bash
 # AvailabilityFlag: Public
+# CrontabFlag: True
 #
 # Purpose: The purpose of this script is to startup either one or all databases by ORACLE_SID
 #
@@ -80,6 +81,25 @@ fi
 
 sid=$1
 
+# Source .bashrc so $ORACLE_HOME, $PATH, and $SIDSLIST are set when this script
+# runs under crontab or systemd, neither of which loads the oracle user's profile
+if [ -f "$HOME/.bashrc" ]; then
+    source "$HOME/.bashrc"
+    if [ $? -ne 0 ]; then
+        echo "An error occurred while sourcing $HOME/.bashrc. Exiting..."
+        exit 1
+    fi
+else
+    echo "Error: $HOME/.bashrc does not exist. Exiting..."
+    exit 1
+fi
+
+# Fail closed on a bad $ORACLE_HOME rather than on the sqlplus calls below
+if [ ! -x "$ORACLE_HOME/bin/sqlplus" ]; then
+    echo "Error: \$ORACLE_HOME is not set to an Oracle home containing bin/sqlplus. Exiting..."
+    exit 1
+fi
+
 # Check available memory
 memory_needed=2048
 memory_check=$("$HOME/common/general/CheckServerMemory.sh" "$memory_needed")
@@ -94,6 +114,14 @@ fi
 
 # If user typed "ALL", startup all databases
 if [ "${sid^^}" == "ALL" ]; then
+    # $SIDSLIST is derived from $ORACLE_SID in .bashrc, which is unset under
+    # crontab and systemd. Without this guard the loop below iterates zero times
+    # and the script reports success without having started anything.
+    if [ -z "$SIDSLIST" ]; then
+        echo "Error: \$SIDSLIST is empty, so there are no databases to start. Set \$SIDSLIST in $HOME/.bashrc or pass a single SID instead of ALL. Exiting..."
+        exit 1
+    fi
+
     ensure_listener_is_running
     if [ $? -ne 0 ]; then
         echo "Exiting..."

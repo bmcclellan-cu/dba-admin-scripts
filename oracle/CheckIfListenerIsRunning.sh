@@ -27,6 +27,30 @@ if [ $# -ne 0 ]; then
     exit 1
 fi
 
+# Source .bashrc only when $ORACLE_HOME is unset, which is the case under crontab
+# and systemd since neither loads the oracle user's profile. A caller that has
+# deliberately selected a different Oracle home (19c.env, 12c.sh) keeps its own.
+if [ -z "$ORACLE_HOME" ]; then
+    if [ -f "$HOME/.bashrc" ]; then
+        source "$HOME/.bashrc"
+        if [ $? -ne 0 ]; then
+            echo "An error occurred while sourcing $HOME/.bashrc. Exiting..."
+            exit 1
+        fi
+    else
+        echo "Error: $HOME/.bashrc does not exist. Exiting..."
+        exit 1
+    fi
+fi
+
+# Fail closed on a bad $ORACLE_HOME. Without this the lsnrctl call below runs
+# /bin/lsnrctl, exits non-zero, and reports "No", which makes a configuration
+# error indistinguishable from a listener that is genuinely down.
+if [ ! -x "$ORACLE_HOME/bin/lsnrctl" ]; then
+    echo "Error: \$ORACLE_HOME is not set to an Oracle home containing bin/lsnrctl. Exiting..."
+    exit 1
+fi
+
 # Run listener status check to determine if the listener is running
 # Suppress the output by storing output in a variable since script is a helper
 lsnr_status=$("$ORACLE_HOME/bin/lsnrctl" status)

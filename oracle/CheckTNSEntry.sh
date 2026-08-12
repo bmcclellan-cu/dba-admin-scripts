@@ -49,6 +49,29 @@ elif [ $# -eq 3 ]; then
     service_name="$3"
 fi
 
+# Source .bashrc only when $ORACLE_HOME is unset, which is the case under crontab
+# and systemd since neither loads the oracle user's profile. A caller that has
+# deliberately selected a different Oracle home (19c.env, 12c.sh) keeps its own.
+if [ -z "$ORACLE_HOME" ]; then
+    if [ -f "$HOME/.bashrc" ]; then
+        source "$HOME/.bashrc"
+        if [ $? -ne 0 ]; then
+            echo "An error occurred while sourcing $HOME/.bashrc. Exiting..."
+            exit 1
+        fi
+    else
+        echo "Error: $HOME/.bashrc does not exist. Exiting..."
+        exit 1
+    fi
+fi
+
+# Fail closed on a bad $ORACLE_HOME rather than reporting a missing tnsnames.ora
+# under the misleading path "/network/admin/tnsnames.ora"
+if [ ! -x "$ORACLE_HOME/bin/tnsping" ]; then
+    echo "Error: \$ORACLE_HOME is not set to an Oracle home containing bin/tnsping. Exiting..."
+    exit 1
+fi
+
 # Check that listener is running
 listener=$("$HOME/common/oracle/CheckIfListenerIsRunning.sh")
 if [ $? -ne 0 ]; then 
@@ -82,7 +105,7 @@ for target in $targets; do
     # DB checked with tnsping. If tns_check is set, the check was good.
     # If tns_error is set, there was an error with the check.
     # Timeout will trigger if tnsping waits 5 seconds
-    tns_check=$(timeout 5 tnsping "$target")
+    tns_check=$(timeout 5 "$ORACLE_HOME/bin/tnsping" "$target")
     bash_error=$?
     tns_error=$(echo "$tns_check" | grep "TNS-")
 
