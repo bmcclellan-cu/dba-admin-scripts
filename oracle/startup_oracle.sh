@@ -23,6 +23,46 @@ while getopts ":h" option; do
     esac
 done
 
+# function to start the Oracle listener if it is not already running
+ensure_listener_is_running() {
+    local lsnr_status
+    local start_lsnr_output
+
+    lsnr_status=$("$HOME/common/oracle/CheckIfListenerIsRunning.sh")
+    if [ $? -ne 0 ]; then
+        echo "Error occurred while checking if listener is running."
+        return 1
+    fi
+
+    if [ "$lsnr_status" == "Yes" ]; then
+        echo "Oracle Listener already running. Continuing..."
+        return 0
+    elif [ "$lsnr_status" != "No" ]; then
+        echo "Error: Unexpected listener status returned: $lsnr_status"
+        return 1
+    fi
+
+    # Listener is down - hand off to the helper that starts it
+    echo "Oracle Listener is not running. Starting it..."
+    start_lsnr_output=$("$HOME/common/oracle/StartOracleListener.sh")
+    if [ $? -ne 0 ]; then
+        echo "$start_lsnr_output"
+        echo "Error occurred while starting oracle listener."
+        return 1
+    fi
+
+    # Confirm the listener actually came up before continuing
+    lsnr_status=$("$HOME/common/oracle/CheckIfListenerIsRunning.sh")
+    if [ "$lsnr_status" != "Yes" ]; then
+        echo "$start_lsnr_output"
+        echo "Error: Listener failed to start."
+        return 1
+    fi
+
+    echo "Listener started. Continuing..."
+    return 0
+}
+
 # function to check if spfile or pfile exists for $ORACLE_SID
 check_for_spfile_and_pfile() {
     if [ -f "$ORACLE_HOME/dbs/spfile$ORACLE_SID.ora" ] || [ -f "$ORACLE_HOME/dbs/init$ORACLE_SID.ora" ]; then
@@ -46,29 +86,18 @@ memory_check=$("$HOME/common/general/CheckServerMemory.sh" "$memory_needed")
 if [ $? -ne 0 ]; then
     echo "Error occurred while checking available memory on server. Exiting..."
     exit 1
-elif [[ "$memory_check" =~ *No* ]]; then
-    echo "Error: There is not enough memory available on the server to accomodate this database startup. There must be at least $((${memory_needed} + 1024))MB available. Exiting..."
+elif [[ "$memory_check" != Yes* ]]; then
+    echo "$memory_check"
+    echo "Error: There is not enough memory available on the server to accommodate this database startup. There must be at least ${memory_needed}MB available. Exiting..."
     exit 1
 fi
 
 # If user typed "ALL", startup all databases
 if [ "${sid^^}" == "ALL" ]; then
-    listener_status=$("$HOME/common/oracle/CheckIfListenerIsRunning.sh")
+    ensure_listener_is_running
     if [ $? -ne 0 ]; then
-        echo "Error occured while checking if listener is running. Exiting..."
+        echo "Exiting..."
         exit 1
-    fi
-    if [[ $listener_status =~ "No" ]]; then
-        echo "Starting Oracle listener..."
-        $ORACLE_HOME/bin/lsnrctl start
-        if [ $? -eq 0 ]; then
-            echo "Listener started. Continuing..."
-        else
-            echo "Error occcured while starting oracle listener. Exiting..."
-            exit 1
-        fi
-    elif [[ $listener_status =~ "Yes" ]]; then
-        echo "Oracle Listener already running. Continuing..."
     fi
     echo ""
     for ORACLE_SID in $SIDSLIST; do
@@ -122,15 +151,10 @@ else
         exit 1
     fi
 
-    # Check status of listener
-    lsnr_status=$("$HOME/common/oracle/CheckIfListenerIsRunning.sh")
+    # Start the listener if it is not already running
+    ensure_listener_is_running
     if [ $? -ne 0 ]; then
-        echo "Error occured while checking if listener is running. Exiting..."
-        exit 1
-    fi
-
-    if [[ $lsnr_status =~ "No" ]]; then
-        echo "Error: Listener is not started. Run 'StartOracleListener.sh' script before reattempting startup."
+        echo "Exiting..."
         exit 1
     fi
 
