@@ -84,7 +84,7 @@ EOD
         # Check for any ORA errors in sqlplus output
         oraError=$(echo "$check_mode" | grep "ORA-")
 
-        # Check if sqlplus ran into any error except for the specific error that determines if in nomount mode
+        # Check if sqlplus ran into any error except for ORA-01507 which determines if the database is in NOMOUNT mode
         if [ $sqlplus_error -ne 0 ] || [ -n "$oraError" ]; then
             isNOMOUNT=$(echo "$check_mode" | grep "ORA-01507")
             if [ -z "$isNOMOUNT" ]; then
@@ -105,7 +105,6 @@ EOD
         fi
 
         # Determine which mode the database is in based on the result of $check_mode
-        # If sid_name is set (when ALL is provided), the sid name will show on output.
         if [ "${check_mode:1}" == "READ WRITE" ]; then
             echo "${sid_name:-}OPEN"
         elif [ "${check_mode:1}" == "MOUNTED" ]; then

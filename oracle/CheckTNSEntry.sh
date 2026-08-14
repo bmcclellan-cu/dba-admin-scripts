@@ -75,9 +75,11 @@ fi
 # Check that listener is running
 listener=$("$HOME/common/oracle/CheckIfListenerIsRunning.sh")
 if [ $? -ne 0 ]; then 
-    echo "Error occurred while running CheckIfListenerRunning.sh. Exiting..."
+    echo "$listener"
+    echo "Error occurred while running CheckIfListenerIsRunning.sh. Exiting..."
     exit 1
 elif [ "$listener" != "Yes" ]; then
+    echo "$listener"
     echo "Listener is not running. Exiting..."
     exit 1
 fi

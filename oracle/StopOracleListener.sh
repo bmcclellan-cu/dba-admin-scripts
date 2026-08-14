@@ -2,12 +2,12 @@
 # AvailabilityFlag: Public
 # CrontabFlag: True
 #
-# Purpose: The purpose of this script is to start the Oracle listener after
+# Purpose: The purpose of this script is to stop the Oracle listener after
 #          checking its status
 #
 ################################################################################
 
-usage="Usage: StartOracleListener.sh"
+usage="Usage: ./StopOracleListener.sh"
 
 # Process input options
 while getopts ":h" option; do
@@ -45,39 +45,30 @@ if [ -z "$ORACLE_HOME" ]; then
     fi
 fi
 
-# Fail closed on a bad $ORACLE_HOME rather than on the lsnrctl start below
-if [ ! -x "$ORACLE_HOME/bin/lsnrctl" ]; then
-    echo "Error: \$ORACLE_HOME is not set to an Oracle home containing bin/lsnrctl. Exiting..."
-    exit 1
-fi
-
 # Check the current status of the listener
 lsnr_status=$("$HOME/common/oracle/CheckIfListenerIsRunning.sh")
 if [ $? -ne 0 ]; then
     echo "$lsnr_status"
-    echo "Error occurred while running CheckIfListenerIsRunning.sh. Exiting..."
+    echo "Error occurred while checking the Oracle Listener"
     exit 1
 fi
-
 # CheckIfListenerIsRunning.sh exits 0 whether or not the listener is up, so its
 # output is the only status: an exact "Yes" when it is running and the lsnrctl output when it is not running.
 if [ "$lsnr_status" == "Yes" ]; then
-    echo "Listener is already running. Exiting..."
-    exit 1
-
-# Listener is down or has an error
+    echo "Stopping listener..."
+    "$ORACLE_HOME"/bin/lsnrctl stop
 else
-    echo "Starting listener..."
-    "$ORACLE_HOME"/bin/lsnrctl start
+    echo "Listener is already down. Exiting..."
+    exit 1
 fi
 
 if [ $? -ne 0 ]; then
     echo
-    echo "Error encountered while starting listener. Exiting..."
+    echo "Error encountered while stopping listener. Exiting..."
     exit 1
 else
     echo
-    echo "Listener started successfully."
+    echo "Listener stopped successfully."
     exit 0
 fi
 

@@ -29,8 +29,11 @@ ensure_listener_is_running() {
     local lsnr_status
     local start_lsnr_output
 
+    # CheckIfListenerIsRunning.sh exits 0 whether or not the listener is up, so its
+    # output is the only status: an exact "Yes" when it is running and the lsnrctl output when it is not running.
     lsnr_status=$("$HOME/common/oracle/CheckIfListenerIsRunning.sh")
     if [ $? -ne 0 ]; then
+        echo "$lsnr_status"
         echo "Error occurred while checking if listener is running."
         return 1
     fi
@@ -38,9 +41,6 @@ ensure_listener_is_running() {
     if [ "$lsnr_status" == "Yes" ]; then
         echo "Oracle Listener already running. Continuing..."
         return 0
-    elif [ "$lsnr_status" != "No" ]; then
-        echo "Error: Unexpected listener status returned: $lsnr_status"
-        return 1
     fi
 
     # Listener is down - hand off to the helper that starts it
@@ -54,8 +54,14 @@ ensure_listener_is_running() {
 
     # Confirm the listener actually came up before continuing
     lsnr_status=$("$HOME/common/oracle/CheckIfListenerIsRunning.sh")
+    if [ $? -ne 0 ]; then
+        echo "$lsnr_status"
+        echo "Error occurred while checking if listener is running."
+        return 1
+    fi
+
     if [ "$lsnr_status" != "Yes" ]; then
-        echo "$start_lsnr_output"
+        echo "$lsnr_status"
         echo "Error: Listener failed to start."
         return 1
     fi
@@ -132,7 +138,7 @@ if [ "${sid^^}" == "ALL" ]; then
         export ORACLE_SID=$ORACLE_SID
 
         # Ensure that database is offline
-        db_status=$("$HOME/common/oracle/CheckDatabaseOpenStatus.sh" $sid)
+        db_status=$("$HOME/common/oracle/CheckDatabaseOpenStatus.sh" "$ORACLE_SID")
 
         if [ $? -ne 0 ]; then
             echo "Error occurred while checking status of $ORACLE_SID database"
@@ -160,6 +166,10 @@ if [ "${sid^^}" == "ALL" ]; then
         startup;
         exit;
 EOD
+        if [ $? -ne 0 ]; then
+            echo "Startup for $ORACLE_SID failed with non-zero exit status"
+            exit_status=1
+        fi
         echo
     done
 
@@ -168,7 +178,7 @@ else
     export ORACLE_SID=$sid
 
     # Ensure that database is offline
-    db_status=$("$HOME/common/oracle/CheckDatabaseOpenStatus.sh" $sid)
+    db_status=$("$HOME/common/oracle/CheckDatabaseOpenStatus.sh" "$sid")
 
     if [ $? -ne 0 ]; then
         echo "Error occurred while checking status of $ORACLE_SID database"
@@ -200,12 +210,16 @@ else
     startup;
     exit;
 EOD
+    if [ $? -ne 0 ]; then
+        echo "Startup for $sid failed with non-zero exit status"
+        exit_status=1
+    fi
 fi
 
-if [ $? -ne 0 ] || [ -n "$exit_status" ]; then
+if [ -n "$exit_status" ]; then
     echo "Error encountered when starting database(s), exiting..."
     exit 1
 else
-    echo "Database(s) started. Exiting..."
+    echo "Database(s) started."
     exit 0
 fi

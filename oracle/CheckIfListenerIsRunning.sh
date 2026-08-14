@@ -1,8 +1,12 @@
 #!/bin/bash
 # AvailabilityFlag: Public
+# CrontabFlag: True
 #
 # Purpose: This script is a helper script that returns the status of the listener
 #	   to the end user.
+#
+# NOTICE: Callers must test for an exact "Yes" to check if the listener is running. If the listener is not running, the script prints the lsnrctl
+# output so the caller can report why the listener is not running.
 #
 #####################################################################################
 
@@ -29,7 +33,7 @@ fi
 
 # Source .bashrc only when $ORACLE_HOME is unset, which is the case under crontab
 # and systemd since neither loads the oracle user's profile. A caller that has
-# deliberately selected a different Oracle home (19c.env, 12c.sh) keeps its own.
+# deliberately selected a different Oracle home keeps that home.
 if [ -z "$ORACLE_HOME" ]; then
     if [ -f "$HOME/.bashrc" ]; then
         source "$HOME/.bashrc"
@@ -55,9 +59,9 @@ fi
 # Suppress the output by storing output in a variable since script is a helper
 lsnr_status=$("$ORACLE_HOME/bin/lsnrctl" status)
 
-# Output the status of the listener
+# Output the status of the listener.
 if [ $? -eq 0 ]; then
     echo "Yes"
 else 
-    echo "No"
+    echo "$lsnr_status"
 fi
