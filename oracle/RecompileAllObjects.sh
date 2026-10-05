@@ -1,9 +1,9 @@
 #!/bin/bash
 # AvailabilityFlag: Public
 #
-# Purpose: The purpose of this script is run a SQL file, utlrp.sql, on one or all
-#	   databases and check for any invalid objects. The SQL file itself recompiles
-#	   invalid objects in the current database.
+# Purpose:  The purpose of this script is run a SQL file, utlrp.sql, on one or all
+#	        databases and check for any invalid objects. The SQL file itself recompiles
+#	        invalid objects in the current database.
 #
 #####################################################################################
 usage="Usage: RecompileAllObjects.sh [ORACLE_SID | ALL (optional)]"
@@ -37,18 +37,18 @@ if [ -z "$1" ] && [ -z "$ORACLE_SID" ]; then
     echo "Exiting..."
     exit 1
 elif [ -n "$1" ]; then
-    sid=$1
+    sid=${1,,}
 elif [ -n "$ORACLE_SID" ]; then
-    sid=$ORACLE_SID
+    sid=${ORACLE_SID,,}
 fi
- 
+
 # Check for valid ORACLE_SID
-sid_check=$("$HOME/common/oracle/VerifyAllParam.sh -I $sid")
+sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I "$sid")
 if [ -n "$sid_check" ]; then
     if [ "$sid_check" == "-1" ]; then
         echo "Error, \$ORACLE_SID not set..."
         exit 1
-    elif [ "$sid" == "ALL" ]; then
+    elif [ "$sid" == "all" ]; then
         echo "Not all databases are open, closed databases will be skipped. Continuing..."
     else
         echo "Error, provided ORACLE_SID is not open. Exiting..."

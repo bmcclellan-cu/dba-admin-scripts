@@ -40,6 +40,47 @@ while getopts ":hd" option; do
     esac
 done
 
+
+# Inputs:
+#  - sid: The SID to extract the ORACLE_HOME from.
+# Checks the database ORACLE_HOME in order to use the correct ORACLE_HOME for shutting down the database.
+set_oracle_home_for_sid(){
+    local sid=$1
+
+    local db_version
+    local db_home
+    local exit_code
+
+    # Finds the ORACLE_HOME of a database and determines if it is online.
+    db_version=$("$HOME/common/oracle/GetOracleDBVersion.sh" "$sid")
+    exit_code=$?
+    # grep -i: Case-insensitive mode
+    if echo "$db_version" | grep -qi "does not appear to be running"; then
+        echo "Database $sid is not running, leaving ORACLE_HOME unchanged..."
+        return 0
+    elif [ $exit_code -ne 0 ]; then
+        echo "$db_version"
+        echo "An error occurred while getting oracle db version for $sid. Exiting..."
+        return 1
+    fi
+
+    # Extracts the ORACLE_HOME path from the script output.
+    # Grep flags:
+    # -o: Only return matching string
+    # -P: Use perl-compatible syntax required for \K
+    # The pattern finds the line starting with `ORACLE_HOME=` (^ORACLE_HOME=), resets the start point of the match (\K)
+    # and matches the rest of the line (.*)
+    db_home=$(echo "$db_version" | grep -oP '^ORACLE_HOME=\K.*')
+    if [ $? -ne 0 ] || [ -z "$db_home" ]; then
+        echo "$db_version"
+        echo "Error: Failed to extract a non-empty ORACLE_HOME from results of GetOracleDBVersion.sh. Exiting..."
+        return 1
+    fi
+
+    export ORACLE_HOME="$db_home"
+    return 0
+}
+
 shift "$((OPTIND-1))"
 
 # Source Oracle environment. Set ORACLE_ENV_FILE to point at a different Oracle home
@@ -144,6 +185,9 @@ fi
 restore_dir="$3"
 mkdir -p "$restore_dir"
 
+# Store the path to the 19c home so that way RMAN commands can run from it
+# after the appropriate ORACLE_HOME is used to shut down all the databases
+original_home=$ORACLE_HOME
 
 if [ "$dopt" -eq 1 ]; then
     # Find all directories in $restore_dir with name matching YYYY_mm_dd_HH_MM_SS
@@ -168,17 +212,46 @@ if [ "$dopt" -eq 1 ]; then
             echo "Not enough disk space for restored DBs. Deleting old restores"
             # For each directory matching timestamp pattern, loop through each database's subdirectory
             for timestamp in $timestamped_dirs; do
-                # Shutdown each database with directory inside timestamped directory
                 echo "Deleting databases under timestamp $timestamp..."
-                dbs=$(ls "$restore_dir/$timestamp")
-                for db in $dbs; do
+
+                # Shut down every running database with files open inside the timestamped directory.
+                # Match on open files, not on folder names: restore folders are named after DB_NAME,
+                # which can differ from the SID (e.g. folder dbdev holds instance dbd19).
+                old_restore=$(realpath "$restore_dir/$timestamp")
+                running_dbs=$("$HOME/common/oracle/PrintAllRunningDatabases.sh" -i)
+                if [ $? -ne 0 ]; then
+                    echo "$running_dbs"
+                    echo "An error occurred while listing running databases. Unable to safely shutdown and delete old databases. Exiting..."
+                    exit 1
+                fi
+                for db in $running_dbs; do
+                    # Skip the database unless one of its background processes (ora_<name>_<sid>) has a
+                    # file open under the old restore. /proc/<pid>/fd entries are symlinks to the open files.
+                    uses_old_restore=0
+                    for pid in $(pgrep -f "^ora_[a-z0-9]+_${db}$"); do
+                        if ls -l "/proc/$pid/fd" 2>/dev/null | grep -qF -- "-> $old_restore/"; then
+                            uses_old_restore=1
+                            break
+                        fi
+                    done
+                    if [ "$uses_old_restore" -ne 1 ]; then
+                        continue
+                    fi
+
+                    # Check and set the ORACLE_HOME for the database so we can shut it down properly if there are mismatched versions on the
+                    # dev server.
+                    set_oracle_home_for_sid "$db"
+                    if [ $? -ne 0 ]; then
+                        echo "An error occurred while setting ORACLE_HOME for sid $db. Unable to safely shutdown and delete old databases. Exiting..."
+                        exit 1
+                    fi
+                
                     # Shutdown database
                     shutdown=$("$HOME/common/oracle/shutdown_oracle.sh" "$db" abort)
-
                     # Ignore 'database already closed' error, but catch all others
                     if [ $? -ne 0 ] && [ -z "$(echo "$shutdown" | grep "Error: database $db is already closed")" ]; then
-                        echo "Error occurred while shutting down database $db." 
-                        echo -e "$shutdown\n\n"
+                        echo "$shutdown"
+                        echo "Error occurred while shutting down database $db. Unable to safely shutdown and delete old databases. Exiting..."
                         exit 1
                     fi
                 done
@@ -200,6 +273,8 @@ if [ "$dopt" -eq 1 ]; then
     # Create the timestamped restore_dir within the directory $3
     mkdir "$restore_dir"
 fi
+# Reset ORACLE_HOME to the 19c oracle home (due to the sourcing of 19c.env in the beginning of the script)
+export ORACLE_HOME="$original_home"
 
 # Check if oracle listener is running. Start it up if it's not running.
 listener_running=$("$HOME/common/oracle/CheckIfListenerIsRunning.sh")
@@ -250,6 +325,15 @@ for sid in $SIDSLIST; do
         continue
     fi
 
+    # Check and set the ORACLE_HOME for the database so we can shut it down properly if there are mismatched versions on the
+    # dev server.
+    set_oracle_home_for_sid "$sid"
+    if [ $? -ne 0 ]; then
+        echo "An error occurred while setting ORACLE_HOME for sid $sid. Unable to shutdown SID $sid. Skipping..."
+        exit_status=1
+        continue
+    fi
+
     # Shut down database
     echo "Shutting down database $sid" 
     shutdown=$("$HOME/common/oracle/shutdown_oracle.sh" "$sid" abort)
@@ -260,6 +344,8 @@ for sid in $SIDSLIST; do
         exit_status=1
         continue
     fi
+
+    export ORACLE_HOME=$original_home
 
     # Run RMANPrimaryRestoreScript.sh to initial restore
     echo "Initiating restore of $sid to $restore_dir" 

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # AvailabilityFlag: Public
 #
 # Purpose: This script will print out summary information including attributes, keys, item count, and table size. 
@@ -118,7 +118,9 @@ table_status=$(echo "$table_info" | jq -r ".TableStatus")
 item_count=$(echo "$table_info" | jq -r ".ItemCount")
 table_size=$(echo "$table_info" | jq -r ".TableSizeBytes") 
 # Make the table size human readable
-table_size=$(ConvertBytes.sh "$table_size")
+# AWS web console defines table size in terms of (B, KB, MB, GB, TB, PB)
+# The -d flag defines input in terms of (B, KB, MB, GB, TB, PB)
+table_size=$("../general/ConvertBytes.sh" -d "$table_size")
 if [ $? -ne 0 ]; then
     echo "An error occurred while converting table size to readable format. Exiting..."
     echo "$table_size"

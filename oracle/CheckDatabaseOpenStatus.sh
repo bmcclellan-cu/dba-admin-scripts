@@ -49,7 +49,7 @@ if [ $# -eq 1 ]; then
     if [ "${1^^}" == "ALL" ]; then
         sids="$SIDSLIST"
     else
-        sids="$1"
+        sids="${1,,}"
     fi
 
     for sid in $sids; do
@@ -61,10 +61,17 @@ if [ $# -eq 1 ]; then
             sid_name="$sid: "
         fi
 
-        # Check if any non-grep processes are running to determine if the database is closed
-        check_processes=$(ps -ef | grep -w "ora_smon_${ORACLE_SID}" | grep -v grep)
+        # Get a newline-separated list of currently running databases while ignoring (-i) errors while filtering
+        # out containerized processes.
+        running_databases=$("$HOME/common/oracle/PrintAllRunningDatabases.sh" -i)
+        if [ $? -ne 0 ]; then
+            echo "$running_databases"
+            echo "An error occurred while running PrintAllRunningDatabases.sh. Exiting..."
+            exit 1
+        fi
 
-        if [ -z "$check_processes" ]; then
+        # If the database is not in the list of currently running databases, mark as closed.
+        if ! echo "$running_databases" | grep -q "^$ORACLE_SID$"; then
             echo "${sid_name:-}CLOSED"
             continue
         fi
@@ -90,8 +97,8 @@ EOD
             if [ -z "$isNOMOUNT" ]; then
                 echo "---------------"
                 echo "${sid_name:-}ERROR"
-                
-                if [ -n "$oraError" ]; then 
+
+                if [ -n "$oraError" ]; then
                     echo "${oraError}"
                     echo "---------------"
                     continue
@@ -135,7 +142,7 @@ else
     fi
 
     # Redirecting any error output to stdout (2>&1)
-    # The output of the sql query is piped into xargs which removes leading and trailing whitespace/newlines 
+    # The output of the sql query is piped into xargs which removes leading and trailing whitespace/newlines
     result=$(
         "$ORACLE_HOME/bin/sqlplus" -s "$username/$password@$tns_entry" <<EOD 2>&1 | xargs
     whenever oserror exit 1
@@ -170,7 +177,7 @@ EOD
         exit 0
     else
         echo "An unexpected error occurred while attempting to reach the database"
-        echo "$result" 
+        echo "$result"
         echo "Exiting..."
         exit 1
     fi

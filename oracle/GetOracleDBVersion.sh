@@ -32,32 +32,42 @@ fi
 
 export ORACLE_SID=${1,,}
 
-# Get the PID for the Oracle PMON process
-pmon_pid=$(pgrep -f "ora_pmon_${ORACLE_SID}$")
-exit_status=$?
-if [ -z "$pmon_pid" ]; then
-    echo "ERROR: Database $ORACLE_SID does not appear to be running, no pmon process active. Exiting..."
-    exit 1
-elif [ $exit_status -ne 0 ]; then
-    echo "$pmon_pid"
-    echo "An error occurred while getting pmon PID for database $ORACLE_SID. Exiting..."
+# Get the list of running databases with PIDs (-p) while ignoring (-i) errors while filtering out
+# containerized processes.
+running_dbs=$("$HOME/common/oracle/PrintAllRunningDatabases.sh" -i -p)
+if [ $? -ne 0 ]; then
+    echo "$running_dbs"
+    echo "An error occurred while running PrintAllRunningDatabases.sh. Exiting..."
     exit 1
 fi
 
-# Get the environment of the PMON process and extract ORACLE_HOME from it.
+# Get the row corresponding with the database and extract the SMON PID.
+smon_pid=$(awk -v sid="$ORACLE_SID" '$1 == sid {print $2}' <<< "$running_dbs")
+
+if [ -z "$smon_pid" ]; then
+    echo "ERROR: Database $ORACLE_SID does not appear to be running, no SMON process active. Exiting..."
+    exit 1
+elif [ "$(echo "$smon_pid" | wc -l)" -gt 1 ]; then
+    echo "ERROR: More than one SMON process found:"
+    echo "$smon_pid"
+    echo "Exiting..."
+    exit 1
+fi
+
+# Get the environment of the SMON process and extract ORACLE_HOME from it.
 # Note: /proc/<PID>/environ is a null-delimited array of the environment variables of the process when
 #       it was started, and bash string variables are unable to store nulls, so we must substitute them
 #       out for newlines.
-pmon_environ=$(tr '\0' '\n' < "/proc/$pmon_pid/environ")
+smon_environ=$(tr '\0' '\n' < "/proc/$smon_pid/environ")
 if [ $? -ne 0 ]; then
-    echo "$pmon_environ"
-    echo "An error occurred while reading environment variables of the pmon process for database $ORACLE_SID. Exiting..."
+    echo "$smon_environ"
+    echo "An error occurred while reading environment variables of the SMON process for database $ORACLE_SID. Exiting..."
     exit 1
 fi
 
-ORACLE_HOME=$(echo "$pmon_environ" | grep "^ORACLE_HOME=" | cut -d= -f2)
+ORACLE_HOME=$(echo "$smon_environ" | grep "^ORACLE_HOME=" | cut -d= -f2)
 if [ -z "$ORACLE_HOME" ]; then
-    echo "ERROR: No ORACLE_HOME found in environment of pmon process of $ORACLE_SID. Unable to determine ORACLE_HOME. Exiting..."
+    echo "ERROR: No ORACLE_HOME found in environment of SMON process of $ORACLE_SID. Unable to determine ORACLE_HOME. Exiting..."
     exit 1
 fi
 

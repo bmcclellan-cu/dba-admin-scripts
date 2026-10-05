@@ -1,0 +1,6 @@
+{
+    "_comment": "AvailabilityFlag: Public",
+    "TIME_RANGE": "DAILY",
+    "SERVICE_SPEND_THRESHOLD": 0.01,
+    "ACCOUNT_NAME": "Example Account"
+}

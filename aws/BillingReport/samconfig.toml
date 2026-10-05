@@ -1,0 +1,10 @@
+# AvailabilityFlag: Public
+version = 0.1
+[default.deploy.parameters]
+stack_name = "BillingReport"
+resolve_s3 = true
+s3_prefix = "BillingReport"
+region = "us-east-1"
+capabilities = "CAPABILITY_IAM"
+image_repositories = []
+parameter_overrides = "AccountName=\"\" DailyServiceSpendThreshold=\"0.1\" WeeklyServiceSpendThreshold=\"1.0\" SlackWorkspaceId=\"\" SlackChannelId=\"\""

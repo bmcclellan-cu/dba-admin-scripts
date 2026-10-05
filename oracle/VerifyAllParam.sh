@@ -36,12 +36,9 @@ while getopts ":hIV" option; do
     esac
 done
 
-# removing options from the input arguments
-while [[ $1 =~ '-' ]]; do
-    shift 1
-done
+shift "$((OPTIND - 1))"
 
-inp=$1
+inp=${1,,}
 
 # Validating input
 if [[ $# -gt 1 ]]; then
@@ -59,19 +56,20 @@ if [ $# -eq 0 ] && [ -z "$ORACLE_SID" ]; then # Case for no input and no oracle_
 elif [ $# -eq 0 ]; then # Case for checking oracle_sid
     # ORACLE_SID check
     db_status=$("$HOME/common/oracle/CheckDatabaseOpenStatus.sh" "$ORACLE_SID")
-    if [ $? -eq 1 ]; then
-        echo "Error occurred while checking sid $sid. Exiting..."
+    if [ $? -ne 0 ]; then
+        echo "Error occurred while checking sid $ORACLE_SID. Exiting..."
         exit 1
     fi
+    # Output SIDs lowercased, the same as an explicit SID argument
     if [ "$db_status" != "OPEN" ]; then
-        invalid_sids="$ORACLE_SID"
+        invalid_sids="${ORACLE_SID,,}"
     else
-        valid_sids=$ORACLE_SID
+        valid_sids="${ORACLE_SID,,}"
     fi
 elif [ "${inp^^}" != "ALL" ]; then # Case for checking one input
     db_status=$("$HOME/common/oracle/CheckDatabaseOpenStatus.sh" "$inp")
-    if [ $? -eq 1 ]; then
-        echo "Error occurred while checking sid $sid. Exiting..."
+    if [ $? -ne 0 ]; then
+        echo "Error occurred while checking sid $inp. Exiting..."
         exit 1
     fi
     if [ "$db_status" != "OPEN" ]; then
@@ -80,10 +78,10 @@ elif [ "${inp^^}" != "ALL" ]; then # Case for checking one input
         valid_sids="$inp"
     fi
 elif [ "${inp^^}" == "ALL" ]; then # Case for checking all SIDS in sidslist
-    sids=$SIDSLIST
+    sids=${SIDSLIST,,}
     for sid in $sids; do
         db_status=$("$HOME/common/oracle/CheckDatabaseOpenStatus.sh" "$sid")
-        if [ $? -eq 1 ]; then
+        if [ $? -ne 0 ]; then
             echo "Error occurred while checking sid $sid. Exiting..."
             exit 1
         fi

@@ -8,6 +8,8 @@
 # Notes:    AutoUpgrade expects the target home to be the most up-to-date version of Oracle Database 19c. If the
 #           version does not match, the upgrade process will fail during the AutoUpgrade Analyze step.
 # 
+#           This script expects autoupgrade.jar to be present in $patch_download_location.
+#
 #           This script is expected to be used during our migration to 26ai, where we update our databases to the latest RU
 #           before migrating to mitigate bugs in previous versions, and as such is a part of that toolset. 
 #           
@@ -86,7 +88,7 @@ while getopts ":hv" option; do
     esac
 done
 
-shift $((OPTIND-1))
+shift "$((OPTIND-1))"
 
 if [ $# -ne 3 ]; then
     echo "ERROR: Wrong number of inputs."
@@ -94,9 +96,6 @@ if [ $# -ne 3 ]; then
     echo "$example1"
     exit 1
 fi
-
-# Get the current location of the bash script.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 export ORACLE_SID=${1,,}
 patch_download_location=$2
@@ -172,17 +171,9 @@ JAVA_BIN="$target_home/jdk/bin/java"
 if [ ! -x "$JAVA_BIN" ]; then
     JAVA_BIN="$(command -v java)"
 fi
+
 if [ -z "$JAVA_BIN" ]; then
     echo "ERROR: java not found (checked $target_home/jdk/bin/java and PATH). Exiting..."
-    exit 1
-fi
-
-AUTOUPGRADE_JAR="$SCRIPT_DIR/autoupgrade.jar"
-# Check that the autoupgrade jar file exists.
-if [ ! -f "$AUTOUPGRADE_JAR" ]; then
-    echo "ERROR: AutoUpgrade binary ($AUTOUPGRADE_JAR) not found, please download using:"
-    echo "          wget -O $AUTOUPGRADE_JAR https://download.oracle.com/otn-pub/otn_software/autoupgrade.jar"
-    echo "Exiting..."
     exit 1
 fi
 
@@ -218,6 +209,16 @@ for dir_path in "$source_home" "$target_home" "$patch_download_location" "$ORACL
         exit 1
     fi
 done
+
+AUTOUPGRADE_JAR="$patch_download_location/autoupgrade.jar"
+# Check that the autoupgrade jar file exists. This must come after the directory check above so that a missing
+# patch_download_location is reported as a missing directory rather than as a missing jar.
+if [ ! -f "$AUTOUPGRADE_JAR" ]; then
+    echo "ERROR: AutoUpgrade binary ($AUTOUPGRADE_JAR) not found, please download using:"
+    echo "          wget -O $AUTOUPGRADE_JAR https://download.oracle.com/otn-pub/otn_software/autoupgrade.jar"
+    echo "Exiting..."
+    exit 1
+fi
 
 if [ "$skip_validate_opt" -ne 1 ]; then
     # Check for invalid indexes

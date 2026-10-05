@@ -4,9 +4,9 @@
 # Purpose: This script is a helper script that outputs each specified database's
 #          recovery file destination. The script takes an optional input of a
 #          specific SID or ALL, and uses the user's current ORACLE_SID by
-#          default. SIDs are resolved and checked for open status through
-#          VerifyAllParam.sh; databases that are not open are reported and
-#          skipped, and the script exits non-zero when any are skipped.
+#          default. The script does not validate SIDs with VerifyAllParam.sh
+#          because databases in NOMOUNT or MOUNTED state are valid parameters.
+#          If this script only checked for OPEN databases, then dependent scripts would fail.
 #
 ################################################################################
 
@@ -33,52 +33,35 @@ if [ $# -gt 1 ]; then
     echo "$example"
     exit 1
 fi
-
-# Set schema to user-provided input or set SID variable to current ORACLE_SID
+# If no SID was provided and ORACLE_SID env. variable is empty error out
+# Otherwise set SIDs to ORACLE_SID env. variable
 if [ -z "$1" ] && [ -z "$ORACLE_SID" ]; then
     echo "ERROR: \$ORACLE_SID not set and none provided."
     echo "Rerun the script and enter the target database as the first parameter."
     echo "Exiting..."
     exit 1
-
-fi
-
-# Resolve the target SIDs through VerifyAllParam.sh, matching
-# OraclePrimaryRMANBackupScript.sh:80-113: -V returns the open SIDs for ALL, and -I returns a
-# specific SID when it is not open.
-if [ "${1^^}" == "ALL" ]; then
-    SIDs=$("$HOME/common/oracle/VerifyAllParam.sh" -V "$1")
-    if [ $? -ne 0 ]; then
-        echo "$SIDs"
-        echo "Error, VerifyAllParam.sh failed for ALL input. Exiting..."
-        exit 1
-    fi
-    # -V returns only the open SIDs, so ask -I which ones it dropped rather than skipping them
-    # silently; this script reports one value per SID and a missing line should be explained.
-    skipped_sids=$("$HOME/common/oracle/VerifyAllParam.sh" -I "$1")
-    if [ -n "$skipped_sids" ]; then
-        echo "Skipping databases that are not open: $skipped_sids"
-        exit_status=1
-    fi
-else
-    if [ -n "$1" ]; then
-        export ORACLE_SID=$1
-    fi
-    sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I "$ORACLE_SID")
-    if [ $? -ne 0 ]; then
-        echo "$sid_check"
-        echo "Error, VerifyAllParam.sh failed while validating SID $ORACLE_SID. Exiting..."
-        exit 1
-    fi
-    if [ -n "$sid_check" ]; then
-        echo "Error, provided ORACLE_SID $ORACLE_SID is not open. Exiting..."
-        exit 1
-    fi
+elif [ -n "$ORACLE_SID" ]; then
     SIDs=$ORACLE_SID
 fi
 
+# Set SIDs to either user-provided input or all SIDS in SIDSLIST env. variable when 'ALL' is provided
+if [ -n "$1" ]; then
+    if [ "${1^^}" == "ALL" ]; then
+        if [ -z "$SIDSLIST" ]; then
+            echo "Error: \$SIDSLIST has not been set"
+            echo "Exiting..."
+            exit 1
+        else
+            SIDs=$SIDSLIST
+        fi
+    else
+        SIDs=$1
+    fi
+fi
+
 if [ -z "$SIDs" ]; then
-    echo "No open databases to report on. Exiting..."
+    echo "Error: No SIDs to query for recovery file destination."
+    echo "Exiting..."
     exit 1
 fi
 

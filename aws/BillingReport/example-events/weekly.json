@@ -1,0 +1,5 @@
+{
+   "_comment": "AvailabilityFlag: Public",
+   "TIME_RANGE": "WEEKLY",
+   "SERVICE_SPEND_THRESHOLD": 0.99
+}

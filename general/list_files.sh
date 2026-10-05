@@ -44,8 +44,8 @@ fi
 while getopts ":hbd" option; do
     case $option in
     h)
-        echo $usage
-        echo $example
+        echo "$usage"
+        echo "$example"
         exit 0
         ;;
     b) 
@@ -92,7 +92,7 @@ fi
 # This means that all files in the directory selected
 # and all sub-directories will be printed
 if [ $# -eq 1 ]; then
-    if [ -z $before ]; then
+    if [ -z "$before" ]; then
         start_date="1970-01-01"
     else
         start_date=$(date +"%Y-%m-%d")
@@ -101,7 +101,7 @@ fi
 
 # Gather a sorted list of files inside the $parent_dir argument
 # that were modified $days ago
-if [ -z $before ]; then
+if [ -z "$before" ]; then
     new_dirs=$(find -L "${parent_dir}" -type f -newermt "$start_date" | sort)
 else
     new_dirs=$(find -L "${parent_dir}" -type f ! -newermt "$start_date" | sort)
@@ -109,7 +109,7 @@ fi
 
 # Check if any files were found
 if [ -z "${new_dirs}" ]; then
-    if [ -z $before ]; then
+    if [ -z "$before" ]; then
         echo "No files modified after $start_date."
     else
         echo "No files were last modified before $start_date."
@@ -119,7 +119,7 @@ fi
 
 # Iterate over directories and list files that were modified after start_date
 # If data_only option given then output just the file without any date information
-if [ ! -z $data_only ]; then
+if [ ! -z "$data_only" ]; then
     for file in $new_dirs; do
         echo "$file"
     done

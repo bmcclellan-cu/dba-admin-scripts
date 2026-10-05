@@ -1,0 +1,225 @@
+# AvailabilityFlag: Public
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  SAM Application to create Lambda functions for cost reporting with Email and Amazon Q chatbot notifications via SNS.
+
+Parameters:
+  AccountName:
+    Type: String
+    Description: AWS account name for report identification. Defaults to the account ID you deployed from.
+    Default: ""
+  DailyServiceSpendThreshold:
+    Type: Number
+    Description: Minimum service spend threshold for daily cost report
+    Default: "0.1"
+  WeeklyServiceSpendThreshold:
+    Type: Number
+    Description: Minimum service spend threshold for weekly cost report
+    Default: "1.0"
+  SlackWorkspaceId:
+    Type: String
+    Description: Slack Workspace ID for Amazon Q chatbot integration for daily reports. Required (along with SlackChannelId) to enable Slack notifications; see README for how to obtain it.
+    Default: ""
+  SlackChannelId:
+    Type: String
+    Description: Slack Channel ID for daily cost report notifications
+    Default: ""
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 256
+
+Resources:
+  # IAM Role for Chatbot (Daily Reports Only)
+  CostReportChatbotRole:
+    Type: AWS::IAM::Role
+    Condition: HasSlackConfiguration
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: chatbot.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ChatbotMinimalPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+
+  # Amazon Q Chatbot Configuration for Daily Reports Only
+  CostReportChatbotSlack:
+    Type: AWS::Chatbot::SlackChannelConfiguration
+    Condition: HasSlackConfiguration
+    Properties:
+      ConfigurationName: !Sub "${AWS::StackName}-daily-cost-report-slack-chatbot"
+      IamRoleArn: !GetAtt CostReportChatbotRole.Arn
+      SlackWorkspaceId: !Ref SlackWorkspaceId
+      SlackChannelId: !Ref SlackChannelId
+      SnsTopicArns:
+        - !Ref DailyCostReportTopic
+        - !Ref WeeklyCostReportTopic
+      LoggingLevel: ERROR
+      UserRoleRequired: false
+
+  SpendReportGeneratorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: AWSSpendReportGenerator
+      CodeUri: report_generator/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Architectures:
+        - x86_64
+      Policies:
+        - CostExplorerReadOnlyPolicy: {}
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource: !Ref DailyCostReportTopic
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource: !Ref WeeklyCostReportTopic
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ec2:DescribeInstances
+              Resource: "*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cloudwatch:ListMetrics
+              Resource: "*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cloudwatch:GetMetricData
+              Resource: "*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cloudwatch:GetMetricData
+              Resource: "*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - pricing:GetProducts
+              Resource: "*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ec2:DescribeRegions
+              Resource: "*"
+
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref DailyCostReportTopic
+          TIME_RANGE: DAILY
+          SERVICE_SPEND_THRESHOLD: 0.1
+          ACCOUNT_NAME: !If
+            - HasAccountName
+            - !Ref AccountName
+            - !Ref AWS::AccountId
+      Events:
+        DailyCostReportEvent:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 22 ? * * *)
+            Name: DailyCostReport
+            Description: Daily cost report
+            Enabled: true
+            Input:
+              Fn::Sub: |
+                {
+                  "TIME_RANGE": "DAILY",
+                  "SERVICE_SPEND_THRESHOLD": "${DailyServiceSpendThreshold}",
+                  "SNS_TOPIC_ARN": "${DailyCostReportTopic}"
+                }
+        WeeklyCostReportEvent:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 22 ? * 5 *)
+            Name: WeeklyCostReport
+            Description: Weekly cost report
+            Enabled: true
+            Input:
+              Fn::Sub: |
+                {
+                  "TIME_RANGE": "WEEKLY",
+                  "SERVICE_SPEND_THRESHOLD": "${WeeklyServiceSpendThreshold}",
+                  "SNS_TOPIC_ARN": "${WeeklyCostReportTopic}"
+                }
+
+  DailyCostReportTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: daily-cost-report
+  WeeklyCostReportTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: weekly-cost-report
+
+  # SNS Topic Policy to allow Chatbot to receive messages (Daily Report Only)
+  DailyCostReportTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Condition: HasSlackConfiguration
+    Properties:
+      Topics:
+        - !Ref DailyCostReportTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: chatbot.amazonaws.com
+            Action:
+              - sns:Subscribe
+              - sns:Receive
+            Resource: !Ref DailyCostReportTopic
+
+Conditions:
+  HasSlackConfiguration:
+    Fn::And:
+      - Fn::Not:
+          - Fn::Equals:
+              - Ref: SlackWorkspaceId
+              - ""
+      - Fn::Not:
+          - Fn::Equals:
+              - Ref: SlackChannelId
+              - ""
+  HasAccountName:
+    Fn::Not:
+      - Fn::Equals:
+          - !Ref AccountName
+          - ""
+
+Outputs:
+  AWSSpendReportGeneratorFunctionArn:
+    Description: "Report Generator Lambda Function ARN"
+    Value: !GetAtt SpendReportGeneratorFunction.Arn
+
+  DailyCostReportTopicArn:
+    Description: "ARN of the Daily Cost Report SNS Topic"
+    Value: !Ref DailyCostReportTopic
+
+  WeeklyCostReportTopicArn:
+    Description: "ARN of the Weekly Cost Report SNS Topic"
+    Value: !Ref WeeklyCostReportTopic
+
+  Region:
+    Description: "AWS Region where the stack is deployed"
+    Value: !Ref AWS::Region

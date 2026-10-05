@@ -67,7 +67,6 @@ if [ $? -ne 0 ]; then
     echo "An error occurred while sourcing $HOME/.bashrc. Exiting..."
     exit 1
 fi
-
 # Move into run directory
 cd "/tmp" || { echo "Could not cd into tmp directory. Exiting..."; exit 1; }
 
@@ -140,14 +139,29 @@ fi
 echo "General log location: $out_logs"
 
 # This is used later in the script to determine what information should end up in the sid specific error logs
-# The first grep does an inverse match (-v) to filter out any lines that have 'echo' or 'ORA-01511' as these are just noise in the logs
+# The first grep does an inverse match (-v) to filter out any lines that have 'ORA-01511 errors can be ignored', 'echo', 'error log', as these are just noise in the logs
 # The second grep actually selects the strings, and surrounding information, that we want in the log file. 
 # The filter uses grep with --line-buffered to ensure as grep produces a line of output it is immediately passed to the next pipe
 # This is not strictly necessary, but it is helpful, especially for nohup scripts, because you can now use `tail -f` to follow the live sid specific logs with minimal delay caused by buffering
 # There is also a -A and -B flag used which gets the output after (-A) and before (-B) the line that matched
 # Using -i to ignore letter casing in second grep
-err_log_filter='grep --line-buffered -v -e "ORA-01511 errors can be ignored" -e "echo" -e "error log"|\
-                grep --line-buffered -i -A 10 -B 10 -e "ORA-" -e "RMAN-" -e "not valid" -e "not found" -e "integer expression expected" -e "too many arguments" -e "is not a directory" -e "error"'
+# Note: $err_regex holds the error patterns that the grep will look for in the log file
+err_regex="ORA-|RMAN-|not valid|not found|integer expression expected|too many arguments|is not a directory|error|Could not determine|Unsupported status"
+
+err_log_filter="grep --line-buffered -v -e 'ORA-01511 errors can be ignored' -e 'echo' -e 'error log' |\
+                grep --line-buffered -i -A 10 -B 10 -E \"$err_regex\""
+
+sid_err_subject=""
+err_logs=""
+# Builds a fallback $sid_err_subject from the first error in the sid log, for the case where no error block set one
+set_subject()
+{
+    local error_found
+    # Get the first error from the error logs and only allow up to 180 characters that are printable
+    ## tr -cd '[:print:]' - take the complement of printable characters and delete them, leaving only printable characters
+    error_found=$(grep -i -m 1 -E "$err_regex" "$err_logs" | tr -cd '[:print:]' | cut -c1-180)  
+    sid_err_subject="Error alert $HOSTNAME $ORACLE_SID ${error_found:-Unknown Error}"
+}
 
 # Record start timestamp in format accepted by ComputeTimeGap.sh for time calculations
 pre_backup_timestamp=$(date "+%Y-%m-%d %H:%M:%S")
@@ -160,23 +174,21 @@ for SID in $SIDS; do
     if [ "$sid_status" -ne 0 ] || [ -s "${err_logs}" ]; then
         # Close logging to prevent any race conditions when reading from the log file
         close_logs
+        if [ -z "$sid_err_subject" ]; then
+            set_subject
+        fi
         mailx -s "$sid_err_subject" "$ALL_DBA_EMAIL_LIST" < "${err_logs}"
         # Set exit_status so the main script email can indicate an error
         exit_status=1
     fi    
     export ORACLE_SID=$SID
     sid_status=0
-    sid_err_subject="Error alert $HOSTNAME $ORACLE_SID unknown error"
+    sid_err_subject=""
 
     # Create the sid specific error log
     err_logs="/tmp/OraclePrimaryRMANBackupScript_${current_timestamp}_${ORACLE_SID}.err"
 
-    # Output all logs to $out_logs and filtered logs to $err_logs
-    # The first grep in $err_log_filter does an inverse match (-v) to filter out any lines that have 'echo' or 'ORA-01511' as these are just noise in the logs
-    # The second grep in $err_log_filter actually selects the strings, and surrounding information, that we want in the log file. 
-    # The filter uses grep with --line-buffered to ensure as grep produces a line of output it is immediately passed to the next pipe
-    # This is not strictly necessary, but it is helpful, especially for nohup scripts, because you can now use `tail -f` to follow the live sid specific logs with minimal delay caused by buffering
-    # There is also a -A and -B flag used which gets the output after (-A) and before (-B) the line that matched
+    # See the $err_log_filter definition above for what this filter does 
     set_sid_and_general_logging "$out_logs" "$err_logs" "$err_log_filter"
     if [ $? -ne 0 ]; then
         echo "An error occurred while setting sid and general logging for ${ORACLE_SID}. Continuing..."
@@ -384,6 +396,9 @@ done
 if [ "$sid_status" -ne 0 ] || [ -s "${err_logs}" ]; then
     # Close logging to prevent any race conditions when reading from the log file
     close_logs
+    if [ -z "$sid_err_subject" ]; then
+        set_subject
+    fi
     mailx -s "$sid_err_subject" "$ALL_DBA_EMAIL_LIST" < "${err_logs}"
     # Set exit_status so the main script email can indicate an error
     exit_status=1
@@ -426,7 +441,6 @@ fi
 
 # Close the log files before reading from them to prevent race conditions
 close_logs
-
 {
     echo -e "$email_body"
     cat "$out_logs"
