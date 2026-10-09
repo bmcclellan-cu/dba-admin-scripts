@@ -10,10 +10,21 @@
 #           therein interfere with our script suite.
 #
 #           This script filters out Oracle processes that are running inside containers
-#           by checking their environment variables and cgroup entries. When this script
-#           is used as a helper script, the -i option is used to prevent these checks from
+#           by checking their NSpid entry. Note that this check is entirely ineffective if
+#           the container is run with the --pid=host option (un-namespaced PIDs). A process whose
+#           NSpid entry can't be read is treated as non-containerized. Without -i, the read errors
+#           are printed after the database list and the script exits 1; with -i they are discarded.
+#           A process that exits before its NSpid entry is read is left out of the output, unless
+#           its PID has already been reused by another process.
+#
+#           When this script is run inside of a container, the only namespace which is visible is the
+#           containerized one, so the NSpid check will pass for all the threads inside the container.
+#           The check essentially checks "relative containerization" instead of being an absolute
+#           check that a given thread is in a container.
+#
+#           When this script is used as a helper script, the -i option is used to prevent these checks from
 #           causing cascade failures if the checks break, as the scripts that depend on this
-#           script are utilized throughout our codebase
+#           script are utilized throughout our codebase.
 #
 ################################################################################
 
@@ -60,60 +71,36 @@ if [ $# -ne 0 ]; then
     exit 1
 fi
 
-# Checks if a process is running in a container by checking cgroup and environment variable heuristics.
+# Checks if a process is running in a container
 # Inputs:
 #   proc_pid: PID of the process to inspect
 # Return Value:
 #   0: Non-containerized process
 #   1: Containerized process
+#   2: Process no longer exists
+# This function only outputs to stdout if an error occurred.
 check_proc_in_container(){
     local proc_pid=$1
-    local smon_cgroup exit_code smon_environ container_variable
+    local nspid_entry
 
-    # Check cgroup membership for references to a container engine
-    # Capture stderr output to prevent leakage with the -i option.
-    smon_cgroup=$(cat "/proc/$proc_pid/cgroup" 2>&1)
-    exit_code=$?
-    # If an error occurs and the -i flag is passed, just suppress the error and continue
-    if [ "$exit_code" -ne 0 ] && [ "$ignore_container_check_errors" -ne 0 ]; then
-        smon_cgroup=""
-    elif [ "$exit_code" -ne 0 ]; then
-        echo "$smon_cgroup"
-        echo "An error occurred while checking if process $proc_pid is running inside a container, couldn't get cgroup information. Exiting..."
-        exit 1
+    # Capture stderr in stdout to prevent leakage with the -i option
+    # grep -P: Perl-compatible regex expression. Allows usage of \K
+    # grep -o: Only print out matching data. \K resets the buffer for what gets returned.
+    # Read /proc/<pid>/status and return only the NSpid entry without the prefix.
+    nspid_entry=$(grep -Po 'NSpid:[[:space:]]*\K.*' "/proc/$proc_pid/status" 2>&1)
+    if [ $? -ne 0 ]; then
+        # The process exited after pgrep listed it, so it is no longer running.
+        if [ ! -e "/proc/$proc_pid" ]; then
+            return 2
+        fi
+        echo "$nspid_entry"
+        echo "WARNING: An error occurred while reading NSpid entry for process $proc_pid."
+        nspid_entry=""
     fi
 
-    # Check if the cgroup membership has any references to a container engine.
-    # grep -q: Quiet, does not output matching lines, only returns success code
-    # grep -i: Case insensitive match
-    # grep -E: Grep extended regex, allows use of '|'
-    if echo "$smon_cgroup" | grep -qiE 'podman|docker'; then
-        return 1
-    fi
-
-    # Check environment variables. Podman's implicit starting build layer sets container=podman
-    # by default.
-    # Note: /proc/<PID>/environ is a null-delimited array of the environment variables of the process when
-    #       it was started, and bash string variables are unable to store nulls, so we must substitute them
-    #       out for newlines.
-    # Capture stderr output to prevent leakage with the -i option.
-    smon_environ=$(tr '\0' '\n' 2>&1 < "/proc/$proc_pid/environ")
-    exit_code=$?
-    # If an error occurs and the -i flag is passed, just suppress the error and continue
-    if [ "$exit_code" -ne 0 ] && [ "$ignore_container_check_errors" -ne 0 ]; then
-        smon_environ=""
-    elif [ $exit_code -ne 0 ]; then
-        echo "$smon_environ"
-        echo "An error occurred while reading environment variables of the smon process for process $proc_pid. Exiting..."
-        exit 1
-    fi
-
-    # Extracts the value of the container environment variable
-    container_variable=$(echo "$smon_environ" | grep "^container=" | cut -d= -f2)
-
-    # If the variable is ever non-empty, we deem it as running in a container. It is extremely unlikely that
-    # a non-containerized Oracle process would ever be run with the `container` environment variable set.
-    if [ -n "$container_variable" ]; then
+    # For regular processes, there is only a single NSpid entry. If there are multiple, it is very likely
+    # that that process resides in a container.
+    if [ "$(echo "$nspid_entry" | wc -w)" -gt 1 ]; then
         return 1
     fi
 
@@ -124,12 +111,6 @@ if $csv && $ssv; then
     echo "ERROR: -c and -s cannot be used at the same time. Exiting..."
     exit 1
 fi
-
-# Check if this script is being run from inside a container. If this is the case, don't run the checks
-# to allow our test suite to function appropriately.
-check_proc_in_container "$$"
-script_in_container=$?
-
 
 # Get all process names that begin with ora_smon_
 # pgrep -a: List full process name alongside PID
@@ -143,6 +124,8 @@ if [ $? -gt 1 ]; then
     exit 1
 fi
 
+cont_check_err_output=""
+
 # Strip out PIDs that are running inside docker containers. This is done to exclude PIDs from the
 # DBs running inside of our test suite.
 IFS=$'\n'
@@ -150,13 +133,18 @@ databases=()
 for smon_process in $smon_processes; do
     IFS=" " read -r smon_pid smon_proc_name <<< "$smon_process"
 
-    # Only run container checks if not currently running in a container.
-    if [ $script_in_container -ne 1 ]; then
-        # Function returns 1 for containerized processes
-        check_proc_in_container "$smon_pid"
-        if [ $? -eq 1  ]; then
-            continue
-        fi
+    # Function returns 1 for containerized processes and 2 for processes that have exited
+    container_proc_check=$(check_proc_in_container "$smon_pid")
+    containerized=$?
+    # If the function ran into an error, record the error to be outputted upon script completion.
+    if [ -n "$container_proc_check" ]; then
+        cont_check_err_output+="$container_proc_check
+An error occurred while checking if process $smon_pid $smon_proc_name is running inside a container.
+
+"
+    fi
+    if [ $containerized -ne 0 ]; then
+        continue
     fi
 
     # grep -o: Only return matching
@@ -185,4 +173,14 @@ else
     # Print out array as newline-separated values.
     printf "%s\n" "${databases[@]}"
 fi
+
+if [ -n "$cont_check_err_output" ] && [ "$ignore_container_check_errors" -ne 1 ]; then
+    echo
+    echo "One or more warnings/errors were generated while filtering out containerized processes. Pass the -i flag to suppress errors/warnings."
+    echo "See error/warning output below:"
+    echo "$cont_check_err_output"
+    echo "Exiting..."
+    exit 1
+fi
+
 exit 0

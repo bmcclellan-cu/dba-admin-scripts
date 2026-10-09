@@ -328,35 +328,10 @@ else
         echo "Segments successfully printed for schema ${schema} on ${sid}."
         echo ""
         echo "Total size of ${segment:-ALL} segments for schema ${schema}: ${total_size} $size_label."
-
-        invalid_indexes=$("$HOME/common/oracle/DisplayInvalidIndexes.sh" "$schema" schema)
-        if [ $? -ne 0 ]; then
-            echo "Error occurred while running DisplayInvalidIndexes.sh on schema $schema. Exiting..."
-            echo "$invalid_indexes"
-            exit 1
-        fi
     elif [ -n "$tablespace" ]; then
         echo "Segments successfully printed for tablespace ${tablespace} on ${sid}."
         echo ""
         echo "Total size of ${segment:-ALL} segments for tablespace ${tablespace}: ${total_size} $size_label."
-
-        invalid_indexes=$("$HOME/common/oracle/DisplayInvalidIndexes.sh" "$tablespace" tablespace)
-        if [ $? -ne 0 ]; then
-            echo "Error occurred while running DisplayInvalidIndexes.sh on tablespace $tablespace. Exiting..."
-            echo "$invalid_indexes"
-            exit 1
-        fi
     fi
-
-    echo ""
-    if [ -z "$segment" ] || [ "$segment" == "INDEX" ] || [ "$segment" == "INDEX PARTITION" ] || [ "$segment" == "INDEX SUBPARTITION" ]; then
-        if ! (echo "$invalid_indexes" | grep -qw "no rows selected"); then
-            echo "The following indexes may not have been in the above output."
-            echo "$invalid_indexes"
-            echo ""
-            echo "Run RebuildInvalidIndexes.sh on each of the above indexes to fix the invalid indexes."
-        fi
-    fi
-
     exit 0
 fi

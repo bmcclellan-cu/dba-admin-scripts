@@ -44,9 +44,9 @@ if [ $# -ne 2 ]; then
 fi
 
 # set your Oracle environment here
-source "/export/home/oracle/.bashrc"
+source "$HOME/.bashrc"
 if [ $? -ne 0 ]; then
-    echo "An error occurred while sourcing /export/home/oracle/.bashrc. Exiting..."
+    echo "An error occurred while sourcing $HOME/.bashrc. Exiting..."
     exit 1
 fi
 

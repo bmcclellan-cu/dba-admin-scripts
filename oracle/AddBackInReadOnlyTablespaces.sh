@@ -21,7 +21,7 @@ while getopts ":hs" option; do
             send_email=0
             # Shift the positional parameter by one so that the flag is not treated like a parameter
             # outside of the getopts loop
-	        shift 1
+            shift 1
             ;;
         \?)
             echo "Error: Invalid option"
@@ -77,14 +77,13 @@ fi
 log_timestamp=$(date "+%Y-%m-%d_%H-%M-%S")
 all_log="/tmp/AddBackInReadOnlyTablespaces_${log_timestamp}.log"
 touch "$all_log"
-
 # This will set up logging so that all output goes both to the all_log file and to the terminal 
 # until close_logs or a different set_*_logging function is called 
 set_general_logging "$all_log"
 if [ $? -ne 0 ]; then
     # Because logging is likely broken we pipe to tee to ensure this error summary still ends up in all_log
     echo "An error occurred while setting general logging for $all_log. Exiting..." | tee -a "$all_log"
-    mailx -s "$HOSTNAME $ORACLE_SID AddBackInReadOnlyTablespaces.sh: An error occurred while setting general logging" "$ALL_DBA_EMAIL_LIST" \
+    mailx -s "$HOSTNAME ERROR: AddBackInReadOnlyTablespaces.sh set_general_logging Failed" $ALL_DBA_EMAIL_LIST \
                 <<< "An error occurred while setting general logging for $all_log. Exiting..."
     exit 1
 fi
@@ -96,14 +95,14 @@ for ((i=0; i < num_sids; i++)); do
     if [ "$send_email" -ne 0 ] && [ "$sid_status" -ne 0 ]; then
         # Close the logging to the logging files before reading from it to prevent race conditions
         close_logs
-        # Redirect the last SID log into the email body
-        mailx -s "$sid_err_subject" "$ALL_DBA_EMAIL_LIST" < "$current_log"
+        # Redirect the last SID log into the email body ($all_log if that SID's log could not be set up)
+        mailx -s "$sid_err_subject" $ALL_DBA_EMAIL_LIST < "$current_log"
         # Re-enable general logging to capture anything that happens between here and setting up for the next SID
         set_general_logging "$all_log"
         if [ $? -ne 0 ]; then
             # Because logging is likely broken we pipe to tee to ensure this error summary still ends up in all_log
             echo "An error occurred while setting general logging for $all_log. Continuing..." | tee -a "$all_log"
-            mailx -s "$HOSTNAME $ORACLE_SID AddBackInReadOnlyTablespaces.sh: An error occurred while setting general logging" "$ALL_DBA_EMAIL_LIST" \
+            mailx -s "$HOSTNAME $ORACLE_SID ERROR: AddBackInReadOnlyTablespaces.sh set_general_logging Failed" $ALL_DBA_EMAIL_LIST \
                 <<< "An error occurred while setting general logging for $all_log. Continuing..."
         fi
         exit_status=1
@@ -113,7 +112,7 @@ for ((i=0; i < num_sids; i++)); do
     echo
     # Set the Oracle SID for this iteration
     export ORACLE_SID=${SIDs[i]}
-    sid_err_subject="$HOSTNAME $ORACLE_SID AddBackInReadOnlyTablespaces.sh SID Specific Error"
+    sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: AddBackInReadOnlyTablespaces.sh SID Specific Error"
 
    
     current_log="/tmp/AddBackInReadOnlyTablespaces_${log_timestamp}_${ORACLE_SID}.log"
@@ -122,7 +121,9 @@ for ((i=0; i < num_sids; i++)); do
         echo "An error occurred while creating $current_log. Continuing..."
         sid_status=1
         exit_status=1
-        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: Creating $current_log failed"
+        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: AddBackInReadOnlyTablespaces.sh Creating $current_log Failed"
+        # $current_log does not exist, so the SID error email reads its body from $all_log, which has the error above.
+        current_log="$all_log"
         continue
     fi
 
@@ -133,7 +134,9 @@ for ((i=0; i < num_sids; i++)); do
         echo "An error occurred while setting sid and general logging for $ORACLE_SID for logs $all_log and $current_log. Continuing..."  | tee -a "$all_log"
         sid_status=1
         exit_status=1
-        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: set_sid_and_general_logging failed"
+        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: AddBackInReadOnlyTablespaces.sh set_sid_and_general_logging Failed"
+        # Nothing was logged to $current_log, so the SID error email reads its body from $all_log, which has the error above.
+        current_log="$all_log"
         continue
     fi
 
@@ -147,14 +150,14 @@ for ((i=0; i < num_sids; i++)); do
             echo "Error, \$ORACLE_SID not set..."
             sid_status=1
             exit_status=1
-            sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: ORACLE_SID not set"
+            sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: AddBackInReadOnlyTablespaces.sh ORACLE_SID Not Set"
             continue
         fi
 
         echo "Error, provided ORACLE_SID is not open. Exiting..."
         sid_status=1
         exit_status=1
-        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: DB not open"
+        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: AddBackInReadOnlyTablespaces.sh DB Not Open"
         continue
     fi
 
@@ -165,7 +168,7 @@ for ((i=0; i < num_sids; i++)); do
         echo "Error occurred while attempting to make subdirectory /tmp/${ORACLE_SID} Continuing..."
         sid_status=1
         exit_status=1
-        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: Could not create /tmp/$ORACLE_SID"
+        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: AddBackInReadOnlyTablespaces.sh Could Not Create /tmp/$ORACLE_SID"
         continue
     fi
     
@@ -175,16 +178,16 @@ for ((i=0; i < num_sids; i++)); do
         echo "ERROR: File ${backup_dirs[i]}/${ORACLE_SID^^}/scripts/${ORACLE_SID^^}/RMANOnlineREADonlyTablespaces.sh could not be found. Continuing..."
         sid_status=1
         exit_status=1
-        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: ${backup_dirs[i]}/${ORACLE_SID^^}/scripts/${ORACLE_SID^^}/RMANOnlineREADonlyTablespaces.sh not found"
+        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: AddBackInReadOnlyTablespaces.sh RMANOnlineREADonlyTablespaces.sh Not Found"
         continue
     fi
 
     cp "${backup_dirs[i]}/${ORACLE_SID^^}/scripts/${ORACLE_SID^^}/RMANOnlineREADonlyTablespaces.sh" "/tmp/${ORACLE_SID}"
     if [ $? -ne 0 ]; then
-        echo "Error occurred while attempting to copy ${backup_dirs[i]}/${ORACLE_SID^^}/scripts/RMANOnlineREADonlyTablespaces.sh to /tmp/${ORACLE_SID}. Continuing..."
+        echo "Error occurred while attempting to copy ${backup_dirs[i]}/${ORACLE_SID^^}/scripts/${ORACLE_SID^^}/RMANOnlineREADonlyTablespaces.sh to /tmp/${ORACLE_SID}. Continuing..."
         sid_status=1
         exit_status=1
-        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: Could not copy ${backup_dirs[i]}/${ORACLE_SID^^}/scripts/RMANOnlineREADonlyTablespaces.sh to /tmp/${ORACLE_SID}"
+        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: AddBackInReadOnlyTablespaces.sh Could Not Copy RMANOnlineREADonlyTablespaces.sh To /tmp/${ORACLE_SID}"
         continue
     fi
 
@@ -196,7 +199,6 @@ for ((i=0; i < num_sids; i++)); do
     # - awk strips quotes/semicolon and prints the new file path (field after " to ")
     # - sed substitutes the RMAN \${1} placeholder and trims whitespace
     new_filenames=$(grep "ALTER DATABASE RENAME FILE" "/tmp/${ORACLE_SID}/RMANOnlineREADonlyTablespaces.sh" | awk -F " to " '{gsub(/'\''|;/, "", $2); print $2}' | sed "s|\${1}|${archive_dirs[i]}/${ORACLE_SID^^}_READONLY|" | sed 's/^[ \t]*//' | sed 's/[ \t]*$//')
-
     # Gather all data files on the SID
     all_data_files=$("$HOME/common/oracle/PrintAllDataFiles.sh" "$ORACLE_SID")
     # Error check
@@ -205,7 +207,7 @@ for ((i=0; i < num_sids; i++)); do
         echo "Error occurred in PrintAllDataFiles.sh helper script. Continuing..."
         sid_status=1
         exit_status=1
-        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: PrintAllDataFiles.sh failed"
+        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: AddBackInReadOnlyTablespaces.sh PrintAllDataFiles.sh Failed"
         continue
     fi
 
@@ -214,6 +216,7 @@ for ((i=0; i < num_sids; i++)); do
     # Loop over statements in RMANOnlineREADonlyTablespaces.sh file to check if they have already been added back
     data_file_not_found_by_oracle=false
     data_file_not_found_on_system=false
+    missing_files=()
     for line in $new_filenames; do
         # Check result of PrintAllDataFiles.sh to determine if database is already aware of file (grep each line for existence within helper output)
         # -F tells grep to interpret the input as a fixed string rather than regex
@@ -225,6 +228,7 @@ for ((i=0; i < num_sids; i++)); do
         # Check for the existence of the path 
         if ! [ -e "$line" ]; then
             data_file_not_found_on_system=true
+            missing_files+=("$line")
         fi
     done
     unset IFS
@@ -238,10 +242,12 @@ for ((i=0; i < num_sids; i++)); do
     fi
 
     if [ "$data_file_not_found_on_system" == "true" ]; then
-        echo "One or more datafiles in RMANOnlineREADOnlyTablespaces.sh does not exist. Continuing..."
+        echo "The following datafiles in RMANOnlineREADonlyTablespaces.sh do not exist:"
+        printf '%s\n' "${missing_files[@]}"
         sid_status=1
         exit_status=1
-        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: One or more datafiles Oracle is expecting is missing on disk"
+        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: AddBackInReadOnlyTablespaces.sh One Or More Datafiles Oracle Is Expecting Are Missing On Disk"
+        echo "Continuing..."
         continue
     fi
     
@@ -258,7 +264,7 @@ for ((i=0; i < num_sids; i++)); do
         echo "Continuing...."
         sid_status=1
         exit_status=1
-        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: RMANOnlineREADonlyTablespaces.sh failed"
+        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: AddBackInReadOnlyTablespaces.sh RMANOnlineREADonlyTablespaces.sh Failed"
         continue
     elif [ -n "$SQL_errors" ]; then
         echo "RMANOnlineREADonlyTablespaces.sh failed for database $ORACLE_SID"
@@ -269,7 +275,7 @@ for ((i=0; i < num_sids; i++)); do
         echo "Continuing..."
         sid_status=1
         exit_status=1
-        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: RMANOnlineREADonlyTablespaces.sh failed"
+        sid_err_subject="$HOSTNAME $ORACLE_SID ERROR: AddBackInReadOnlyTablespaces.sh RMANOnlineREADonlyTablespaces.sh Failed"
         continue
     else
         echo "Read-only tablespace restore for database $ORACLE_SID successful"
@@ -282,36 +288,28 @@ done
 if [ "$send_email" -ne 0 ] && [ "$sid_status" -ne 0 ]; then
     # Close the logging to the logging files before reading from it to prevent race conditions
     close_logs
-    # Redirect the last SID log into the email body
-    mailx -s "$sid_err_subject" "$ALL_DBA_EMAIL_LIST" < "$current_log"
+    # Redirect the last SID log into the email body ($all_log if that SID's log could not be set up)
+    mailx -s "$sid_err_subject" $ALL_DBA_EMAIL_LIST < "$current_log"
     # Reopen general logging to capture the rest of the script output
     set_general_logging "$all_log"
     if [ $? -ne 0 ]; then
         # We don't hard error and exit here because the logging is not essential and we still want the final script logic to complete
         # Because logging is likely broken we pipe to tee to ensure this error summary still ends up in all_log
         echo "An error occurred while setting general logging for $all_log. Continuing..." | tee -a "$all_log"
-        mailx -s "$HOSTNAME $ORACLE_SID AddBackInReadOnlyTablespaces.sh: " "$ALL_DBA_EMAIL_LIST" \
+        mailx -s "$HOSTNAME $ORACLE_SID ERROR: AddBackInReadOnlyTablespaces.sh set_general_logging Failed" $ALL_DBA_EMAIL_LIST \
                 <<< "An error occurred while setting general logging for $all_log. Continuing..."
     fi
 fi
 
 if [ "$exit_status" -eq 0 ]; then
+    echo "Script completed successfully."
     if [ "$send_email" -eq 1 ]; then
         echo "Read-only tablespaces have been successfully added to the following database(s): ${SIDs[*]}"
         # Close the logging to the logging files before reading from it to prevent race conditions
         close_logs
         # Redirect the aggregated log into the email body
-        mailx -s "$HOSTNAME SUCCESS: AddBackInReadOnlyTablespaces.sh " "$ALL_DBA_EMAIL_LIST" < "$all_log"
-        # Reopen general logging to capture the rest of the script output
-        set_general_logging "$all_log"
-        if [ $? -ne 0 ]; then
-             # We don't hard error and exit here because the logging is not essential and we still want the final script logic to complete
-            echo "An error occurred while setting general logging for $all_log. Continuing..." | tee -a "$all_log"
-            mailx -s "$HOSTNAME $ORACLE_SID AddBackInReadOnlyTablespaces.sh: An error occurred while setting general logging" "$ALL_DBA_EMAIL_LIST" \
-                <<< "An error occurred while setting general logging for $all_log. Continuing..."
-        fi
+        mailx -s "$HOSTNAME SUCCESS: AddBackInReadOnlyTablespaces.sh " $ALL_DBA_EMAIL_LIST < "$all_log"
     fi
-    echo "Script completed successfully."
 
     exit 0
 else
@@ -320,16 +318,7 @@ else
         # Close the logging to the logging files before reading from it to prevent race conditions
         close_logs
         # Redirect the aggregated log into the email body
-        mailx -s "$HOSTNAME ERROR: AddBackInReadOnlyTablespaces.sh " "$ALL_DBA_EMAIL_LIST" < "$all_log"
-        # Reopen general logging to capture the rest of the script output
-        set_general_logging "$all_log"
-        if [ $? -ne 0 ]; then
-            # We don't hard error and exit here because the logging is not essential and we still want the final script logic to complete
-            # Because logging is likely broken we pipe to tee to ensure this error summary still ends up in all_log
-            echo "An error occurred while setting general logging for $all_log. Continuing..." | tee -a "$all_log"
-            mailx -s "$HOSTNAME $ORACLE_SID AddBackInReadOnlyTablespaces.sh: An error occurred while setting general logging" "$ALL_DBA_EMAIL_LIST" \
-                <<< "An error occurred while setting general logging for $all_log. Continuing..."
-        fi
+        mailx -s "$HOSTNAME ERROR: AddBackInReadOnlyTablespaces.sh " $ALL_DBA_EMAIL_LIST < "$all_log"
     fi
 
     exit 1
