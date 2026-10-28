@@ -40,19 +40,18 @@ shift "$((OPTIND - 1))"
 
 inp=${1,,}
 
-# Validating input
+invalid_sids=""
+valid_sids=""
+
 if [[ $# -gt 1 ]]; then
     echo "$usage"
     echo "$example"
     exit 1
-fi
-
-invalid_sids=""
-valid_sids=""
-
-# Checking input
-if [ $# -eq 0 ] && [ -z "$ORACLE_SID" ]; then # Case for no input and no oracle_sid
-    invalid_sids="-1"
+elif [[ $# -eq 0 && "$ORACLE_SID" =~ ^[[:space:]]*$ ]]; then # Case for no input and no oracle_sid
+     invalid_sids="-1"
+elif [[ $# -eq 1 && "$1" =~ ^[[:space:]]*$ ]]; then # Case for empty or whitespace-only input
+    echo "Error: provided SID is empty. Exiting..."
+    exit 1
 elif [ $# -eq 0 ]; then # Case for checking oracle_sid
     # ORACLE_SID check
     db_status=$("$HOME/common/oracle/CheckDatabaseOpenStatus.sh" "$ORACLE_SID")
@@ -77,7 +76,7 @@ elif [ "${inp^^}" != "ALL" ]; then # Case for checking one input
     else
         valid_sids="$inp"
     fi
-elif [ "${inp^^}" == "ALL" ]; then # Case for checking all SIDS in sidslist
+elif [ "${inp^^}" == "ALL" ]; then # Case for checking all SIDS in env var SIDSLIST
     sids=${SIDSLIST,,}
     for sid in $sids; do
         db_status=$("$HOME/common/oracle/CheckDatabaseOpenStatus.sh" "$sid")
@@ -94,8 +93,8 @@ elif [ "${inp^^}" == "ALL" ]; then # Case for checking all SIDS in sidslist
 fi
 
 # Removing any trailing or leading whitespace
-valid_sids=$(echo $valid_sids | xargs)
-invalid_sids=$(echo $invalid_sids | xargs)
+valid_sids=$(echo "$valid_sids" | xargs)
+invalid_sids=$(echo "$invalid_sids" | xargs)
 
 if ($Vopt && $Iopt) || (! $Vopt && ! $Iopt); then # Case for both options or no options being input
     echo "Invalid SIDS: $invalid_sids"

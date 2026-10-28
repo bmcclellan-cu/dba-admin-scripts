@@ -3,12 +3,13 @@
 #
 #  Purpose: The purpose of this script is to delete the old public synonyms
 #      on a database provided by the user with the schema parameter. This
-#      script is a helper script for RefreshSynonyms.sh and RMANCloneLiveDB.sh.
+#      script is a helper script for RMANCloneLiveDB.sh.
 #
 ##########################################################################
 
 usage="Usage: DeleteOldSynonyms.sh [schema]"
 example="Example: DeleteOldSynonyms.sh MY_SCHEMA"
+name_regex='^[A-Z][A-Z0-9_$#]*$' 
 
 # Process input options
 while getopts ":h" option; do
@@ -25,7 +26,8 @@ while getopts ":h" option; do
     esac
 done
 
-if [[ $# -ne 1 ]]; then
+# Exactly one non-empty schema name is required
+if [[ $# -ne 1 ]] || [ -z "$1" ]; then
     echo "$usage"
     echo "$example"
     exit 1
@@ -33,6 +35,13 @@ fi
 
 # Checking ORACLE_SID
 sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I)
+
+if [ $? -ne 0 ]; then
+    echo "$sid_check"
+    echo "Error, call to VerifyAllParam.sh -I failed. Exiting..."
+    exit 1
+fi
+
 if [ -n "$sid_check" ]; then
     if [ "$sid_check" == "-1" ]; then
         echo "Error, \$ORACLE_SID not set..."
@@ -44,6 +53,37 @@ fi
 
 # Set schema to capitalized input
 schema=${1^^}
+
+# Only accept plain identifiers, so a quote or '&' (SQL*Plus substitution) can't change the queries below
+if ! [[ "${schema}" =~ $name_regex ]]; then
+    echo "Error. '$schema' does not match $name_regex pattern. Exiting..." 
+    exit 1
+fi
+
+# Check to see if any schemas match the input
+schema_check=$(
+    "$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+    set heading off
+    set feedback off
+    whenever oserror exit 1
+    whenever sqlerror exit 1
+    select username from dba_users where username ='${schema}' and oracle_maintained = 'N';
+    exit;
+EOD
+)
+
+# Check for errors
+if [ $? -ne 0 ]; then 
+    echo "$schema_check"
+    echo "An error occurred while trying to check if the provided schema exists. Exiting..."
+    exit 1
+fi
+
+schema_check=$(echo "$schema_check" | xargs)
+if [ -z "$schema_check" ]; then 
+    echo "Error. There is no schema named ${schema} on database ${ORACLE_SID} which is not Oracle maintained. Exiting..."
+    exit 1
+fi
 
 # Display start of deletion process
 echo "Deleting old public synonyms on ${schema}"
@@ -61,7 +101,7 @@ result=$(
     err_msg VARCHAR2(100);
     BEGIN
     FOR MySchema IN
-    (select owner,synonym_name,table_name from dba_synonyms where owner = 'PUBLIC' and table_owner like '${schema}%'
+    (select owner,synonym_name,table_name from dba_synonyms where owner = 'PUBLIC' and table_owner = '${schema}'
     )
     LOOP
     dbms_output.put_line('DROP PUBLIC SYNONYM '|| MySchema.synonym_name);

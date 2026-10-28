@@ -4,19 +4,35 @@
 # Purpose: This script archives the current redo log for a specific database or all
 #	   SIDs in $SIDSLIST. Before doing this, the script identifies the location
 #	   that the archive log was written to and it finds the current sequence
-#	   number for the relative database.
+#	   number for the relative database. With -g, it instead archives the given
+#	   redo log group if that group still needs archiving.
 #
-usage="Usage: ArchiveCurrentRedoLog.sh [\$ORACLE_SID | ALL (optional) ] | [ redo-log group number (optional) ]"
-example="Example: ArchiveCurrentRedoLog.sh mysid"
+usage="Usage: ArchiveCurrentRedoLog.sh [ -g redo-log group number (optional) ] [ \$ORACLE_SID | ALL (optional) ]"
+example1="Example 1: ArchiveCurrentRedoLog.sh mysid"
+example2="Example 2: ArchiveCurrentRedoLog.sh -g 7 mysid"
 #####################################################################################
 
+group_num=""
+
 # Process input options
-while getopts ":h" option; do
+while getopts ":hg:" option; do
     case $option in
         h)
             echo "$usage"
-            echo "$example"
+            echo "$example1"
+            echo "$example2"
             exit 0
+            ;;
+        g)
+            if [[ ! "$OPTARG" =~ ^[0-9]+$ ]]; then
+                echo "Error: Invalid redo log group number $OPTARG, must be a number"
+                exit 1
+            fi
+            group_num="$OPTARG"
+            ;;
+        :)
+            echo "Error: Option -$OPTARG requires an argument"
+            exit 1
             ;;
         \?)
             echo "Error: Invalid option"
@@ -25,146 +41,99 @@ while getopts ":h" option; do
     esac
 done
 
+shift "$((OPTIND - 1))"
+
 # Check arguments
 if [ $# -gt 1 ]; then
     echo "$usage"
-    echo "$example"
+    echo "$example1"
+    echo "$example2"
     exit 1
 fi
 
-if [[ "$1" =~ ^[0-9]+$ ]]; then
-    # Check for valid ORACLE_SID
-    sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I)
-    if [ -n "$sid_check" ]; then
-        if [ "$sid_check" == "-1" ]; then
-            echo "Error, \$ORACLE_SID not set..."
-            exit 1
-        fi
-        echo "Error, provided ORACLE_SID is not open. Exiting..."
-        exit 1
-    fi
-
-    # Display the redo log groups
-    "$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
-    whenever oserror exit 1
-    whenever sqlerror exit 1
-    select group#, status, round(bytes/1000000) as "Size in MB" from v\$log;
-    exit;
-EOD
-
-    # Check for errors
-    if [ $? -ne 0 ]; then
-        echo "An error occurred while attempting to display the redo log groups. Exiting..."
-        exit 1
-    fi
-
-    echo "Altering log group $1 based on status..."
-
-    # Find the status of the provided redo log
-    current_status=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
-    whenever oserror exit 1
-    whenever sqlerror exit 1
-    set heading off
-    set feedback off
-    select status from v\$log where group# = '$1';
-    exit;
-EOD
-    )
-
-    # Check for errors
-    if [ $? -ne 0 ]; then
-        echo "$current_status"
-        echo "An error occurred while determining the status of redo log group ${1}. Exiting..."
-        exit 1
-    fi
-
-    # Clear extra whitespace
-    current_status=$(echo "$current_status" | xargs)
-
-    if [ -z "$current_status" ]; then
-        echo "Error. Redo log group $1 does not exist on database ${ORACLE_SID}. Exiting..."
-        exit 1
-    elif [ "$current_status" == "ACTIVE" ]; then
-        # Attempt to archive the provided redo log group
-        alter_archive_log=$(
-        "$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
-        whenever oserror exit 1
-        whenever sqlerror exit 1
-        alter system archive log group $1;
-        exit;
-EOD
-        )
-
-        bash_error=$?
-
-    elif [ "$current_status" == "INACTIVE" ]; then
-        echo "Group is inactive no data to archive. Exiting..."
-        exit 0
-    elif [ "$current_status" == "CURRENT" ]; then
-
-        # Switch system logfile
-        alter_archive_log=$(
-        "$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
-        whenever oserror exit 1
-        whenever sqlerror exit 1
-        ALTER SYSTEM SWITCH LOGFILE;
-        ALTER SYSTEM ARCHIVE LOG GROUP $1;
-        exit;
-EOD
-        )
-
-        bash_error=$?
-    else
-        echo "Unsupported status $current_status encountered. Exiting..."
-        exit 1
-    fi
-
-    # Check for specific ORA errors
-    ora_error_one=$(echo "$alter_archive_log" | grep "ORA-00261")
-    ora_error_two=$(echo "$alter_archive_log" | grep "ORA-16013")
-
-    # Check for ORA-00261 error
-    if [ "$ora_error_one" ]; then
-        echo "Redo log group ${1} is already currently being archived"
-        exit 0
-    # Check for ORA-16013 error
-    elif [ "$ora_error_two" ]; then
-        echo "Redo log group ${1} is active, and does not need archiving"
-        exit 0
-    # Check for general errors
-    elif [ "$bash_error" -ne 0 ]; then
-        echo "An error occurred while attempting to archive log group ${1}. Error:"
-        echo "$alter_archive_log"
-        echo ""
-        echo "Exiting..."
-        exit 1
-    else
-        echo "Log group ${1} successfully archived"
-        exit 0
-    fi
-    
+if [ -z "$1" ]; then
+    sids=$("$HOME/common/oracle/VerifyAllParam.sh" -V)
 else
-    # ${1:+"$1"} expands to nothing when $1 is unset or empty, and to "$1" otherwise.
-    # Plain "$1" would pass one empty argument, which VerifyAllParam.sh reads as "check
-    # this specific SID" rather than "check $ORACLE_SID", so its -1 "not set" sentinel
-    # would never be returned and the guard below would not fire.
-    sids=$("$HOME/common/oracle/VerifyAllParam.sh" -V ${1:+"$1"})
-    if [ $? -ne 0 ]; then
-        echo "$sids"
-        echo "Error occurred while calling VerifyAllParam.sh. Exiting..."
-        exit 1
-    fi
+    sids=$("$HOME/common/oracle/VerifyAllParam.sh" -V "$1")
+fi
 
-    # Run through the script on all applicable SIDs
-    for sid in $sids; do
-        echo ""
+if [ $? -ne 0 ]; then
+    echo "$sids"
+    echo "Error occurred while calling VerifyAllParam.sh. Exiting..."
+    exit 1
+fi
 
-        export ORACLE_SID="$sid"
+# Run through the script on all applicable SIDs
+for sid in $sids; do
+    echo
 
-        echo "Running script on $sid..."
-        echo "--------------------------------------------------"
+    export ORACLE_SID="$sid"
 
-        # Use UpdateDBrecoveryFileDest.sh to check where archive log is written
+    echo "Running script on $sid..."
+    echo "--------------------------------------------------"
+
+    if [ -n "$group_num" ]; then
+        # Display the redo log groups
+        "$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+        whenever oserror exit 1
+        whenever sqlerror exit 1
+        select group#, status, round(bytes/1000000) as "Size in MB" from v\$log;
+        exit;
+EOD
+
+        # Check for errors
+        if [ $? -ne 0 ]; then
+            echo "An error occurred while attempting to display the redo log groups for $ORACLE_SID. Continuing..."
+            exit_status=1
+            continue
+        fi
+
+        echo "Archiving log group $group_num based on status..."
+
+        # Find the status of the provided redo log group and whether it is already archived
+        group_info=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+        whenever oserror exit 1
+        whenever sqlerror exit 1
+        set heading off
+        set feedback off
+        select status, archived from v\$log where group# = '$group_num';
+        exit;
+EOD
+        )
+
+        # Check for errors
+        if [ $? -ne 0 ]; then
+            echo "$group_info"
+            echo "An error occurred while determining the status of redo log group ${group_num}. Continuing..."
+            exit_status=1
+            continue
+        fi
+
+        # Clear extra whitespace and split into status and archived
+        read -r group_status group_archived <<< "$(echo "$group_info" | xargs)"
+        # Choose the statement from the group's state up front, rather than running one
+        # and interpreting its ORA error afterwards
+        if [ -z "$group_status" ]; then
+            echo "Error: Redo log group $group_num does not exist on database ${ORACLE_SID}. Continuing..."
+            exit_status=1
+            continue
+        elif [ "$group_archived" == "YES" ]; then
+            echo "Redo log group $group_num does not need archiving"
+            continue
+        elif [ "$group_status" == "CURRENT" ]; then
+            # Without THREAD, ARCHIVE LOG CURRENT archives every unarchived group, "including logs
+            # previous to current logs" (19c ALTER SYSTEM reference). So group N is still archived if
+            # it switched out of CURRENT after the status check above.
+            archive_sql="alter system archive log current;"
+        elif [ "$group_status" == "ACTIVE" ] || [ "$group_status" == "INACTIVE" ]; then
+            archive_sql="alter system archive log group $group_num;"
+        else
+            echo "Unsupported status $group_status encountered. Continuing..."
+            exit_status=1
+            continue
+        fi
+    else
+        # Use UpdateDBrecoveryFileDest.sh to check where archive logs are written
         archivelog_dir=$("$HOME/common/oracle/UpdateDBrecoveryFileDest.sh" list "$ORACLE_SID")
         if [ $? -ne 0 ]; then
             echo "$archivelog_dir"
@@ -193,99 +162,107 @@ else
 EOD
         )
 
-        # Check for errors
-        bash_error=$?
-        ora_error=$(echo "$sequence_num" | grep "ORA-")
+        # Check result of sequence number check
+        if [ $? -ne 0 ] || [[ "$sequence_num" =~ "ORA-" ]]; then
+            echo "$sequence_num"
+            echo "Error occurred during sequence number check for ${ORACLE_SID}. Continuing..."
+            exit_status=1
+            continue
+        fi
 
         # Remove whitespace from output
         sequence_num=$(echo "$sequence_num" | xargs)
 
-        # Check result of sequence number check
-        if [ "$bash_error" -ne 0 ]; then
-            echo "$sequence_num"
-            echo "Error occurred during sequence number check ${sequence_num}. Error: "
-            echo "Continuing..."
-            exit_status=1
-            continue
-        elif [ -n "$ora_error" ]; then
-            echo "$sequence_num"
-            echo "Error occurred during sequence number check ${sequence_num}. Error: "
-            echo "Continuing..."
-            exit_status=1
-            continue
-        fi
-
-        # Archive the redo log for the current database
-        archive_log=$(
-        "$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
-        whenever oserror exit 1
-        whenever sqlerror exit 1
-        alter system archive log current;
-        exit;
-EOD
-        )
-
-        # Check for errors
-        bash_error=$?
-        ora_error=$(echo "$archive_log" | grep "ORA-")
-
-        # Check result of archive log block
-        if [ "$bash_error" -ne 0 ]; then
-            echo "$archive_log"
-            echo "Error occurred during archive log ${archive_log}. Error: "
-            echo "Continuing..."
-            exit_status=1
-            continue
-        elif [ -n "$ora_error" ]; then
-            echo "$archive_log"
-            echo "Error occurred during archive log ${archive_log}. Error: "
-            echo "Continuing..."
-            exit_status=1
-            continue
-        else
-            echo "Redo log archived completed successfully"
-        fi
-
-        # Find the group number for the current redo log
-        log_group=$(
-        "$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
-        whenever oserror exit 1
-        whenever sqlerror exit 1
-        set heading off
-        set feedback off
-        select group# from v\$log where status = 'CURRENT';
-        exit;
-EOD
-        )
-
-        # Check for errors
-        if [ $? -ne 0 ]; then
-            echo "$log_group"
-            echo "An error occurred while finding the group number for the current redo log for $ORACLE_SID. Exiting..."
-            exit_status=1
-            continue
-        fi
-
-        log_group=$(echo "$log_group" | xargs)
-
-        
-        if [ -z "$sequence_num" ]; then
-            echo "Current redo log group ${log_group} written to $archivelog_dir"
-        else
-            echo "Current redo log group ${log_group}, sequence $sequence_num written to $archivelog_dir"
-        fi
-    done
-
-    # See the note on ${1:+"$1"} above.
-    invalid_sids=$("$HOME/common/oracle/VerifyAllParam.sh" -I ${1:+"$1"})
-    if [ -n "$invalid_sids" ]; then
-        if [ "$invalid_sids" == "-1" ]; then
-            echo "Error: \$ORACLE_SID not set and none provided. Exiting..."
-            exit 1
-        fi
-        echo "Error: database(s) $invalid_sids are not open. Exiting..."
-        exit_status=1
+        archive_sql="alter system archive log current;"
     fi
+
+    # Archive the redo log for the current database
+    archive_log=$(
+    "$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+    whenever oserror exit 1
+    whenever sqlerror exit 1
+    $archive_sql
+    exit;
+EOD
+    )
+
+    # Check for errors
+    bash_error=$?
+
+    # Kept this check because during normal operations a redo log could get archived during this script's execution. That should not result in an error.
+    # ORA-16013 -> An attempt was made to archive the named file manually, but the file did not require archiving. The file had previously been successfully archived.
+    ora_16013=$(echo "$archive_log" | grep "ORA-16013")
+    
+    group_specifier="log"
+    if [ -n "$group_num" ]; then
+        group_specifier="log group ${group_num}"
+    fi
+
+    if [ -n "$ora_16013" ]; then
+        echo "Redo ${group_specifier} on $ORACLE_SID does not need archiving"
+        continue
+    elif [ "$bash_error" -ne 0 ] || [[ "$archive_log" =~ "ORA-" ]]; then
+        echo "$archive_log"
+        echo "Error occurred while archiving the redo ${group_specifier} for ${ORACLE_SID}. Continuing..."
+        exit_status=1
+        continue
+    fi
+
+    if [ -n "$group_num" ]; then
+        echo "Log group ${group_num} successfully archived"
+        continue
+    fi
+
+    echo "Redo log archive completed successfully"
+
+    # Find the group number for the current redo log
+    log_group=$(
+    "$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
+    whenever oserror exit 1
+    whenever sqlerror exit 1
+    set heading off
+    set feedback off
+    select group# from v\$log where status = 'CURRENT';
+    exit;
+EOD
+    )
+
+    # Check for errors
+    if [ $? -ne 0 ]; then
+        echo "$log_group"
+        echo "An error occurred while finding the group number for the current redo log for $ORACLE_SID. Continuing..."
+        exit_status=1
+        continue
+    fi
+
+    log_group=$(echo "$log_group" | xargs)
+
+    if [ -z "$sequence_num" ]; then
+        echo "Current redo log group ${log_group} written to $archivelog_dir"
+    else
+        echo "Current redo log group ${log_group}, sequence $sequence_num written to $archivelog_dir"
+    fi
+done
+
+if [ -z "$1" ]; then
+    invalid_sids=$("$HOME/common/oracle/VerifyAllParam.sh" -I)
+else
+    invalid_sids=$("$HOME/common/oracle/VerifyAllParam.sh" -I "$1")
+fi
+
+if [ $? -ne 0 ]; then
+    echo "$invalid_sids"
+    echo "Failed to validate parameters by running VerifyAllParam.sh. Exiting..."
+    exit 1
+fi
+
+if [ -n "$invalid_sids" ]; then
+    if [ "$invalid_sids" == "-1" ]; then
+        echo "Error: \$ORACLE_SID not set and none provided. Exiting..."
+        exit 1
+    fi
+    echo "Error: database(s) $invalid_sids are not open. Exiting..."
+    exit_status=1
 fi
 
 # If any errors occurred during the script, exit with error code 1, otherwise exit 0

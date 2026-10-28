@@ -77,7 +77,7 @@ else
         exit 1
     fi
 
-    echo "Directory $2 successfully created. Continuing...."
+    echo "Directory $2 successfully created. Continuing..."
     output_dir_root="$2"
 fi
 
@@ -106,7 +106,7 @@ for sid in $sids; do
     export ORACLE_SID="$sid"
     UPPERCASE_SID=$(echo "$sid" | tr "[:lower:]" "[:upper:]")
 
-    # Set output_dir if 1 argument is given.
+    # Set output_dir if user did not provide a directory
     if [ $# -eq 1 ]; then
         recovery_file_dest=$("$HOME/common/oracle/PrintParamDBrecoveryFileDest.sh" "$ORACLE_SID")
         if [ $? -ne 0 ]; then
@@ -121,7 +121,7 @@ for sid in $sids; do
         output_dir="${recovery_file_dest}/${UPPERCASE_SID}/scripts/${UPPERCASE_SID}"
         mkdir -p "$output_dir"
     else
-        output_dir="${output_dir_root}${UPPERCASE_SID}/"
+        output_dir="${output_dir_root}${UPPERCASE_SID}"
         mkdir -p "$output_dir"
     fi
 
@@ -160,7 +160,7 @@ for sid in $sids; do
     set linesize 1000
     whenever sqlerror exit 1
     whenever oserror exit 1
-    spool RMANCreateDirStructure.sh
+    spool ${output_dir}/RMANCreateDirStructure.sh
     select '#!/bin/bash' from dual;
     select '# Created on: ${creation_date}' from dual;
     select '' from dual;
@@ -189,7 +189,7 @@ EOD
     if [ $? -ne 0 ]; then
         echo "$gen_output"
         echo "Error, sqlplus failed while generating RMANCreateDirStructure.sh for ${ORACLE_SID}."
-        rm -f RMANCreateDirStructure.sh
+        rm -f "${output_dir}/RMANCreateDirStructure.sh"
         exit_status=1
     fi
 
@@ -210,7 +210,7 @@ EOD
     set linesize 1000
     whenever sqlerror exit 1
     whenever oserror exit 1
-    spool RMANRestoreAllDatafiles.sh
+    spool ${output_dir}/RMANRestoreAllDatafiles.sh
     select '#!/bin/bash' from dual;
     select '# Created on: ${creation_date}' from dual;
     select '' from dual;
@@ -255,7 +255,7 @@ EOD
     if [ $? -ne 0 ]; then
         echo "$gen_output"
         echo "Error, sqlplus failed while generating RMANRestoreAllDatafiles.sh for ${ORACLE_SID}."
-        rm -f RMANRestoreAllDatafiles.sh
+        rm -f "${output_dir}/RMANRestoreAllDatafiles.sh"
         exit_status=1
     fi
 
@@ -276,7 +276,7 @@ EOD
     set linesize 1000
     whenever sqlerror exit 1
     whenever oserror exit 1
-    spool RMANCopyREADonlyDatafiles.sh
+    spool ${output_dir}/RMANCopyREADonlyDatafiles.sh
     select '#!/bin/bash' from dual;
     select '# Created on: ${creation_date}' from dual;
     select '# Note: the cp commands from this script are not complete.' from dual;
@@ -322,7 +322,7 @@ EOD
     if [ $? -ne 0 ]; then
         echo "$gen_output"
         echo "Error, sqlplus failed while generating RMANCopyREADonlyDatafiles.sh for ${ORACLE_SID}."
-        rm -f RMANCopyREADonlyDatafiles.sh
+        rm -f "${output_dir}/RMANCopyREADonlyDatafiles.sh"
         exit_status=1
     fi
 
@@ -340,7 +340,7 @@ EOD
     set linesize 1000
     whenever sqlerror exit 1
     whenever oserror exit 1
-    spool RMANRestoreRecoverAllDatafiles.sh
+    spool ${output_dir}/RMANRestoreRecoverAllDatafiles.sh
     select '#!/bin/bash' from dual;
     select '# Takes in two parameters: Source directory (example: /path/to/mysid/) and output directory.' from dual;
     select '# Created on: ${creation_date}' from dual;
@@ -387,7 +387,7 @@ EOD
     if [ $? -ne 0 ]; then
         echo "$gen_output"
         echo "Error, sqlplus failed while generating RMANRestoreRecoverAllDatafiles.sh for ${ORACLE_SID}."
-        rm -f RMANRestoreRecoverAllDatafiles.sh
+        rm -f "${output_dir}/RMANRestoreRecoverAllDatafiles.sh"
         exit_status=1
     fi
 
@@ -403,7 +403,7 @@ EOD
     set linesize 1000
     whenever sqlerror exit 1
     whenever oserror exit 1
-    spool RMANRestoreRedoLogsNewDirectory.sh
+    spool ${output_dir}/RMANRestoreRedoLogsNewDirectory.sh
     select '#!/bin/bash' from dual;
     select '# Created on: ${creation_date}' from dual;
     select '' from dual;
@@ -440,7 +440,7 @@ EOD
     if [ $? -ne 0 ]; then
         echo "$gen_output"
         echo "Error, sqlplus failed while generating RMANRestoreRedoLogsNewDirectory.sh for ${ORACLE_SID}."
-        rm -f RMANRestoreRedoLogsNewDirectory.sh
+        rm -f "${output_dir}/RMANRestoreRedoLogsNewDirectory.sh"
         exit_status=1
     fi
 
@@ -451,7 +451,7 @@ EOD
     set linesize 1000
     whenever sqlerror exit 1
     whenever oserror exit 1
-    spool RMANOfflineDropREADonlyDatafiles.sh
+    spool ${output_dir}/RMANOfflineDropREADonlyDatafiles.sh
     select '#!/bin/bash' from dual;
     select '# Created on: ${creation_date}' from dual;
     select '' from dual;
@@ -487,7 +487,7 @@ EOD
     if [ $? -ne 0 ]; then
         echo "$gen_output"
         echo "Error, sqlplus failed while generating RMANOfflineDropREADonlyDatafiles.sh for ${ORACLE_SID}."
-        rm -f RMANOfflineDropREADonlyDatafiles.sh
+        rm -f "${output_dir}/RMANOfflineDropREADonlyDatafiles.sh"
         exit_status=1
     fi
 
@@ -505,7 +505,7 @@ EOD
     set linesize 1000
     whenever sqlerror exit 1
     whenever oserror exit 1
-    spool RMANOnlineREADonlyTablespaces.sh
+    spool ${output_dir}/RMANOnlineREADonlyTablespaces.sh
     select '#!/bin/bash' from dual;
     select '# Created on: ${creation_date}' from dual;
     select '' from dual;
@@ -550,7 +550,7 @@ EOD
     if [ $? -ne 0 ]; then
         echo "$gen_output"
         echo "Error, sqlplus failed while generating RMANOnlineREADonlyTablespaces.sh for ${ORACLE_SID}."
-        rm -f RMANOnlineREADonlyTablespaces.sh
+        rm -f "${output_dir}/RMANOnlineREADonlyTablespaces.sh"
         exit_status=1
     fi
 
@@ -566,7 +566,7 @@ EOD
     set linesize 1000
     whenever sqlerror exit 1
     whenever oserror exit 1
-    spool RMANRestoreReadWriteTablespacesOnly.sh
+    spool ${output_dir}/RMANRestoreReadWriteTablespacesOnly.sh
     select '#!/bin/bash' from dual;
     select '# Created on: ${creation_date}' from dual;
     select '' from dual;
@@ -623,70 +623,62 @@ EOD
     if [ $? -ne 0 ]; then
         echo "$gen_output"
         echo "Error, sqlplus failed while generating RMANRestoreReadWriteTablespacesOnly.sh for ${ORACLE_SID}."
-        rm -f RMANRestoreReadWriteTablespacesOnly.sh
+        rm -f "${output_dir}/RMANRestoreReadWriteTablespacesOnly.sh"
         exit_status=1
     fi
 
-    # Check for script creation and make scripts executable.
-    if [ -f "RMANRestoreAllDatafiles.sh" ]; then
-        chmod 644 RMANRestoreAllDatafiles.sh
-        mv RMANRestoreAllDatafiles.sh "$output_dir"
+    # Check that each script was created and set its permissions to 644.
+    if [ -f "${output_dir}/RMANRestoreAllDatafiles.sh" ]; then
+        chmod 644 "${output_dir}/RMANRestoreAllDatafiles.sh"
     else
         echo "Error, File RMANRestoreAllDatafiles.sh not created."
         exit_status=1
     fi
 
-    if [ -f "RMANRestoreRecoverAllDatafiles.sh" ]; then
-        chmod 644 RMANRestoreRecoverAllDatafiles.sh
-        mv RMANRestoreRecoverAllDatafiles.sh "$output_dir"
+    if [ -f "${output_dir}/RMANRestoreRecoverAllDatafiles.sh" ]; then
+        chmod 644 "${output_dir}/RMANRestoreRecoverAllDatafiles.sh"
     else
         echo "Error, File RMANRestoreRecoverAllDatafiles.sh not created."
         exit_status=1
     fi
 
-    if [ -f "RMANCopyREADonlyDatafiles.sh" ]; then
-        chmod 644 RMANCopyREADonlyDatafiles.sh
-        mv RMANCopyREADonlyDatafiles.sh "$output_dir"
+    if [ -f "${output_dir}/RMANCopyREADonlyDatafiles.sh" ]; then
+        chmod 644 "${output_dir}/RMANCopyREADonlyDatafiles.sh"
     else
         echo "Error, File RMANCopyREADonlyDatafiles.sh not created."
         exit_status=1
     fi
 
-    if [ -f "RMANOfflineDropREADonlyDatafiles.sh" ]; then
-        chmod 644 RMANOfflineDropREADonlyDatafiles.sh
-        mv RMANOfflineDropREADonlyDatafiles.sh "$output_dir"
+    if [ -f "${output_dir}/RMANOfflineDropREADonlyDatafiles.sh" ]; then
+        chmod 644 "${output_dir}/RMANOfflineDropREADonlyDatafiles.sh"
     else
         echo "Error, File RMANOfflineDropREADonlyDatafiles.sh not created."
         exit_status=1
     fi
     
-    if [ -f "RMANOnlineREADonlyTablespaces.sh" ]; then
-        chmod 644 RMANOnlineREADonlyTablespaces.sh
-        mv RMANOnlineREADonlyTablespaces.sh "$output_dir"
+    if [ -f "${output_dir}/RMANOnlineREADonlyTablespaces.sh" ]; then
+        chmod 644 "${output_dir}/RMANOnlineREADonlyTablespaces.sh"
     else
         echo "Error, File RMANOnlineREADonlyTablespaces.sh not created."
         exit_status=1
     fi
 
-    if [ -f "RMANCreateDirStructure.sh" ]; then
-        chmod 644 RMANCreateDirStructure.sh
-        mv RMANCreateDirStructure.sh "$output_dir"
+    if [ -f "${output_dir}/RMANCreateDirStructure.sh" ]; then
+        chmod 644 "${output_dir}/RMANCreateDirStructure.sh"
     else
         echo "Error, File RMANCreateDirStructure.sh not created."
         exit_status=1
     fi
 
-    if [ -f "RMANRestoreRedoLogsNewDirectory.sh" ]; then
-        chmod 644 RMANRestoreRedoLogsNewDirectory.sh
-        mv RMANRestoreRedoLogsNewDirectory.sh "$output_dir"
+    if [ -f "${output_dir}/RMANRestoreRedoLogsNewDirectory.sh" ]; then
+        chmod 644 "${output_dir}/RMANRestoreRedoLogsNewDirectory.sh"
     else
         echo "Error, File RMANRestoreRedoLogsNewDirectory.sh not created."
         exit_status=1
     fi
 
-    if [ -f "RMANRestoreReadWriteTablespacesOnly.sh" ]; then
-        chmod 644 RMANRestoreReadWriteTablespacesOnly.sh
-        mv RMANRestoreReadWriteTablespacesOnly.sh "$output_dir"
+    if [ -f "${output_dir}/RMANRestoreReadWriteTablespacesOnly.sh" ]; then
+        chmod 644 "${output_dir}/RMANRestoreReadWriteTablespacesOnly.sh"
     else
         echo "Error, File RMANRestoreReadWriteTablespacesOnly.sh not created."
         exit_status=1

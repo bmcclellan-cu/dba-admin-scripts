@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # AvailabilityFlag: Public
 #
 # Purpose: This script is meant to be sourced by other scripts in the repository
@@ -38,7 +38,7 @@
 #                         echo "$suppressed_output"
 #                         # close_logs to ensure nothing is still writing to "$sid_log_file" when we use it in mailx
 #                         close_logs
-#                         mailx -s "MyScript.sh Failed for $SID" "$ALL_DBA_EMAIL_LIST" < "$sid_log_file"
+#                         mailx -s "MyScript.sh Failed for $SID" $ALL_DBA_EMAIL_LIST < "$sid_log_file"
 #                         continue
 #                     fi
 #                 done 
@@ -49,7 +49,7 @@
 #                 fi
 #                 ... do some cleanup/validation
 #                 close_logs
-#                 mailx -s "MyScript.sh Completed" "$ALL_DBA_EMAIL_LIST" < "$general_log_file"
+#                 mailx -s "MyScript.sh Completed" $ALL_DBA_EMAIL_LIST < "$general_log_file"
 #                 exit 0
 #               `
 #
@@ -114,6 +114,9 @@ set_general_logging() {
     LOGGING_GENERAL_PID=$!
     # Redirect script stdout and stderr to write to the FIFO
     exec > "$LOGGING_GENERAL_FIFO" 2>&1
+    # Now that the pipe is being used from both ends it is safe to delete as the kernel object is already loaded into memory
+    # and will be garbage collected by the kernel when the readers/writers close their file descriptors.
+    rm -f "$LOGGING_GENERAL_FIFO"
 }
 
 # Purpose: Log all stdout and stderr output to a general log and a sid specific log along with the terminal.
@@ -160,6 +163,23 @@ set_sid_and_general_logging() {
     fi
     LOGGING_SID_LOG="$sid_log"
 
+    # Create the general fifo before the filter starts. The filter blocks until tee opens the filter fifo, so if a failure
+    # here came after the filter was running, close_logs would wait on the filter forever.
+    # mktemp -u just gives us a valid tmp file name that we then use to actually create the fifo/pipe which is actually a file on disk
+    LOGGING_GENERAL_FIFO=$(mktemp -u)
+    if [ $? -ne 0 ]; then
+        echo "An error occurred while generating tmp file name. Exiting..."
+        close_logs
+        return 1
+    fi
+    # Create a fifo pipe that tee will read from and the programs stdout and stderr will write to
+    mkfifo "$LOGGING_GENERAL_FIFO"
+    if [ $? -ne 0 ]; then
+        echo "An error occurred while creating the general FIFO $LOGGING_GENERAL_FIFO. Exiting..."
+        close_logs
+        return 1
+    fi
+
     # Setup functionality to have arbitrary bash programs alter which logs are output to the SID specific log
     # The primary use case for this is to filter logs with grep. Ex: `grep -A3 -B3 'not found'`
     local sid_filter=$3
@@ -184,31 +204,19 @@ set_sid_and_general_logging() {
         # We use 'eval' to execute an arbitrary filter that the user chooses and can be any bash program that gets input via stdin
         # The filter reads from this fifo in the background (< "$LOGGING_FILTER_FIFO"). This fifo is written to by tee. 
         # The filters output is redirected and written to LOGGING_SID_LOG file (>> "$LOGGING_SID_LOG" 2>&1) meaning the filtered logs get appended to the sid specific log file.
-        eval "$sid_filter" < "$LOGGING_FILTER_FIFO" >> "$LOGGING_SID_LOG" 2>&1 &
+        # Opening the fifo for reading (the < on the group) blocks until tee opens it for writing, so once the group starts
+        # both ends are open and the fifo can be removed from disk. It is removed here because only this process knows when
+        # tee has opened it.
+        { rm -f "$LOGGING_FILTER_FIFO"; eval "$sid_filter"; } < "$LOGGING_FILTER_FIFO" >> "$LOGGING_SID_LOG" 2>&1 &
         # We capture the filters process ID for later use in close_logs to avoid race conditions. 
         # We wait on this PID to ensure all data the filter is processing has been written to the file before we read from it or do other operations like re-configuring the logging. 
         LOGGING_FILTER_PID=$!
     fi
 
-    # mktemp -u just gives us a valid tmp file name that we then use to actually create the fifo/pipe which is actually a file on disk
-    LOGGING_GENERAL_FIFO=$(mktemp -u)
-    if [ $? -ne 0 ]; then
-        echo "An error occurred while generating tmp file name. Exiting..."
-        close_logs
-        return 1
-    fi
-    # Create a fifo pipe that tee will read from and the programs stdout and stderr will write to
-    mkfifo "$LOGGING_GENERAL_FIFO"
-    if [ $? -ne 0 ]; then
-        echo "An error occurred while creating the general FIFO $LOGGING_GENERAL_FIFO. Exiting..."
-        close_logs
-        return 1
-    fi
-
     # Depending on whether a sid specific logging filter is configured, tee to different files (FIFOs are just files on disk)
     if [ -n "$LOGGING_FILTER_FIFO" ]; then
         # High level: Outputs the logs sent to LOGGING_GENERAL_FIFO to LOGGING_GENERAL_LOG, LOGGING_FILTER_FIFO, and the terminal.
-        #             LOGGING_GENERAL_FIFO is setup later in this script to capture all of the programs output to stdout and stderr 
+        #             LOGGING_GENERAL_FIFO is connected to the program's stdout and stderr later in this script (the exec below) 
         #             so all program output to stdout and stderr ends up in LOGGING_GENERAL_LOG, LOGGING_FILTER_FIFO (which applies a filter and then writes to the LOGGING_SID_LOG as configured earlier in the script), and the terminal.
         #
         # Specifics: This creates a background tee process that reads from the fifo pipe (< "$LOGGING_GENERAL_FIFO")
@@ -219,7 +227,7 @@ set_sid_and_general_logging() {
         tee -a "$LOGGING_GENERAL_LOG" "$LOGGING_FILTER_FIFO" < "$LOGGING_GENERAL_FIFO" >&3 2>&1 &
     else
         # High level: Outputs the logs sent to LOGGING_GENERAL_FIFO to LOGGING_GENERAL_LOG, LOGGING_SID_LOG, and the terminal.
-        #             LOGGING_GENERAL_FIFO is setup later in this script to capture all of the programs output to stdout and stderr 
+        #             LOGGING_GENERAL_FIFO is connected to the program's stdout and stderr later in this script (the exec below) 
         #             so all program output to stdout and stderr ends up in LOGGING_GENERAL_LOG, LOGGING_SID_LOG, and the terminal.
         #
         # Specifics: This creates a background tee process that reads from the fifo pipe (< "$LOGGING_GENERAL_FIFO")
@@ -235,6 +243,9 @@ set_sid_and_general_logging() {
 
     # Tell stdout and stderr to write to LOGGING_GENERAL_FIFO which we configured earlier to use tee to send its output to the terminal and appropriate files (FIFOs are also files!)
     exec > "$LOGGING_GENERAL_FIFO" 2>&1
+    # The exec above blocks until tee's side has opened the general fifo for reading, so it is safe to remove now.
+    # The filter fifo is removed by the filter itself (see above), because tee may not have opened it yet at this point.
+    rm -f "$LOGGING_GENERAL_FIFO"
 }
 
 # Purpose: Reset to the initial state which allows users to use the log files/redirect file descriptors
@@ -250,7 +261,7 @@ close_logs() {
 
     # Wait for the general tee to terminate which prevents a race condition where the user immediately reads from the LOGGING_GENERAL_LOG file while this process is still writing.
     # Ex race condition: cat bigfile.txt
-    #                    mailx -s "Success" "$ALL_DBA_EMAIL_LIST" < "$LOGGING_GENERAL_LOG"
+    #                    mailx -s "Success" $ALL_DBA_EMAIL_LIST < "$LOGGING_GENERAL_LOG"
     if [ -n "$LOGGING_GENERAL_PID" ]; then
         wait "$LOGGING_GENERAL_PID"
     fi
@@ -259,7 +270,7 @@ close_logs() {
 
     # Wait for the filter to terminate which prevents a race condition where the user immediately reads from the LOGGING_SID_LOG file while this process is still writing.
     # Ex race condition: cat bigfile.txt  
-    #                    mailx -s "$ORACLE_SID failed" "$ALL_DBA_EMAIL_LIST" < "$LOGGING_SID_LOG"
+    #                    mailx -s "$ORACLE_SID failed" $ALL_DBA_EMAIL_LIST < "$LOGGING_SID_LOG"
     if [ -n "$LOGGING_FILTER_PID" ]; then
         wait "$LOGGING_FILTER_PID"
     fi
