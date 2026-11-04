@@ -1,43 +1,40 @@
 #!/bin/bash
 # AvailabilityFlag: Public
 #
-# Purpose: This script runs pg_dump to export either a provided database or the
-#          default postgres database. It gives the user the option to dump only
-#          the database's data, metadata, or everything in the database.
+# Purpose:  This script runs pg_dump to export either a provided database or the
+#           default postgres database. It gives the user the option to dump only
+#           the database's data, metadata, or everything in the database.
+#           Options:
+#               DATA: Requires database name param, dumps one GLOBALOBJECTS file with
+#                     the DDL for the whole instance and one DATAONLY file with
+#                     the actual data contents for the database. Database can be restored
+#                     using PgLoadDatabase.sh and PgLoadInstance.sh, which extract the DDL for
+#                     the single target database from the dumped instance DDL.
+#               GLOBAL: Dumps all DDL for the entire instance as a GLOBALOBJECTS file.
+#                     For use in manual recovery/archiving.
+#               ALL:  Dumps all DDL for the entire instance into a GLOBALOBJECTS file and
+#                     all the data for all databases into a single ALLDATABASES file.
+#                     Instance can be restored with PgLoadInstance.sh.
 #
-# Note: If all is selected, an additional file will be created with the higher-level
-#       information (users, tablespaces, creation of database). Do not provide a
-#       database name if ALL agument is inputted.
+# Notes:    DATA also writes a databasename_ROLES file listing the roles and tablespaces of the
+#           database. Do not provide a database name if ALL argument is inputted.
 #
-# Note: The -e option allows you to specify a directory in which you want your
-#       dumpfiles to be located. Without this option, your dumpfiles will be
-#       put in your current directory.
+#           The -e option selects the export directory. Without it, files are written
+#           to the current directory. A timestamped PgDump log is kept there as well.
 #
-# Note: The -p option allows you to specify the amount of processors which
-#       should be used in parallel to zip the dump with -p [##]
-#       The p option is set to 4 by default if it is not specified.
+#           SIZE_<timestamp>.txt records each database's size in bytes and an "all"
+#           total. Restore scripts use it to check available space.
 #
-# Data option: requires database name param, dumps one file with DATAONLY name and GLOBALOBJECTS file
-#              with only metadata for the specified database
-# Note: Designed to generate input files for PgLoadDatabase.sh or PgLoadInstance.sh
-#
-# Global option: Dump all DDL for entire instance (GLOBALOBJECTS file)
-# Note: Use for manual intervention
-#
-# All option: Dumps all data for all databases (ALLDATABASES file) and DDL for entire instance (GLOBALOBJECTS file)
-# Note: Designed to generate input files for PgLoadInstance.sh
-#
-# Note: Delete the err.txt at the end of the backup.
+#           The -p option allows you to specify the amount of processors which
+#           should be used in parallel to zip the dump with -p [##]
+#           The p option is set to 4 by default if it is not specified.
 #
 #############################################################################################
 # This script is called by BackupPostGreSQL.sh for primary LASP backups.
-# This script will dump/export the data to the calling directory of this script.
-# BackupPostGreSQL.sh sets the calling/export directory to PG_BACKUP_DIR which is set in the .bashrc
-#############################################################################################
-#
+# BackupPostGreSQL.sh changes directories to PG_BACKUP_DIR before calling this script.
 ################################################################################
 
-usage="Usage: PgDump.sh [ -n (option for no zip)] [ -e export_dir (2 params)] [ -p num_processors (2 params, optional) ] [data|global|all] [database (required for data option)]"
+usage="Usage: PgDump.sh [ -n (option for no zip) ] [ -e export_dir (sets directory to dump data to, defaults to PWD) ] [ -p num_processes (# of processes to compress dump file with, default: 4) ] [ data|global|all ] [ database (required for data option) ]"
 example1="Example #1: PgDump.sh -n data data_dev"
 example2="Example #2: PgDump.sh -e /tmp/test/postgres_dumps -n -p 4 ALL"
 
@@ -86,20 +83,74 @@ elif [ $# -eq 2 ] && [ "${1^^}" == "ALL" ]; then
     exit 1
 fi
 
+# Deletes a dump file left by a failed run.
+# Inputs:
+#   dump_file: The file to delete.
+cleanup_dump(){
+    local dump_file=$1
+    echo "Removing dump file $dump_file..."
+    rm -f "$dump_file"
+    if [ $? -ne 0 ]; then
+        echo "WARNING: Failed to cleanup partial dump file $dump_file!"
+    fi
+
+}
+
 # Ensure processor arg is a number greater than 0
 if ! [[ "$parg" =~ ^[0-9]+$ ]]; then
     echo "Error: Processor argument (the arg following the -p flag) must be a number"
     exit 1
-elif [ $parg -le 0 ]; then
+elif [ "$parg" -le 0 ]; then
     echo "Error: Number in processor argument (following -p flag) must be greater than 0"
     exit 1
 fi
 
 # Set the database from user input
-database=$2
+database=${2,,}
 
-# Creating datestamp for output file
+# Set one export destination for dumps, metadata, and the run log.
 datestamp=$(date +%m-%d-%Y-%H-%M-%S)
+EXPORT_DIR="${earg:-$(pwd)}"
+# If EXPORT_DIR doesn't already exist, attempt to create it and its parents.
+if [ ! -d "$EXPORT_DIR" ] && ! mkdir -p "$EXPORT_DIR"; then
+    echo "Unable to create export directory $EXPORT_DIR. Exiting..."
+    exit 1
+fi
+if [ ! -w "$EXPORT_DIR" ]; then
+    echo "Error: User does not have write permissions for export directory $EXPORT_DIR. Exiting..."
+    exit 1
+fi
+if ! EXPORT_DIR=$(cd "$EXPORT_DIR" && pwd); then
+    echo "Unable to resolve export directory $EXPORT_DIR. Exiting..."
+    exit 1
+fi
+
+# mktemp adds a random suffix, so two dumps started in the same second get separate logs.
+if ! log_file=$(mktemp "$EXPORT_DIR/PgDump_${datestamp}.XXXXX.log"); then
+    echo "Unable to create a log file in $EXPORT_DIR. Exiting..."
+    exit 1
+fi
+# Log to the file and the caller concurrently using the repository logging library.
+source "$HOME/common/general/Logging.sh"
+if [ $? -ne 0 ]; then
+    echo "An error occurred while sourcing the logging library. Exiting..."
+    exit 1
+fi
+set_general_logging "$log_file"
+if [ $? -ne 0 ]; then
+    echo "Unable to start PgDump logging in $log_file. Exiting..."
+    exit 1
+fi
+
+# Close logs before exiting.
+exit_handler(){
+    result=$?
+    trap - EXIT
+    close_logs
+    exit "$result"
+}
+trap exit_handler EXIT
+echo "PgDump log: $log_file"
 
 # Set GLOBALOBJECTS file name
 if [ -n "$database" ]; then
@@ -137,6 +188,17 @@ else
     exit 1
 fi
 
+# Check that instance is running.
+instance_check=$("$HOME/common/postgres/CheckInstanceOpenStatus.sh")
+if [ $? -ne 0 ]; then
+    echo "$instance_check"
+    echo "Error occurred while checking open status of instance on port $PGPORT."
+    exit 1
+elif [ "$instance_check" != "open" ]; then
+    echo "No instance open on port $PGPORT"
+    exit 1
+fi
+
 # Ensure that database exists if set
 if [ -n "$database" ]; then
     db_exists=$("$HOME/common/postgres/CheckIfDatabaseExists.sh" "$database")
@@ -152,31 +214,66 @@ else
     database="postgres"
 fi
 
-# Set export directory
-if [ -n "$earg" ]; then
-    if [ -d "$earg" ]; then
-        EXPORT_DIR="$earg"
-    else
-        echo "Export directory $earg does not exist. Attempting to create..."
-        mkdir -p "$earg"
-        # Check for errors from mkdir
-        if [ $? -ne 0 ]; then
-            echo "Unable to create directory $earg. Exiting..."
-            exit 1
-        fi
-    fi
+# Write the SIZE file before dumping. The restore scripts need a SIZE file beside each dump, so a failure
+# here must stop the run before a dump exists.
+echo "Outputting sizes to $EXPORT_DIR/SIZE_$datestamp.txt"
 
-    # Check that user has write permission to export directory
-    if [ ! -w "$earg" ]; then
-        echo "Error. User does not have write permissions for output directory ${earg}. Exiting..."
+# Get a list of all databases and their sizes (-s) in terms of bytes (-r).
+database_sizes=$("$HOME/common/postgres/PrintDatabases.sh" -sr)
+if [ $? -ne 0 ]; then
+    echo "$database_sizes"
+    echo "Error occurred while printing database info for SIZE file. Exiting..."
+    exit 1
+fi
+
+# Extract just the lines with actual database-size mappings
+database_sizes=$(echo "$database_sizes" | grep -E "[|][[:space:]].*[0-9]+[[:space:]]*$")
+# First sed: Strip leading whitespace on each line
+# Second sed: Replace the whitespace and | before the size number with a comma, formatting it as CSV.
+database_sizes=$(echo "$database_sizes" | sed -E 's/^[[:space:]]*//' | sed -E "s/[[:space:]]*[|][[:space:]]*([0-9]+)[[:space:]]*$/,\1/")
+# Without this check an empty result would be written as "all,0", and PgLoadInstance.sh would pass its
+# space check against a size of 0.
+if [ -z "$database_sizes" ]; then
+    echo "Error: Unable to read database sizes from PrintDatabases.sh output for SIZE file. Exiting..."
+    exit 1
+fi
+
+# Compute the size of all databases combined:
+all_size=$(echo "$database_sizes" | sed "s/\,/ /g" | awk '{print $NF}' | awk '{sum += $1} END {print sum}')
+
+# Write the results to the SIZE file.
+size_file="$EXPORT_DIR/SIZE_$datestamp.txt"
+echo "$database_sizes
+all,$all_size" > "$size_file"
+if [ $? -ne 0 ]; then
+    echo "An error occurred while writing to SIZE file $size_file. Exiting..."
+    exit 1
+fi
+
+if [ "${1^^}" == "DATA" ]; then
+    # Write the ROLES file (the database's roles and tablespaces) before dumping, for the same reason as the
+    # SIZE file: PgLoadInstance.sh and PgLoadDatabase.sh read it beside each DATAONLY dump.
+    role_file="$EXPORT_DIR/${database}_ROLES_${datestamp}.txt"
+    db_roles=$("$HOME/common/postgres/PrintRoles.sh" "-d" "$database")
+    if [ $? -ne 0 ]; then
+        echo "$db_roles"
+        echo "Error, PrintRoles.sh failed. Exiting..."
         exit 1
     fi
 
-    # Remove trailing slash from earg
-    earg=$(echo "$earg" | sed 's/\/$//')
+    db_tbsp=$("$HOME/common/postgres/PrintTablespaces.sh" "-d" "$database")
+    if [ $? -ne 0 ]; then
+        echo "$db_tbsp"
+        echo "Error, PrintTablespaces.sh failed. Exiting..."
+        exit 1
+    fi
+    echo "Outputting roles and tablespaces for database $database to $role_file"
+    echo -e "----- Roles ----- \n$db_roles\n----- Tablespaces -----\n$db_tbsp" >"$role_file"
+    if [ $? -ne 0 ]; then
+        echo "An error occurred while writing to ROLES file $role_file. Exiting..."
+        exit 1
+    fi
 fi
-
-rm -f $(pwd)/err.txt
 
 # Alert user that a dump is being performed, and tell them the proper file name
 if [ "${1^^}" != "GLOBAL" ]; then
@@ -192,16 +289,13 @@ fi
 if [ "${1^^}" == "DATA" ]; then
 
     if $nopt; then
-        # Dumps all of the data from the database into a file
-        # Dump to given location if e arg is provided
-        if [ -n "$earg" ]; then
-            pg_dump $option --disable-triggers 2>>err.txt 1>$earg/$file_name_dump
-        else
-            pg_dump $option --disable-triggers 2>>err.txt 1>$file_name_dump
-        fi
+        # Dumps all of the data from the database into a file.
+        # $option is intentionally left unquoted so it word-splits into separate arguments.
+        pg_dump $option --disable-triggers >"$EXPORT_DIR/$file_name_dump"
 
         if [ $? -ne 0 ]; then
-            echo "Error: Unable to dump data. Check err.txt for details. Exiting..."
+            echo "Error: Unable to dump data. Check $log_file for details. Exiting..."
+            cleanup_dump "$EXPORT_DIR/$file_name_dump"
             exit 2
         fi
     else
@@ -213,47 +307,35 @@ if [ "${1^^}" == "DATA" ]; then
         # file uses far more space
         # NOTE: --compress=gzip option is available in postgres version 16. Could be worth looking
         # into in the future to make code cleaner, but may be slower due to lack of parallelization
-        # Dump to given location if e arg is provided
-        if [ -n "$earg" ]; then
-            pg_dump $option --disable-triggers 2>>err.txt | pigz -p $parg >$earg/$file_name_dump
-        else
-            pg_dump $option --disable-triggers 2>>err.txt | pigz -p $parg >$file_name_dump
-        fi
-        # $PIPESTATUS is an array variable that holds return codes of all commands in the previous
-        # sequence of piped commands
-        if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "Error: Unable to dump data. Check err.txt for details. Exiting..."
+        # $option is intentionally left unquoted so it word-splits into separate arguments.
+        pg_dump $option --disable-triggers | pigz -p "$parg" >"$EXPORT_DIR/$file_name_dump"
+        # Capture both pipeline statuses before the if statement replaces PIPESTATUS.
+        pipeline_status=("${PIPESTATUS[@]}")
+        if [ "${pipeline_status[0]}" -ne 0 ] || [ "${pipeline_status[1]}" -ne 0 ]; then
+            echo "Error: Unable to dump or compress data. Check $log_file for details. Exiting..."
+            cleanup_dump "$EXPORT_DIR/$file_name_dump"
             exit 2
         fi
     fi
 elif [ "${1^^}" == "ALL" ]; then
     if $nopt; then
         # Dumps all of the data from the instance into a file
-        # Dump to given location if e arg is provided
-        if [ -n "$earg" ]; then
-            pg_dumpall 2>>err.txt 1>$earg/$file_name_dump
-        else
-            pg_dumpall 2>>err.txt 1>$file_name_dump
-        fi
-
+        pg_dumpall >"$EXPORT_DIR/$file_name_dump"
         if [ $? -ne 0 ]; then
-            echo "Error: Unable to dump data. Check err.txt for details. Exiting..."
+            echo "Error: Unable to dump data. Check $log_file for details. Exiting..."
+            cleanup_dump "$EXPORT_DIR/$file_name_dump"
             exit 2
         fi
     else
         file_name_dump="$file_name_dump.gz"
 
-        # Dump data to output file
-        # Dump to given location if e arg is provided
-        if [ -n "$earg" ]; then
-            pg_dumpall $option 2>>err.txt | pigz -p $parg >$earg/$file_name_dump
-        else
-            pg_dumpall $option 2>>err.txt | pigz -p $parg >$file_name_dump
-        fi
-        # $PIPESTATUS is an array variable that holds return codes of all commands in the previous
-        # sequence of piped commands
-        if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "Error: Unable to dump data. Check err.txt for details. Exiting..."
+        # $option is intentionally left unquoted so it word-splits into separate arguments.
+        pg_dumpall $option | pigz -p "$parg" >"$EXPORT_DIR/$file_name_dump"
+        # Capture both pipeline statuses before the if statement replaces PIPESTATUS.
+        pipeline_status=("${PIPESTATUS[@]}")
+        if [ "${pipeline_status[0]}" -ne 0 ] || [ "${pipeline_status[1]}" -ne 0 ]; then
+            echo "Error: Unable to dump or compress data. Check $log_file for details. Exiting..."
+            cleanup_dump "$EXPORT_DIR/$file_name_dump"
             exit 2
         fi
     fi
@@ -262,90 +344,33 @@ fi
 # Dumping the global data
 if $nopt; then
     # Dumps all of the schema-level data from the instance into a file
-    # Dump to given location if e arg is provided
-    if [ -n "$earg" ]; then
-        pg_dumpall -s 2>>err.txt 1>$earg/$file_name_dump_all
-    else
-        pg_dumpall -s 2>>err.txt 1>$file_name_dump_all
-    fi
-    if [ $? -ne 0 ]; then
-        echo "Error: Unable to dump schema. Check err.txt for details. Exiting..."
-        exit 2
-    fi
+    pg_dumpall -s >"$EXPORT_DIR/$file_name_dump_all"
+    schema_status=$?
 else
     file_name_dump_all="$file_name_dump_all.gz"
 
-    # Dump data to output file
-    if [ -n "$earg" ]; then
-        pg_dumpall -s 2>>err.txt | pigz -p $parg >$earg/$file_name_dump_all
-    else
-        pg_dumpall -s 2>>err.txt | pigz -p $parg >$file_name_dump_all
-    fi
-
-    # $PIPESTATUS is an array variable that holds return codes of all commands in the previous
-    # sequence of piped commands
-    if [ ${PIPESTATUS[0]} -ne 0 ]; then
-        echo "Error: Unable to dump schema. Check err.txt for details. Exiting..."
-        exit 2
+    pg_dumpall -s | pigz -p "$parg" >"$EXPORT_DIR/$file_name_dump_all"
+    # Capture both pipeline statuses before the next command replaces PIPESTATUS.
+    pipeline_status=("${PIPESTATUS[@]}")
+    schema_status=0
+    if [ "${pipeline_status[0]}" -ne 0 ] || [ "${pipeline_status[1]}" -ne 0 ]; then
+        schema_status=1
     fi
 fi
+if [ "$schema_status" -ne 0 ]; then
+    echo "Error: Unable to dump or compress schema. Check $log_file for details. Exiting..."
+    cleanup_dump "$EXPORT_DIR/$file_name_dump_all"
+    # The restore scripts pick the newest data dump and need its GLOBALOBJECTS file, so remove the data dump too.
+    if [ -n "$file_name_dump" ]; then
+        cleanup_dump "$EXPORT_DIR/$file_name_dump"
+    fi
+    exit 2
+fi
 
-res=$(cat err.txt)
-
-if [ -n "$earg" ]; then
-    echo "Dump of $database to $earg/$file_name_dump was successful"
-    echo "Dump of $database global objects to $earg/$file_name_dump_all was successful"
-    echo "Outputting size of $file_name_dump to $earg/SIZE_$datestamp.txt"
-else
+if [ "${1^^}" != "GLOBAL" ]; then
     echo "Dump of $database to $file_name_dump was successful"
-    echo "Dump of $database global objects to $file_name_dump_all was successful"
-    echo "Outputting size of $file_name_dump to SIZE_$datestamp.txt"
 fi
-
-database_output=$($HOME/common/postgres/PrintDatabases.sh -r)
-if [ $? -ne 0 ]; then
-    echo "Error occurred while printing database info for SIZE file"
-    echo "$database_output"
-    echo "Exiting..."
-    exit 1
-fi
-
-# First tail removes all lines from output that come before '--+--+--+--' line at top of table
-# Second tail removes the '--+--+--+--' line
-# The two grep -v commands remove unneeded info that appears below the table
-# awk tokenizes the table by using the '|' character as the delimiter and extracts the 1st (db name) and 7th (size) columns
-# sed removes extra whitespace
-# tr changes each row from space seperated to csv format.
-size_prefix="."
-if [ -n "$earg" ]; then
-    size_prefix="$earg"
-fi
-echo "$database_output" | tail -n +$(echo "$database_output" | egrep -n '^-+\+' | cut -d: -f1) | tail -n +2 | grep -v 'Databases successfully printed' | egrep -v '([0-9]+ rows)' | awk -F '|' '{print $1 $7}' | sed '/^[[:space:]]*$/d;s/^ //;s/[[:space:]]*$//;s/[[:space:]]\{1,\}/ /' | tr ' ' ',' >$size_prefix/SIZE_$datestamp.txt
-all_size=$(cat "$size_prefix/SIZE_$datestamp.txt" | sed "s/\,/ /g" | awk '{print $NF}' | awk '{sum += $1} END {print sum}')
-echo "all,$all_size">>$size_prefix/SIZE_$datestamp.txt
-
-if [ "${1^^}" == "DATA" ]; then
-    # Creating a file that holds all the roles and tablesspaces on the database being dumped
-    if [ -n "$earg" ]; then
-        role_file="$earg/$database"_ROLES_"$datestamp".txt
-    else
-        role_file="$database"_ROLES_"$datestamp".txt
-    fi
-    db_roles=$($HOME/common/postgres/PrintRoles.sh "-d" "$database")
-    if [ $? -ne 0 ]; then
-        echo "$db_roles"
-        echo "Error, PrintRoles.sh failed. Exiting..."
-        exit 1
-    fi
-
-    db_tbsp=$($HOME/common/postgres/PrintTablespaces.sh "-d" "$database")
-    if [ $? -ne 0 ]; then
-        echo "$db_tbsp"
-        echo "Error, PrintTablespaces.sh failed. Exiting..."
-        exit 1
-    fi
-    echo "Outputting roles and tablespaces for database $database to $role_file"
-    echo -e "----- Roles ----- \n$db_roles\n----- Tablespaces -----\n$db_tbsp">$role_file
-fi
+echo "Dump of $database global objects to $file_name_dump_all was successful"
+echo "Export directory: $EXPORT_DIR"
 
 exit 0

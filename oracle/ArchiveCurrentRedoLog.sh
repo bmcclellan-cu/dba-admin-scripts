@@ -5,7 +5,8 @@
 #	   SIDs in $SIDSLIST. Before doing this, the script identifies the location
 #	   that the archive log was written to and it finds the current sequence
 #	   number for the relative database. With -g, it instead archives the given
-#	   redo log group if that group still needs archiving.
+#	   redo log group if that group still needs archiving. A database that is not
+#	   in archive log mode is skipped and reported as an error.
 #
 usage="Usage: ArchiveCurrentRedoLog.sh [ -g redo-log group number (optional) ] [ \$ORACLE_SID | ALL (optional) ]"
 example1="Example 1: ArchiveCurrentRedoLog.sh mysid"
@@ -71,6 +72,23 @@ for sid in $sids; do
 
     echo "Running script on $sid..."
     echo "--------------------------------------------------"
+
+    archive_log_mode=$("$HOME/common/oracle/CheckArchivelogMode.sh" "$sid")
+    if [ $? -ne 0 ]; then
+        echo "Archive Log Mode Status:"
+        echo "$archive_log_mode"
+        echo "Error: Call to CheckArchivelogMode.sh failed for $sid. Continuing..."
+        exit_status=1
+        continue
+    fi
+
+    if ! [[ "$archive_log_mode" =~ "YES" ]]; then
+        echo "Archive Log Mode Status:"
+        echo "$archive_log_mode"
+        echo "Error: Database $sid is not in Archive Log Mode. Continuing..."
+        exit_status=1
+        continue
+    fi
 
     if [ -n "$group_num" ]; then
         # Display the redo log groups

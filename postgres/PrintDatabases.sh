@@ -169,8 +169,7 @@ if [ $? -ne 0 ]; then
 fi
 
 total_size=$(echo "$total_size" | awk '{total_size += $1} END {print total_size}')
-# PgDump.sh's SIZE file parser sums the last field of every line it keeps, including this one, so this line must
-# not end in a number.
+# PgDump.sh's SIZE file parser keeps only table rows, which contain a '|', so it skips this line.
 if $bytes; then
     echo "Total size of all databases on the instance: $total_size bytes"
 else

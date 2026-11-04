@@ -7,16 +7,19 @@
 #
 # Note: Exits in sourced programs will terminate the program that sourced it/ran the functions from the sourced file.
 #
-# Note: If you provide a filter that does not read to EOF it will terminate after it's first run. 
+# Note: If you provide a filter that does not read to EOF it will terminate after its first run.
 #       Commands that read to EOF: cat, grep, sed, etc.
 #       Commands that don't read to EOF: head, tail, etc.
+#
+# Note: Requires bash 4.1 or later, for the exec {LOGGING_STDOUT}>&1 and exec {LOGGING_STDERR}>&2 redirections
+#       below. On an older bash, such as macOS's /bin/bash 3.2, sourcing this file prints an error and returns 1.
 #
 # Usage Essentials:
 #                   1. Before using any of the functions, source the file: `source $HOME/common/general/Logging.sh`.
 #                   2. Before reading from the log files you supply to the set_* functions you should always run `close_logs` to prevent any race conditions. 
 #                   3. Use set_sid_and_general_logging when you want different log files for each iteration of a loop
 #                   4. You can call the 'set logging' functions as many times as you want. Each call blows away the previous configuration and starts from the original state of the program when it was sourced. 
-#                   5. As a user who has sourced this script you should never alter the LOGGING_GENERAL_FIFO, LOGGING_FILTER_FIFO, LOGGING_GENERAL_LOG, or LOGGING_SID_LOG global variables as these are important to the functionality of this script. 
+#                   5. As a user who has sourced this script you should never alter the LOGGING_STDOUT, LOGGING_STDERR, LOGGING_GENERAL_FIFO, LOGGING_FILTER_FIFO, LOGGING_GENERAL_PID, LOGGING_FILTER_PID, LOGGING_GENERAL_LOG, or LOGGING_SID_LOG global variables as these are important to the functionality of this script.
 # Usage Example: `
 #                 source $HOME/common/general/Logging.sh
 #                 general_log_file="/tmp/MyScript.log"
@@ -54,9 +57,18 @@
 #               `
 #
 ################################################################################
-# Save stdout and stderr to fd 3,4 so we can reset the state using restore_stdout_stderr
-exec 3>&1
-exec 4>&2
+# Older bash would fail on the exec lines below and exit the calling script before its own error check could
+# run, so return instead and let the caller handle it.
+if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 1) )); then
+    echo "ERROR Logging.sh needs bash 4.1 or later; this is bash $BASH_VERSION."
+    return 1
+fi
+# Save stdout and stderr so restore_stdout_stderr can reset the state. exec {LOGGING_STDOUT}>&1 copies stdout to an
+# unused file descriptor (10 or higher) that bash picks, and stores that descriptor's number in LOGGING_STDOUT.
+# Letting bash pick avoids descriptors the caller already uses: bats writes its test results to fd 3, and the old
+# fixed exec 3>&1 sent them into the test's own output, so bats lost tests.
+exec {LOGGING_STDOUT}>&1
+exec {LOGGING_STDERR}>&2
 # Internal globals for cleaning up and preventing race conditions by waiting on the PIDs in close_logs
 # All the globals are prepended with LOGGING to create something similar to a namespace to reduce likelihood a user overwrites the variable in their own script. 
 LOGGING_FILTER_FIFO=""
@@ -104,11 +116,11 @@ set_general_logging() {
     fi
 
     # Create a background tee process that reads from the fifo pipe (& at the end)
-    # and writes to the LOGGING_GENERAL_LOG and stdout which we redirect to fd 3.
-    # We redirect stdout to fd 3 because we previously saved fd 3 as the terminal output
-    # at the beginning of the script using exec 3>&1.
+    # and writes to the LOGGING_GENERAL_LOG and stdout which we redirect to the file descriptor numbered in LOGGING_STDOUT.
+    # We redirect stdout to that file descriptor because it holds the stdout the script had when this file was
+    # sourced (the terminal, a nohup file, or cron's mail), saved using exec {LOGGING_STDOUT}>&1.
     # This causes anything that writes to the pipe (LOGGING_GENERAL_FIFO) to be written to the terminal and the LOGGING_GENERAL_LOG file.
-    tee -a "$LOGGING_GENERAL_LOG" < "$LOGGING_GENERAL_FIFO" >&3 2>&1 &
+    tee -a "$LOGGING_GENERAL_LOG" < "$LOGGING_GENERAL_FIFO" >&$LOGGING_STDOUT 2>&1 &
     # We capture the general tee's process ID for later use in close_logs to avoid race conditions. 
     # We wait on this PID to ensure all data the general tee is processing has been written to the file before we read from it or do other operations like re-configuring the logging. 
     LOGGING_GENERAL_PID=$!
@@ -221,10 +233,11 @@ set_sid_and_general_logging() {
         #
         # Specifics: This creates a background tee process that reads from the fifo pipe (< "$LOGGING_GENERAL_FIFO")
         #            and writes to three places. Tee writes to a set of files in addition to stdout. Here we tell tee to write
-        #            to the files LOGGING_GENERAL_LOG and LOGGING_FILTER_FIFO (which applies a filter then writes to the LOGGING_SID_LOG as configured earlier in the script). We also tell tee to send its stdout and stderr to file descriptor 3 (>&3 2>&1).
-        #            When Logging.sh is sourced we saved the terminal stdout to file descriptor 3 (exec 3>&1). 
+        #            to the files LOGGING_GENERAL_LOG and LOGGING_FILTER_FIFO (which applies a filter then writes to the LOGGING_SID_LOG as configured earlier in the script).
+        #            We also tell tee to send its stdout and stderr to the file descriptor numbered in LOGGING_STDOUT (>&$LOGGING_STDOUT 2>&1).
+        #            When Logging.sh is sourced we save the script's stdout (the terminal, a nohup file, or cron's mail) to that file descriptor (exec {LOGGING_STDOUT}>&1).
         #            This results in the data tee reads from the pipe (LOGGING_GENERAL_FIFO) being output to LOGGING_GENERAL_LOG, LOGGING_SID_LOG, and the terminal.
-        tee -a "$LOGGING_GENERAL_LOG" "$LOGGING_FILTER_FIFO" < "$LOGGING_GENERAL_FIFO" >&3 2>&1 &
+        tee -a "$LOGGING_GENERAL_LOG" "$LOGGING_FILTER_FIFO" < "$LOGGING_GENERAL_FIFO" >&$LOGGING_STDOUT 2>&1 &
     else
         # High level: Outputs the logs sent to LOGGING_GENERAL_FIFO to LOGGING_GENERAL_LOG, LOGGING_SID_LOG, and the terminal.
         #             LOGGING_GENERAL_FIFO is connected to the program's stdout and stderr later in this script (the exec below) 
@@ -232,10 +245,10 @@ set_sid_and_general_logging() {
         #
         # Specifics: This creates a background tee process that reads from the fifo pipe (< "$LOGGING_GENERAL_FIFO")
         #            and writes to three places. Tee writes to a set of files in addition to stdout. Here we tell tee to write
-        #            to the files LOGGING_GENERAL_LOG and LOGGING_SID_LOG. We also tell tee to send its stdout and stderr to file descriptor 3 (>&3 2>&1).
-        #            When Logging.sh is sourced we saved the terminal stdout to file descriptor 3 (exec 3>&1). 
+        #            to the files LOGGING_GENERAL_LOG and LOGGING_SID_LOG. We also tell tee to send its stdout and stderr to the file descriptor numbered in LOGGING_STDOUT (>&$LOGGING_STDOUT 2>&1).
+        #            When Logging.sh is sourced we save the script's stdout (the terminal, a nohup file, or cron's mail) to that file descriptor (exec {LOGGING_STDOUT}>&1).
         #            This results in the data tee reads from the pipe (LOGGING_GENERAL_FIFO) being output to LOGGING_GENERAL_LOG, LOGGING_SID_LOG, and the terminal.
-        tee -a "$LOGGING_GENERAL_LOG" "$LOGGING_SID_LOG" < "$LOGGING_GENERAL_FIFO" >&3 2>&1 &
+        tee -a "$LOGGING_GENERAL_LOG" "$LOGGING_SID_LOG" < "$LOGGING_GENERAL_FIFO" >&$LOGGING_STDOUT 2>&1 &
     fi
     # We capture the general tee's process ID for later use in close_logs to avoid race conditions. 
     # We wait on this PID to ensure all data the filter is processing has been written to the file before we read from it or do other operations like re-configuring the logging. 
@@ -311,6 +324,6 @@ restore_stdout_stderr() {
     # Redirect stdout and stderr to point to what we saved when the file is sourced. 
     # Assuming the user did no shenanigans with stdout or stderr prior to the script being sourced,
     # this will point stdout and stderr back at just the terminal. 
-    exec 1>&3
-    exec 2>&4
+    exec 1>&$LOGGING_STDOUT
+    exec 2>&$LOGGING_STDERR
 }
