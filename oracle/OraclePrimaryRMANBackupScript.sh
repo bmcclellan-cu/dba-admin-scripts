@@ -81,7 +81,7 @@ if [ "${1^^}" == "ALL" ]; then
     if [ $? -ne 0 ]; then
         echo "$all_sid_output"
         echo "Error, VerifyAllParam.sh failed for ALL input. Exiting..."
-        echo "$all_sid_output" | mailx -s "$HOSTNAME Oracle backups: Error VerifyAllParam failed for ALL" "$ALL_DBA_EMAIL_LIST"
+        echo "$all_sid_output" | mailx -s "$HOSTNAME Oracle backups: Error VerifyAllParam failed for ALL" $ALL_DBA_EMAIL_LIST
         exit 1
     fi
     export SIDS="$all_sid_output"
@@ -96,13 +96,13 @@ else
         if [ $? -ne 0 ]; then
             echo "$sid_check"
             echo "Error, VerifyAllParam.sh failed while validating SID $SID. Continuing..."
-            echo "$sid_check" | mailx -s "$HOSTNAME Oracle backups: Error VerifyAllParam failed for SID $SID" "$ALL_DBA_EMAIL_LIST"
+            echo "$sid_check" | mailx -s "$HOSTNAME Oracle backups: Error VerifyAllParam failed for SID $SID" $ALL_DBA_EMAIL_LIST
             exit_status=1
             continue
         fi
         if [ -n "$sid_check" ]; then
             echo "Error, provided ORACLE_SID $SID is not open. Continuing..."
-            echo "Error, provided ORACLE_SID $SID is not open. Continuing..." | mailx -s "$HOSTNAME Oracle backups: Error invalid SID $SID" "$ALL_DBA_EMAIL_LIST"
+            echo "Error, provided ORACLE_SID $SID is not open. Continuing..." | mailx -s "$HOSTNAME Oracle backups: Error invalid SID $SID" $ALL_DBA_EMAIL_LIST
             exit_status=1
             continue
         else
@@ -114,7 +114,7 @@ fi
 
 if [ -z "$SIDS" ]; then
     echo "Error: No valid SIDs inputted/ALL option returned no SIDs. Exiting..."
-    echo "Error: No valid SIDs inputted/ALL option returned no SIDs. Exiting..." | mailx -s "$HOSTNAME Oracle backups: Error no valid SIDs" "$ALL_DBA_EMAIL_LIST"
+    echo "Error: No valid SIDs inputted/ALL option returned no SIDs. Exiting..." | mailx -s "$HOSTNAME Oracle backups: Error no valid SIDs" $ALL_DBA_EMAIL_LIST
     exit 1
 fi
 
@@ -122,7 +122,7 @@ fi
 source "$HOME/common/general/Logging.sh"
 if [ $? -ne 0 ]; then
     echo "Could not source logging library. Exiting..."
-    echo "Could not source logging library. Exiting..." | mailx -s "$HOSTNAME Oracle backups: Error sourcing logging library" "$ALL_DBA_EMAIL_LIST"
+    echo "Could not source logging library. Exiting..." | mailx -s "$HOSTNAME Oracle backups: Error sourcing logging library" $ALL_DBA_EMAIL_LIST
     exit 1
 fi
 
@@ -133,7 +133,7 @@ out_logs="/tmp/OraclePrimaryRMANBackupScript_${current_timestamp}.out"
 set_general_logging "$out_logs"
 if [ $? -ne 0 ]; then
     echo "An error occurred while setting general logging. Exiting..." 
-    echo "An error occurred while setting general logging. Exiting..."  | mailx -s "$HOSTNAME Oracle Backups: Error running set_general_logging" "$ALL_DBA_EMAIL_LIST"
+    echo "An error occurred while setting general logging. Exiting..."  | mailx -s "$HOSTNAME Oracle Backups: Error running set_general_logging" $ALL_DBA_EMAIL_LIST
     exit 1
 fi
 echo "General log location: $out_logs"
@@ -163,6 +163,30 @@ set_subject()
     sid_err_subject="Error alert $HOSTNAME $ORACLE_SID ${error_found:-Unknown Error}"
 }
 
+# Emails the SID's error log ($err_logs) if the SID failed or the log has content, then deletes the log if it is empty.
+# It closes logging first, so output goes to neither log until the next set_*_logging call.
+report_sid_errors()
+{
+    # No SID has been backed up yet
+    if [ -z "$err_logs" ]; then
+        return
+    fi
+    # Finish writing the SID's logs before reading its error file
+    close_logs
+    if [ "$sid_status" -ne 0 ] || [ -s "$err_logs" ]; then
+        if [ -z "$sid_err_subject" ]; then
+            set_subject
+        fi
+        mailx -s "$sid_err_subject" $ALL_DBA_EMAIL_LIST < "$err_logs"
+        # Set exit_status so the main script email can indicate an error
+        exit_status=1
+    fi
+    # The filter only writes lines near an error, so an empty log has nothing to report
+    if [ ! -s "$err_logs" ]; then
+        rm -f "$err_logs"
+    fi
+}
+
 # Record start timestamp in format accepted by ComputeTimeGap.sh for time calculations
 pre_backup_timestamp=$(date "+%Y-%m-%d %H:%M:%S")
 
@@ -170,17 +194,9 @@ echo "Backing up the following SIDs: ${SIDS}"
 # Iterate over the SIDs
 sid_status=0
 for SID in $SIDS; do
-    # If an error was indicated by the script or there is error output in the log file, send an email
-    if [ "$sid_status" -ne 0 ] || [ -s "${err_logs}" ]; then
-        # Close logging to prevent any race conditions when reading from the log file
-        close_logs
-        if [ -z "$sid_err_subject" ]; then
-            set_subject
-        fi
-        mailx -s "$sid_err_subject" "$ALL_DBA_EMAIL_LIST" < "${err_logs}"
-        # Set exit_status so the main script email can indicate an error
-        exit_status=1
-    fi    
+    # Report the previous SID's errors
+    report_sid_errors
+
     export ORACLE_SID=$SID
     sid_status=0
     sid_err_subject=""
@@ -192,7 +208,7 @@ for SID in $SIDS; do
     set_sid_and_general_logging "$out_logs" "$err_logs" "$err_log_filter"
     if [ $? -ne 0 ]; then
         echo "An error occurred while setting sid and general logging for ${ORACLE_SID}. Continuing..."
-        echo "An error occurred while setting sid and general logging for ${ORACLE_SID}. Continuing..."  | mailx -s "Error alert $HOSTNAME $ORACLE_SID set_sid_and_general_logging failed" "$ALL_DBA_EMAIL_LIST"
+        echo "An error occurred while setting sid and general logging for ${ORACLE_SID}. Continuing..."  | mailx -s "Error alert $HOSTNAME $ORACLE_SID set_sid_and_general_logging failed" $ALL_DBA_EMAIL_LIST
         # Do not want to set sid_status=1 here because that would send an email with an empty body at the beginning of the next iteration
         exit_status=1
         continue
@@ -391,24 +407,15 @@ EOD
     fi
     echo
 done
-# If an error was indicated by the script or there is error output in the log file, send an email
-# This block catches any errors that occur in the final SID that was backed up
-if [ "$sid_status" -ne 0 ] || [ -s "${err_logs}" ]; then
-    # Close logging to prevent any race conditions when reading from the log file
-    close_logs
-    if [ -z "$sid_err_subject" ]; then
-        set_subject
-    fi
-    mailx -s "$sid_err_subject" "$ALL_DBA_EMAIL_LIST" < "${err_logs}"
-    # Set exit_status so the main script email can indicate an error
-    exit_status=1
-fi
+
+# Report the last SID's errors
+report_sid_errors
 
 # Set general logging up again so no more logs go to sid specific files but output is still captured in the general file
 set_general_logging "$out_logs"
 if [ $? -ne 0 ]; then
     echo "An error occurred while setting general logging"
-    echo "An error occurred while setting general logging" | mailx -s "$HOSTNAME set_general_logging failed in OraclePrimaryRMANBackupScript.sh" "$ALL_DBA_EMAIL_LIST"
+    echo "An error occurred while setting general logging" | mailx -s "$HOSTNAME set_general_logging failed in OraclePrimaryRMANBackupScript.sh" $ALL_DBA_EMAIL_LIST
     exit_status=1
 fi
 
@@ -444,6 +451,6 @@ close_logs
 {
     echo -e "$email_body"
     cat "$out_logs"
-} | mailx -s "$out_logs_email_subject" "$ALL_DBA_EMAIL_LIST"
+} | mailx -s "$out_logs_email_subject" $ALL_DBA_EMAIL_LIST
 
 exit "$exit_status"

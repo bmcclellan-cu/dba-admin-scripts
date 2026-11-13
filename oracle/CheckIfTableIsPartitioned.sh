@@ -1,5 +1,6 @@
 #!/bin/bash
 # AvailabilityFlag: Public
+#
 # Purpose: This script acts as a helper script to check whether or not a table in
 #	   the current database is partitioned. The output will simply be "YES" if
 #	   the table is partitioned or "NO" if it isn't.
@@ -36,7 +37,6 @@ table=${2^^}
 
 # Check oracle sid
 sid_check=$("$HOME/common/oracle/VerifyAllParam.sh" -I)
-
 if [ $? -ne 0 ]; then
     echo "$sid_check"
     echo "Error, call to VerifyAllParam.sh -I failed. Exiting..."
@@ -57,12 +57,11 @@ schema_exists=$("$HOME/common/oracle/CheckIfSchemaExists.sh" -v "$schema")
 if [ $? -ne 0 ]; then
     echo "$schema_exists"
     echo "Error occurred while attempting to run CheckIfSchemaExists. Exiting..."
+    echo "$schema_exists"
     exit 1
 fi
 
-schema_exists=$(echo "$schema_exists" | grep "Yes")
-
-if [ -z "$schema_exists" ]; then
+if [[ "$schema_exists" != "Yes" ]]; then
     echo "Entered schema $schema does not exist in current database ${ORACLE_SID}. Exiting..."
     exit 1
 fi
@@ -75,9 +74,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-table_exists=$(echo "$table_exists" | grep "Yes")
-
-if [ -z "$table_exists" ]; then
+if [[ "$table_exists" != "Yes" ]]; then
     echo "Entered table $table does not exist in current schema ${schema}. Exiting..."
     exit 1
 fi
@@ -99,7 +96,7 @@ ora_error=$(echo "$table_check" | grep "ORA-")
 # Check for errors and if table was found
 if [ $sql_error -ne 0 ] || [ ! -z "$ora_error" ]; then
     echo "ERROR"
-    echo "$ora_error"
+    echo "$table_check"
     exit 1
 elif [ -z "$table_check" ]; then
     echo "NO"

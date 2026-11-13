@@ -144,24 +144,26 @@ AvailabilityFlag: Public
         <!--
             Determines the filename structure for redo logs and default starting size.
             Each filename per log group is a redundant copy of the redo log.
+            We default to 100MB as a reasonable minimum, the size will have to be expanded
+            if desired post-CDB creation.
         -->
         <RedoLogGroupAttributes id="1">
             <reuse>false</reuse>
-            <fileSize unit="KB">5120000</fileSize>
+            <fileSize unit="KB">102400</fileSize>
             <Thread>1</Thread>
             <member ordinal="0" memberName="redo1a.log" filepath="{RESTORE_DIR}/"/>
             <member ordinal="1" memberName="redo1b.log" filepath="{RESTORE_DIR}/"/>
         </RedoLogGroupAttributes>
         <RedoLogGroupAttributes id="2">
             <reuse>false</reuse>
-            <fileSize unit="KB">5120000</fileSize>
+            <fileSize unit="KB">102400</fileSize>
             <Thread>1</Thread>
             <member ordinal="0" memberName="redo2a.log" filepath="{RESTORE_DIR}/"/>
             <member ordinal="1" memberName="redo2b.log" filepath="{RESTORE_DIR}/"/>
         </RedoLogGroupAttributes>
         <RedoLogGroupAttributes id="3">
             <reuse>false</reuse>
-            <fileSize unit="KB">5120000</fileSize>
+            <fileSize unit="KB">102400</fileSize>
             <Thread>1</Thread>
             <member ordinal="0" memberName="redo3a.log" filepath="{RESTORE_DIR}/"/>
             <member ordinal="1" memberName="redo3b.log" filepath="{RESTORE_DIR}/"/>

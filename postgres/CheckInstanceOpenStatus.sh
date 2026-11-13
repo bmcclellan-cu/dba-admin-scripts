@@ -4,6 +4,8 @@
 # Purpose: This script determines if a postgres instance is open, or closed by
 #          attempting to connect and run a simple postgresql command.
 #
+# Notice: This script connects to and assumes the default 'postgres' database is present.
+#
 ################################################################################
 
 usage="Usage: CheckInstanceOpenStatus.sh [ Port (optional) ]"
@@ -13,8 +15,8 @@ example="Example: CheckInstanceOpenStatus.sh 5432"
 while getopts ":h" option; do
     case $option in
         h)
-            echo $usage
-            echo $example
+            echo "$usage"
+            echo "$example"
             exit 0;;
         \?)
             echo "Error: Invalid option"
@@ -54,7 +56,8 @@ if [ "${#port}" -gt 5 ] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
 fi
 
 # Creating a dump variable to hold the output of trying to connect
-dump=$(2>&1 psql -q -v ON_ERROR_STOP=on -p $port <<EOD
+# Connect to 'postgres' database which is the default maintenance database on a postgres cluster
+dump=$(2>&1 psql -d postgres -q -v ON_ERROR_STOP=on -p "$port" <<EOD
     \pset tuples_only on
     SELECT version();
 EOD

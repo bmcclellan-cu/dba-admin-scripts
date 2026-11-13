@@ -2,15 +2,27 @@
 # AvailabilityFlag: Public
 #
 # Purpose:  This script creates a CDB which is intended to be used during the 26ai migration process. This CDB is
-#           created using the initXXXX26.ora init template file, and the name is suffixed with _cdb.
+#           created using the initXXXX26.ora init template file.
 #
 # Notes:    The script requires environment variables to be set containing the SYS and SYSTEM passwords for the newly
 #           created database:
 #               - DB_SYS_PASSWORD: Password for the SYS schema
 #               - DB_SYSTEM_PASSWORD: Password for the SYSTEM schema
 #
-#           The dryrun option will generate the scripts DBCA uses to create the database in the specified directory. The entrypoint
-#           for the database creation is <create_script_path>/${ORACLE_SID}.sh
+#           The CDB is created with a Redo Log Group file size of 100MB, and will need to be updated after CDB creation
+#           and as needed during migration
+#
+#           The CDB is created with the following database name parameters:
+#               ORACLE_SID: new_db_name
+#               db_name: new_db_name
+#               db_unique_name: {new_db_name}_cdb
+#           We retain the _cdb suffix for db_unique_name so that the service name of the CDB doesn't clash with the service name of the
+#           PDB it hosts, which will be named new_db_name.
+#
+#           The dryrun option will generate the scripts DBCA uses to create the database in the specified directory. These are not intended
+#           to be actually run, rather to inspect what DBCA is actually doing and to ease development work. This script runs several steps
+#           after DBCA to update the pfile such that the CDB has our desired parameters. The entrypoint for the database creation is
+#           <create_script_path>/${ORACLE_SID}.sh
 #
 #           DBCA writes entries to /etc/oratab when a database is created, so if the database is deleted and re-created, this
 #           entry must be reset before DBCA will allow for the database to be created again.
@@ -22,10 +34,13 @@
 #           created using the CREATE DATABASE statement for finer control and transparency, doing so requires this script to handle
 #           installing every optional Oracle feature, which becomes rapidly impractical.
 #
+#           This script is intended for use in a 26AI migration across servers, so the CDB will never exist on the same server as
+#           the source database for the migration.
+#
 ######################################################
-usage="Usage: CreateCDB.sh [ -d <dryrun_dest_path> (optional, dryrun database creation, see header)] [ new_db_name (not including the _cdb suffix) ] [ restore_base_directory ]"
+usage="Usage: CreateCDB.sh [ -d <dryrun_dest_path> (optional, dryrun database creation, see header)] [ new_db_name ] [ restore_base_directory ]"
 example1="Example: DB_SYS_PASSWORD='<sys_password>' DB_SYSTEM_PASSWORD='<system_password>' CreateCDB.sh sid1prod /ssd_internal/restore_cdb/"
-example2="         DB_SYS_PASSWORD='<sys_password>' DB_SYSTEM_PASSWORD='<system_password>' CreateCDB.sh -d /home/oracle/testdb_create_scripts testdb /path/to/restore/dir/"
+example2="         DB_SYS_PASSWORD='<sys_password>' DB_SYSTEM_PASSWORD='<system_password>' CreateCDB.sh -d \$HOME/testdb_create_scripts testdb /path/to/restore/dir/"
 
 # Process input options
 dryrun_opt=0
@@ -65,7 +80,7 @@ fi
 new_db_name=${1,,}
 restore_base_directory=${2}
 
-export ORACLE_SID=${new_db_name}_cdb
+export ORACLE_SID=${new_db_name}
 
 # Substitute d19 -> dev and p19 -> prod.
 # This is done to ensure a consistent directory name for our database
@@ -82,17 +97,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 start_timestamp="$(date "+%Y-%m-%d %H:%M:%S")"
 
 echo "CreateCDB.sh started at $start_timestamp."
-
-db_status=$("$HOME/common/oracle/CheckDatabaseOpenStatus.sh" "$ORACLE_SID")
-if [ $? -ne 0 ]; then
-    echo "$db_status"
-    echo "ERROR: An error occurred while checking if database exists. Exiting..."
-    exit 1
-fi
-if [ "$db_status" != "CLOSED" ]; then
-    echo "ERROR: \$ORACLE_SID $ORACLE_SID is running (status=$db_status). Exiting..."
-    exit 1
-fi
 
 if [ -d "$restore_directory" ]; then
     echo "ERROR: Restore destination $restore_directory already exists. Exiting..."
@@ -120,6 +124,36 @@ fi
 # Check that the base database name isn't too long
 if [ ${#new_db_name} -gt 8 ]; then
     echo "ERROR: new_db_name cannot be greater than 8 characters long. Exiting..."
+    exit 1
+fi
+
+# Check if there is an entry in /etc/oratab for the database we are planning to create. DBCA will
+# prevent the database from being created if a stale entry is present. If the entry is not for 26AI,
+# the user is probably running the script on the wrong server.
+oratab_home=$(awk -F: -v sid="$ORACLE_SID" '$1 == sid {print $2; exit}' /etc/oratab)
+if [ -n "$oratab_home" ] && [ "$oratab_home" != "${ORACLE_HOME%/}" ]; then
+    echo "ERROR: $ORACLE_SID is already registered in /etc/oratab for $oratab_home, not this 26ai home."
+    echo "       This script is not intended to be run on the source server for the 26AI migration, please"
+    echo "       check that you are running this on the correct server and have specified the correct ORACLE_SID. "
+    echo "       Exiting..."
+    exit 1
+elif [ -n "$oratab_home" ]; then
+    echo "ERROR: $ORACLE_SID is already registered in /etc/oratab for $ORACLE_HOME."
+    echo "       This is likely a stale entry, please remove the entry and rerun the script. Exiting..."
+    exit 1
+fi
+
+running_dbs=$("$HOME/common/oracle/PrintAllRunningDatabases.sh" -i)
+if [ $? -ne 0 ]; then
+    echo "$running_dbs"
+    echo "An error occurred while running PrintAllRunningDatabases.sh. Exiting..."
+    exit 1
+fi
+# grep -q: Quiet, doesn't output to stdout
+# grep -x: Only matches if a whole line exactly matches the input string.
+if echo "$running_dbs" | grep -qx "$ORACLE_SID"; then
+    echo "ERROR: Database $ORACLE_SID is already running, cannot create CDB. Ensure the CDB database name is correct"
+    echo "       and you are running the script on the correct server. Exiting..."
     exit 1
 fi
 
@@ -155,16 +189,11 @@ create_cdb=$("$ORACLE_HOME/bin/dbca" -silent \
     -gdbName "$ORACLE_SID" \
     -templateName "$SCRIPT_DIR/admin/26AI_DBCA_Base_Template.dbc" \
     -variables "RESTORE_DIR=$restore_directory" \
-    -initParams "cpu_count=10,db_name=$new_db_name,db_recovery_file_dest=$ORACLE_BACKUP_DIR" \
+    -initParams "cpu_count=10,db_name=$new_db_name,db_unique_name=${new_db_name}_cdb,db_recovery_file_dest=$ORACLE_BACKUP_DIR" \
     -sysPassword "$DB_SYS_PASSWORD" \
     -systemPassword "$DB_SYSTEM_PASSWORD" \
     -honorControlFileInitParam)
-exit_code=$?
-# DBT-10317: Specified SID Name already exists.
-if [ $exit_code -ne 0 ] && echo "$create_cdb" | grep -q "DBT-10317"; then
-    echo "ERROR: The specified database name is already registered in /etc/oratab. Please remove the $ORACLE_SID entry from /etc/oratab. Exiting..."
-    exit 1
-elif [ $exit_code -ne 0 ]; then
+if [ $? -ne 0 ]; then
     echo "$create_cdb"
     echo "An error occurred while creating database. See above output for more details. Exiting..."
     exit 1
@@ -192,8 +221,8 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Update the pfile with our desired values.
-update_pfile=$("$HOME/common/oracle/UpdateInitTemplateFile.sh" "$ORACLE_SID" "$ORACLE_BACKUP_DIR" "$restore_directory")
+# Update the pfile with our desired values, overriding db_unique_name.
+update_pfile=$("$HOME/common/oracle/UpdateInitTemplateFile.sh" -u "${ORACLE_SID}_cdb" "$ORACLE_SID" "$ORACLE_BACKUP_DIR" "$restore_directory")
 if [ $? -ne 0 ]; then
     echo "$update_pfile"
     echo "An error occurred while updating pfile of $ORACLE_SID. Exiting..."

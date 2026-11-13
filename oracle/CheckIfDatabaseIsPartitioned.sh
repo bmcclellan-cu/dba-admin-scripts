@@ -26,7 +26,7 @@ while getopts ":hv" option; do
     esac
 done
 
-#Checking the amount of arguments
+# Checking the amount of arguments
 if [ $# -gt 1 ]; then
     echo "$usage"
     echo "$example"
@@ -62,7 +62,7 @@ fi
 
 export ORACLE_SID=$sid
 
-#Storing the results of querying the database to find partitions
+# Storing the results of querying the database to find partitions
 numberOfLines=$("$ORACLE_HOME/bin/sqlplus" -s / as sysdba <<EOD
     whenever oserror exit 1
     whenever sqlerror exit 1
@@ -84,7 +84,7 @@ fi
 
 numberOfLines=$(echo "$numberOfLines" | xargs)
 
-#Case that the output of the query contains no rows selected
+# Case that the output of the query contains no rows selected
 if [ "$numberOfLines" -eq 0 ]; then
     echo "No"
     exit 0

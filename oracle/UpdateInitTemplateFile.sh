@@ -5,22 +5,28 @@
 #           Using the initXXXX.ora or initXXXX26.ora as a template, the script updates the pfile of
 #           a database, updating the db_recovery_file_dest, compatible, and database name parameters.
 #
-#
 # Notes:    This script does not run VerifyAllParam.sh because it may be run on databases that are in
 #           NOMOUNT, MOUNTED, or CLOSED states.
 #
+#           By default, db_unique_name will be set to the ORACLE_SID passed into the script.
+#           The dispatcher is named after db_unique_name, so overriding it with the -u option modifies both.
+#
 #####################################################################################
 
-usage="Usage: UpdateInitTemplateFile.sh [ORACLE_SID] [parent folder of backup] [control files directory]"
+usage="Usage: UpdateInitTemplateFile.sh [ -u db_unique_name (optional, specify db_unique_name if different from ORACLE_SID) ] [ORACLE_SID] [parent folder of backup] [control files directory]"
 example="Example: UpdateInitTemplateFile.sh sid1dev /BACKUPS /TEST1/sid1dev"
 
 # Process input options
-while getopts ":h" option; do
+db_unique_name=""
+while getopts ":hu:" option; do
     case $option in
     h)
         echo "$usage"
         echo "$example"
         exit 0
+        ;;
+    u)
+        db_unique_name=${OPTARG,,}
         ;;
     \?)
         echo "Error: Invalid option"
@@ -28,6 +34,8 @@ while getopts ":h" option; do
         ;;
     esac
 done
+
+shift $((OPTIND-1))
 
 # Check arguments
 if [ $# -ne 3 ]; then
@@ -72,6 +80,9 @@ sid=$1
 parent_backup_dir=${2//'/'/'\/'}
 ctrl_file_dir=${3//'/'/'\/'}
 
+# Set db_unique_name to $sid if not passed explicitly as an option.
+db_unique_name=${db_unique_name:-$sid}
+
 # Remove trailing slash from directories if it exists. We remove 2 characters because the above command
 # escapes all /'s, so we need to remove \/
 if [ "${parent_backup_dir: -1}" == "/" ]; then
@@ -103,17 +114,16 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Strip the _cdb suffix for the db_name and truncate to 8 characters long.
-db_name=${sid%_cdb}
-db_name=${db_name:0:8}
+# Truncate db_name to 8 characters long.
+db_name=${sid:0:8}
 
 # Update the control file paths
 sed -i "s/'.\+ctl_01\.ctl'/'$ctrl_file_dir\/ctl_01.ctl'/g" "$init_file"
 sed -i "s/,'.\+ctl_02\.ctl'/,'$ctrl_file_dir\/ctl_02.ctl'/g" "$init_file"
 
 # Replace template SIDs with SID given by user
-sed -i "s/db_unique_name='XXXX/db_unique_name='$sid/g" "$init_file"
-sed -i "s/SERVICE=XXXX/SERVICE=${sid}/g" "$init_file"
+sed -i "s/db_unique_name='XXXX/db_unique_name='$db_unique_name/g" "$init_file"
+sed -i "s/SERVICE=XXXX/SERVICE=${db_unique_name}/g" "$init_file"
 
 # Update db_name with only the first 8 chars of the SID
 sed -i "s/db_name='XXXX'/db_name='${db_name}'/g" "$init_file"
